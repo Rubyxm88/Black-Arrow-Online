@@ -67,6 +67,27 @@ void ActionLoadDiscFile(const char *file_path)
     }
 }
 
+void ActionPlayDiscFile(const char *file_path)
+{
+    Error *err = NULL;
+    xemu_load_disc(file_path, &err);
+    if (err) {
+        xemu_queue_error_message(error_get_pretty(err));
+        error_free(err);
+        return;
+    }
+    // Restart so the new disc boots whatever was running before
+    ActionReset();
+}
+
+void ActionXboxLiveSetup(void)
+{
+    // With no disc in the drive the console starts the dashboard on its
+    // hard disk, which is where the Xbox Live account is managed
+    ActionEjectDisc();
+    ActionReset();
+}
+
 void ActionTogglePause(void)
 {
     if (runstate_is_running()) {

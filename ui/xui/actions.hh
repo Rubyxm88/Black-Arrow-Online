@@ -21,6 +21,8 @@
 void ActionEjectDisc();
 void ActionLoadDisc();
 void ActionLoadDiscFile(const char *file_path);
+void ActionPlayDiscFile(const char *file_path);
+void ActionXboxLiveSetup();
 void ActionTogglePause();
 void ActionReset();
 void ActionShutdown();

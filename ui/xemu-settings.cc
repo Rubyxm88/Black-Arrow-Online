@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
+#include <glib/gstdio.h>
 #include <toml++/toml.h>
 #include <cnode.h>
 #include <sstream>
@@ -81,6 +82,11 @@ const char *xemu_settings_get_base_path(void)
         const char *base = SDL_GetBasePath();
         assert(base != NULL);
         base_path = g_strdup(base);
+        // Portable settings refer to files next to the executable, so make
+        // relative paths work however the program was started
+        if (g_chdir(base) != 0) {
+            fprintf(stderr, "%s: could not change directory\n", __func__);
+        }
     } else {
         char *base = SDL_GetPrefPath("xemu", "xemu");
         assert(base != NULL);

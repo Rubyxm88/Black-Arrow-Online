@@ -361,7 +361,7 @@ public:
 
         for (const auto &[label, file_path] : sorted_file_names) {
             if (PopupMenuButton(label, ICON_FA_COMPACT_DISC)) {
-                ActionLoadDiscFile(file_path.c_str());
+                ActionPlayDiscFile(file_path.c_str());
                 nav.ClearMenuStack();
                 pop = true;
             }
@@ -443,6 +443,10 @@ public:
         if (PopupMenuSubmenuButton("Games", ICON_FA_GAMEPAD)) {
             nav.PushFocus();
             nav.PushMenu(games);
+        }
+        if (PopupMenuButton("Xbox Live Setup", ICON_FA_GLOBE)) {
+            ActionXboxLiveSetup();
+            pop = true;
         }
         if (PopupMenuButton("Eject Disc", ICON_FA_EJECT)) {
             ActionEjectDisc();

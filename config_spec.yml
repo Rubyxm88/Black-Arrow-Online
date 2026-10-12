@@ -8,6 +8,7 @@ general:
       default: true
   screenshot_dir: string
   games_dir: string
+  xb_online_setup_offered: bool
   skip_boot_anim: bool
   # throttle_io: bool
   last_viewed_menu_index: integer

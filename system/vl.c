@@ -146,6 +146,7 @@
 #include "ui/xemu-settings.h"
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-net.h"
+#include "ui/xemu-xbonline.h"
 #include "ui/xemu-input.h"
 #include "hw/xbox/eeprom_generation.h"
 
@@ -3074,6 +3075,25 @@ void qemu_init(int argc, char **argv)
     }
 
     const char *dvd_path = g_config.sys.files.dvd_path;
+    if (!dvd_path[0] || qemu_access(dvd_path, F_OK) == -1) {
+        // No usable disc configured: fall back to the games directory
+        char *game = xemu_xbonline_pick_game(g_config.general.games_dir);
+        xemu_settings_set_string(&g_config.sys.files.dvd_path,
+                                 game ? game : "");
+        g_free(game);
+        dvd_path = g_config.sys.files.dvd_path;
+    }
+    if (g_config.net.enable &&
+        g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
+        !g_config.general.xb_online_setup_offered &&
+        xemu_xbonline_hdd_has_account(g_config.sys.files.hdd_path) == 0) {
+        // First start of a console that has no Xbox Live account yet: boot
+        // without a disc so the dashboard on the hard disk can set one up
+        g_config.general.xb_online_setup_offered = true;
+        dvd_path = "";
+        xemu_queue_notification("No Xbox Live account yet. Set it up here, "
+                                "then choose XB Online > Play");
+    }
     // Allow overriding the dvd path from command line
     for (int i = 1; i < argc; i++) {
         if (argv[i] && strcmp(argv[i], "-dvd_path") == 0) {

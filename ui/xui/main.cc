@@ -269,21 +269,29 @@ void xemu_hud_update(void)
         ImGui::SetMouseCursor(ImGuiMouseCursor_None);
     }
 
-    /* Diagnostic: load the snapshot named by XEMU_AUTOLOAD_SNAPSHOT once
-     * the machine has been up for a few seconds.
+    /* Test aid: run a menu action named by XEMU_TEST_ACTION once the
+     * machine has been up for a while ("setup", or "play:<disc image>").
      */
-    static int autoload_countdown = 1;
-    static uint64_t autoload_start;
-    if (!autoload_start) {
-        autoload_start = SDL_GetTicks();
+    static bool test_action_done;
+    static uint64_t test_action_start;
+    if (!test_action_start) {
+        test_action_start = SDL_GetTicks();
     }
-    if (autoload_countdown && SDL_GetTicks() - autoload_start > 12000) {
-        autoload_countdown = 0;
-        const char *autoload = getenv("XEMU_AUTOLOAD_SNAPSHOT");
-        if (autoload && autoload[0]) {
-            fprintf(stderr, "autoload snapshot %s\n", autoload);
-            g_snapshot_mgr.LoadSnapshot(autoload);
+    if (!test_action_done && SDL_GetTicks() - test_action_start > 25000) {
+        test_action_done = true;
+        const char *action = getenv("XEMU_TEST_ACTION");
+        if (action && !strcmp(action, "setup")) {
+            ActionXboxLiveSetup();
+        } else if (action && !strncmp(action, "play:", 5)) {
+            ActionPlayDiscFile(action + 5);
         }
+    }
+    static bool test_shot_done;
+    const char *test_shot = test_shot_done ? NULL : getenv("XEMU_TEST_SHOT");
+    if (test_shot &&
+        SDL_GetTicks() - test_action_start > (uint64_t)atoi(test_shot) * 1000) {
+        test_shot_done = true;
+        ActionScreenshot();
     }
 
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) &&

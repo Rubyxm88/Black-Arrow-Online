@@ -28,6 +28,9 @@
 #include "compat.hh"
 #include "update.hh"
 #include "../xemu-os-utils.h"
+#include <filesystem>
+#include <map>
+#include <string>
 
 extern float g_main_menu_height; // FIXME
 
@@ -150,6 +153,46 @@ void ShowMainMenu()
 
             if (ImGui::MenuItem("Reset", SHORTCUT_MENU_TEXT(R))) ActionReset();
             if (ImGui::MenuItem("Exit", SHORTCUT_MENU_TEXT(Q))) ActionShutdown();
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("XB Online"))
+        {
+            std::multimap<std::string, std::string> games;
+            std::filesystem::path games_dir(g_config.general.games_dir);
+            std::error_code ec;
+            if (g_config.general.games_dir[0] &&
+                std::filesystem::is_directory(games_dir, ec)) {
+                for (const auto &file :
+                     std::filesystem::directory_iterator(games_dir, ec)) {
+                    const auto &path = file.path();
+                    if (path.extension() == ".iso" ||
+                        path.extension() == ".xiso") {
+                        games.insert({ path.stem().string(), path.string() });
+                    }
+                }
+            }
+
+            std::filesystem::path current(g_config.sys.files.dvd_path);
+            for (const auto &[label, path] : games) {
+                std::string item = "Play " + label;
+                bool loaded = std::filesystem::equivalent(current, path, ec);
+                if (ImGui::MenuItem(item.c_str(), NULL, loaded)) {
+                    ActionPlayDiscFile(path.c_str());
+                }
+            }
+            if (games.empty()) {
+                ImGui::MenuItem("No games in the games folder", NULL, false,
+                                false);
+            }
+            if (ImGui::MenuItem("Add or Load Another Game...")) ActionLoadDisc();
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Xbox Live Account Setup")) ActionXboxLiveSetup();
+            if (ImGui::MenuItem("Get a Link Code (xb.live)")) {
+                SDL_OpenURL("https://xb.live/link");
+            }
             ImGui::EndMenu();
         }
 
