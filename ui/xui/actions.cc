@@ -22,6 +22,7 @@
 #include "xemu-hud.h"
 #include "../xemu-snapshots.h"
 #include "../xemu-notifications.h"
+#include "../xemu-xbonline.h"
 #include "snapshot-manager.hh"
 #include <filesystem>
 
@@ -82,8 +83,19 @@ void ActionPlayDiscFile(const char *file_path)
 
 void ActionXboxLiveSetup(void)
 {
+    // The XBL Dashboard, where the Xbox Live account is managed, runs from
+    // its own disc image
+    if (qemu_access(XEMU_XBONLINE_SETUP_DISC, F_OK) == 0) {
+        ActionPlayDiscFile(XEMU_XBONLINE_SETUP_DISC);
+    } else {
+        ActionXboxDashboard();
+    }
+}
+
+void ActionXboxDashboard(void)
+{
     // With no disc in the drive the console starts the dashboard on its
-    // hard disk, which is where the Xbox Live account is managed
+    // hard disk
     ActionEjectDisc();
     ActionReset();
 }

@@ -444,8 +444,12 @@ public:
             nav.PushFocus();
             nav.PushMenu(games);
         }
-        if (PopupMenuButton("Xbox Live Setup", ICON_FA_GLOBE)) {
+        if (PopupMenuButton("XBL Dashboard (Account Setup)", ICON_FA_GLOBE)) {
             ActionXboxLiveSetup();
+            pop = true;
+        }
+        if (PopupMenuButton("Original Xbox Dashboard", ICON_FA_TV)) {
+            ActionXboxDashboard();
             pop = true;
         }
         if (PopupMenuButton("Eject Disc", ICON_FA_EJECT)) {

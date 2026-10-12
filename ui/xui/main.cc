@@ -282,6 +282,8 @@ void xemu_hud_update(void)
         const char *action = getenv("XEMU_TEST_ACTION");
         if (action && !strcmp(action, "setup")) {
             ActionXboxLiveSetup();
+        } else if (action && !strcmp(action, "dash")) {
+            ActionXboxDashboard();
         } else if (action && !strncmp(action, "play:", 5)) {
             ActionPlayDiscFile(action + 5);
         }

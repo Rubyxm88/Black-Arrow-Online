@@ -28,6 +28,7 @@
 #include "compat.hh"
 #include "update.hh"
 #include "../xemu-os-utils.h"
+#include "../xemu-xbonline.h"
 #include <filesystem>
 #include <map>
 #include <string>
@@ -189,7 +190,12 @@ void ShowMainMenu()
 
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Xbox Live Account Setup")) ActionXboxLiveSetup();
+            if (ImGui::MenuItem("XBL Dashboard (Account Setup)")) ActionXboxLiveSetup();
+            if (ImGui::MenuItem("Original Xbox Dashboard")) ActionXboxDashboard();
+            if (qemu_access(XEMU_XBONLINE_UPDATE_DISC, F_OK) == 0 &&
+                ImGui::MenuItem("Install Game Update + Maps")) {
+                ActionPlayDiscFile(XEMU_XBONLINE_UPDATE_DISC);
+            }
             if (ImGui::MenuItem("Get a Link Code (xb.live)")) {
                 SDL_OpenURL("https://xb.live/link");
             }

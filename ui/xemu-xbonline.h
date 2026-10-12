@@ -15,6 +15,18 @@ extern "C" {
 #endif
 
 /*
+ * Disc image of the XBL Dashboard, kept next to the executable. It is used
+ * for Xbox Live account setup and is never treated as a game.
+ */
+#define XEMU_XBONLINE_SETUP_DISC "XBL Dashboard.iso"
+
+/*
+ * Optional disc image, also kept next to the executable, that installs the
+ * title update and downloadable content of the main game.
+ */
+#define XEMU_XBONLINE_UPDATE_DISC "Black Arrow Update and Maps.iso"
+
+/*
  * Check whether the hard disk image holds an Xbox Live machine account.
  * Returns 1 if it does, 0 if it does not, -1 if the image could not be read.
  */
