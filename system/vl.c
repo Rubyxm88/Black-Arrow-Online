@@ -3087,15 +3087,23 @@ void qemu_init(int argc, char **argv)
     }
     if (g_config.net.enable &&
         g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
-        !g_config.general.xb_online_setup_offered &&
-        xemu_xbonline_hdd_has_account(g_config.sys.files.hdd_path) == 0) {
-        // First start of a console that has no Xbox Live account yet: boot
-        // the XBL Dashboard so one can be set up
-        g_config.general.xb_online_setup_offered = true;
-        dvd_path = qemu_access(XEMU_XBONLINE_SETUP_DISC, F_OK) == 0 ?
-                       XEMU_XBONLINE_SETUP_DISC : "";
-        xemu_queue_notification("No Xbox Live account yet. Set it up here, "
-                                "then choose XB Online > Play");
+        qemu_access(XEMU_XBONLINE_SETUP_DISC, F_OK) == 0) {
+        bool has_account =
+            xemu_xbonline_hdd_has_account(g_config.sys.files.hdd_path) == 1;
+        if (!g_config.general.xb_online_setup_offered) {
+            // First start of a newly set up console: boot the XBL Dashboard
+            // so the Xbox Live account and network can be set up or checked
+            g_config.general.xb_online_setup_offered = true;
+            dvd_path = XEMU_XBONLINE_SETUP_DISC;
+            xemu_queue_notification(
+                has_account ? "Check your Xbox Live sign-in here, then choose "
+                              "XB Online > Play" :
+                              "No Xbox Live account yet. Set it up here, then "
+                              "choose XB Online > Play");
+        } else if (!dvd_path[0]) {
+            // No game to start: the XBL Dashboard is the home screen
+            dvd_path = XEMU_XBONLINE_SETUP_DISC;
+        }
     }
     // Allow overriding the dvd path from command line
     for (int i = 1; i < argc; i++) {
