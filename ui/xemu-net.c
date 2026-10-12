@@ -43,6 +43,22 @@
 
 static const char *id = "xemu-netdev";
 static const char *id_hubport = "xemu-netdev-hubport";
+static const char *id_dns_redirect = "xemu-dns-redirect";
+static const char *id_pcap = "xemu-net-pcap";
+
+static const char *get_dns_redirect_server(void)
+{
+    switch (g_config.net.dns_redirect) {
+    case CONFIG_NET_DNS_REDIRECT_INSIGNIA:
+        return "46.101.64.175";
+    case CONFIG_NET_DNS_REDIRECT_XB_ONLINE:
+        return "159.223.51.240";
+    case CONFIG_NET_DNS_REDIRECT_CUSTOM:
+        return g_config.net.dns_redirect_custom;
+    default:
+        return NULL;
+    }
+}
 
 void xemu_net_enable(void)
 {
@@ -135,6 +151,32 @@ void xemu_net_enable(void)
         }
     }
 
+    const char *dns_server = get_dns_redirect_server();
+    if (!local_err && dns_server) {
+        object_new_with_props("filter-dns-redirect", object_get_objects_root(),
+                              id_dns_redirect, &local_err,
+                              "netdev", id,
+                              "queue", "all",
+                              "server", dns_server,
+                              NULL);
+        if (local_err) {
+            xemu_queue_error_message(error_get_pretty(local_err));
+        }
+    }
+
+    /* Diagnostic: record all console traffic when XEMU_NET_PCAP names a file */
+    const char *pcap_path = g_getenv("XEMU_NET_PCAP");
+    if (!local_err && pcap_path && pcap_path[0]) {
+        object_new_with_props("filter-dump", object_get_objects_root(),
+                              id_pcap, &local_err,
+                              "netdev", id,
+                              "file", pcap_path,
+                              NULL);
+        if (local_err) {
+            xemu_queue_error_message(error_get_pretty(local_err));
+        }
+    }
+
     if (local_err) {
         xemu_net_disable();
     }
@@ -185,6 +227,19 @@ void xemu_net_disable(void)
 {
     if (g_config.net.backend == CONFIG_NET_BACKEND_NAT) {
         clear_slirp_port_forwards();
+    }
+
+    Object *dns_redirect =
+        object_resolve_path_component(object_get_objects_root(),
+                                      id_dns_redirect);
+    if (dns_redirect) {
+        object_unparent(dns_redirect);
+    }
+
+    Object *pcap = object_resolve_path_component(object_get_objects_root(),
+                                                 id_pcap);
+    if (pcap) {
+        object_unparent(pcap);
     }
 
     remove_netdev(id);

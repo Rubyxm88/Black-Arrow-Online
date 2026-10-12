@@ -269,6 +269,23 @@ void xemu_hud_update(void)
         ImGui::SetMouseCursor(ImGuiMouseCursor_None);
     }
 
+    /* Diagnostic: load the snapshot named by XEMU_AUTOLOAD_SNAPSHOT once
+     * the machine has been up for a few seconds.
+     */
+    static int autoload_countdown = 1;
+    static uint64_t autoload_start;
+    if (!autoload_start) {
+        autoload_start = SDL_GetTicks();
+    }
+    if (autoload_countdown && SDL_GetTicks() - autoload_start > 12000) {
+        autoload_countdown = 0;
+        const char *autoload = getenv("XEMU_AUTOLOAD_SNAPSHOT");
+        if (autoload && autoload[0]) {
+            fprintf(stderr, "autoload snapshot %s\n", autoload);
+            g_snapshot_mgr.LoadSnapshot(autoload);
+        }
+    }
+
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) &&
         !g_scene_mgr.IsDisplayingScene()) {
 

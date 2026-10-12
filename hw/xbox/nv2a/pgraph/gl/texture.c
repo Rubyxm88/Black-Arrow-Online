@@ -298,18 +298,66 @@ void pgraph_gl_bind_textures(NV2AState *d)
             }
         }
 
+        /* Diagnostic: describe each texture that overlaps a render target */
+        static int tex_log = -1;
+        if (tex_log < 0) {
+            tex_log = getenv("XEMU_TEX_LOG") != NULL;
+        }
+        if (tex_log) {
+            SurfaceBinding *s;
+            hwaddr tex_end = texture_vram_offset + length - 1;
+            QTAILQ_FOREACH(s, &r->surfaces, entry) {
+                if (s->vram_addr >= tex_end ||
+                    texture_vram_offset >= s->vram_addr + s->size - 1) {
+                    continue;
+                }
+                fprintf(stderr,
+                        "texlog stage=%d tex@0x%08x fmt=0x%02x %ux%u p=%u "
+                        "levels=%u s2t=%d | surf %s@0x%08x fmt=0x%x %ux%u "
+                        "p=%u swz=%d dirty=%d upl=%d\n",
+                        i, (unsigned)texture_vram_offset, state.color_format,
+                        state.width, state.height, state.pitch, state.levels,
+                        surf_to_tex && s == surface,
+                        s->color ? "COLOR" : "ZETA", (unsigned)s->vram_addr,
+                        s->color ? s->shape.color_format : s->shape.zeta_format,
+                        s->width, s->height, s->pitch, s->swizzle,
+                        s->draw_dirty, s->upload_pending);
+            }
+        }
+
         if (!surf_to_tex) {
             // FIXME: Restructure to support rendering surfaces to cubemap faces
 
             // Writeback any surfaces which this texture may index
             hwaddr tex_vram_end = texture_vram_offset + length - 1;
+            bool tex_compressed =
+                state.color_format ==
+                    NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT1_A1R5G5B5 ||
+                state.color_format ==
+                    NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT23_A8R8G8B8 ||
+                state.color_format ==
+                    NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT45_A8R8G8B8;
             QTAILQ_FOREACH(surface, &r->surfaces, entry) {
                 hwaddr surf_vram_end = surface->vram_addr + surface->size - 1;
                 bool overlapping = !(surface->vram_addr >= tex_vram_end
                                      || texture_vram_offset >= surf_vram_end);
-                if (overlapping) {
-                    pgraph_gl_surface_download_if_dirty(d, surface);
+                if (!overlapping) {
+                    continue;
                 }
+                if (tex_compressed && surface->draw_dirty) {
+                    /*
+                     * A render target can never produce compressed texel
+                     * data, so the guest has reused this memory for a texture
+                     * and the surface is stale. Writing it back would destroy
+                     * the texture; guest memory is authoritative instead.
+                     */
+                    nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_STALE);
+                    surface->draw_dirty = false;
+                    surface->download_pending = false;
+                    surface->upload_pending = true;
+                    continue;
+                }
+                pgraph_gl_surface_download_if_dirty_why(d, surface, NV2A_PROF_SURF_DL_TEX);
             }
         }
 

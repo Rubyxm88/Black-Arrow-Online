@@ -494,6 +494,25 @@ static bool check_surfaces_overlap(const SurfaceBinding *surface,
                                         other_surface->size);
 }
 
+/*
+ * Speed hack: when the guest binds a new render target over memory that still
+ * holds an older render target, drop the old contents instead of copying them
+ * from the GPU to guest RAM and back into the new target. Returns true if the
+ * old contents were dropped.
+ */
+static bool drop_replaced_surface_contents(SurfaceBinding *old_surface)
+{
+    if (!g_config.display.quality.skip_reuse_copyback ||
+        !old_surface->draw_dirty) {
+        return false;
+    }
+
+    nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_SKIPPED);
+    old_surface->draw_dirty = false;
+    old_surface->download_pending = false;
+    return true;
+}
+
 static void invalidate_overlapping_surfaces(NV2AState *d, SurfaceBinding *surface)
 {
     PGRAPHState *pg = &d->pgraph;
@@ -505,7 +524,10 @@ static void invalidate_overlapping_surfaces(NV2AState *d, SurfaceBinding *surfac
             trace_nv2a_pgraph_surface_evict_overlapping(
                 other_surface->vram_addr, other_surface->width, other_surface->height,
                 other_surface->pitch);
-            pgraph_gl_surface_download_if_dirty(d, other_surface);
+            if (drop_replaced_surface_contents(other_surface)) {
+                surface->upload_pending = false;
+            }
+            pgraph_gl_surface_download_if_dirty_why(d, other_surface, NV2A_PROF_SURF_DL_OVERLAP);
             pgraph_gl_surface_invalidate(d, other_surface);
         }
     }
@@ -599,7 +621,7 @@ static void surface_evict_old(NV2AState *d)
         int last_used = d->pgraph.frame_time - s->frame_time;
         if (last_used >= surface_age_limit) {
             trace_nv2a_pgraph_surface_evict_reason("old", s->vram_addr);
-            pgraph_gl_surface_download_if_dirty(d, s);
+            pgraph_gl_surface_download_if_dirty_why(d, s, NV2A_PROF_SURF_DL_OLD);
             pgraph_gl_surface_invalidate(d, s);
         }
     }
@@ -623,6 +645,8 @@ static bool check_surface_compatibility(SurfaceBinding *s1, SurfaceBinding *s2,
         return (s1->width == s2->width) && (s1->height == s2->height);
     }
 }
+
+int pgraph_gl_download_reason;
 
 void pgraph_gl_surface_download_if_dirty(NV2AState *d,
                                            SurfaceBinding *surface)
@@ -772,6 +796,10 @@ static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force)
     /* FIXME: Respect write enable at last TOU? */
 
     nv2a_profile_inc_counter(NV2A_PROF_SURF_DOWNLOAD);
+    nv2a_profile_inc_counter(!force ? NV2A_PROF_SURF_DL_CPU :
+                             pgraph_gl_download_reason ?
+                                 pgraph_gl_download_reason :
+                                 NV2A_PROF_SURF_DL_OTHER);
 
     surface_download_to_buffer(d, surface, true, false, true,
                                d->vram_ptr + surface->vram_addr);
@@ -1204,7 +1232,10 @@ static void update_surface_part(NV2AState *d, bool upload, bool color)
                 trace_nv2a_pgraph_surface_evict_reason(
                     "incompatible", found->vram_addr);
                 compare_surfaces(found, &entry);
-                pgraph_gl_surface_download_if_dirty(d, found);
+                if (drop_replaced_surface_contents(found)) {
+                    entry.upload_pending = false;
+                }
+                pgraph_gl_surface_download_if_dirty_why(d, found, NV2A_PROF_SURF_DL_INCOMPAT);
                 pgraph_gl_surface_invalidate(d, found);
             }
         }

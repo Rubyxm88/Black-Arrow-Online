@@ -117,7 +117,7 @@ void pgraph_gl_image_blit(NV2AState *d)
 
     SurfaceBinding *surf_src = pgraph_gl_surface_get(d, source_addr);
     if (surf_src) {
-        pgraph_gl_surface_download_if_dirty(d, surf_src);
+        pgraph_gl_surface_download_if_dirty_why(d, surf_src, NV2A_PROF_SURF_DL_BLIT);
     }
 
     hwaddr source_offset = image_blit->in_y * context_surfaces->source_pitch +
@@ -154,7 +154,7 @@ void pgraph_gl_image_blit(NV2AState *d)
     if (surf_dest) {
         if (adjusted_height < surf_dest->height ||
             row_pixels < surf_dest->width) {
-            pgraph_gl_surface_download_if_dirty(d, surf_dest);
+            pgraph_gl_surface_download_if_dirty_why(d, surf_dest, NV2A_PROF_SURF_DL_BLIT);
         } else {
             // The blit will completely replace the surface so any pending
             // download should be discarded.

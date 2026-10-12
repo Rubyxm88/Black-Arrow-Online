@@ -763,6 +763,10 @@ void MainMenuDisplayView::Draw()
                      "Increase surface scaling factor for higher quality")) {
         nv2a_set_surface_scale_factor(rendering_scale+1);
     }
+    Toggle("Skip render target copy-back (speed hack)",
+           &g_config.display.quality.skip_reuse_copyback,
+           "Faster when a game reuses render target memory every frame "
+           "(OpenGL only). Turn off if effects look wrong");
 
     SectionTitle("Window");
     bool fs = xemu_is_fullscreen();
@@ -954,6 +958,36 @@ void MainMenuNetworkView::Draw()
             "Bridged Adapter\0",
             "Controls what the virtual network controller interfaces with")) {
         appearing = true;
+    }
+    if (ChevronCombo(
+            "Xbox Live service", &g_config.net.dns_redirect,
+            "Console setting\0"
+            "Insignia\0"
+            "XB Online\0"
+            "Custom DNS\0",
+            "Send the console's DNS lookups to this service's DNS server, "
+            "overriding the DNS configured in the console")) {
+        appearing = true;
+    }
+    if (g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_CUSTOM) {
+        if (appearing) {
+            strncpy(dns_redirect_addr, g_config.net.dns_redirect_custom,
+                    sizeof(dns_redirect_addr) - 1);
+        }
+
+        float size_ratio = 0.5;
+        float width = ImGui::GetColumnWidth() * size_ratio;
+        ImGui::PushFont(g_font_mgr.m_menu_font_small);
+        PrepareComboTitleDescription(
+            "DNS Server", "IPv4 address of the DNS server to use (1.2.3.4)",
+            size_ratio);
+        ImGui::SetNextItemWidth(width);
+        if (ImGui::InputText("###dns_redirect_addr", dns_redirect_addr,
+                             sizeof(dns_redirect_addr))) {
+            xemu_settings_set_string(&g_config.net.dns_redirect_custom,
+                                     dns_redirect_addr);
+        }
+        ImGui::PopFont();
     }
     SectionTitle("Options");
     switch (g_config.net.backend) {

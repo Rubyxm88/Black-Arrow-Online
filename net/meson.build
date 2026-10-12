@@ -5,6 +5,7 @@ system_ss.add(files(
   'dump.c',
   'eth.c',
   'filter-buffer.c',
+  'filter-dns-redirect.c',
   'filter-mirror.c',
   'filter.c',
   'hub.c',

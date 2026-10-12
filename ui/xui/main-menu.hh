@@ -104,6 +104,7 @@ class MainMenuNetworkView : public virtual MainMenuTabView
 protected:
     char remote_addr[64];
     char local_addr[64];
+    char dns_redirect_addr[64];
     bool should_refresh;
     std::unique_ptr<NetworkInterfaceManager> iface_mgr;
 

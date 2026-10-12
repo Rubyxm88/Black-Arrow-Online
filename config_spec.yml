@@ -237,6 +237,7 @@ display:
     surface_scale:
       type: integer
       default: 1
+    skip_reuse_copyback: bool
   filtering:
     type: enum
     values: [linear, nearest]
@@ -330,6 +331,11 @@ net:
     type: enum
     values: [nat, udp, pcap]
     default: nat
+  dns_redirect:
+    type: enum
+    values: [none, insignia, xb_online, custom]
+    default: none
+  dns_redirect_custom: string
   pcap:
     netif: string
   udp:
