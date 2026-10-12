@@ -26,6 +26,7 @@
 #include "qemu/main-loop.h"
 #include "qemu/timer.h"
 #include "qemu/lockable.h"
+#include "qemu/processor.h"
 #include "system/cpu-timers.h"
 #include "exec/icount.h"
 #include "system/replay.h"
@@ -348,10 +349,36 @@ int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
      * near, to avoid missing deadlines due to costly sleeps.
      */
     #define XBOX_BUSYWAIT_THRESHOLD_NS 1250000
+    /* Sleep on a high-resolution timer for most of the wait and only spin for
+     * the last stretch, so the main loop does not occupy a whole core.
+     */
+    #define XBOX_BUSYWAIT_SPIN_NS 550000
     if ((0 < timeout) && (timeout < XBOX_BUSYWAIT_THRESHOLD_NS)) {
         int64_t now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
         int64_t end = now + timeout;
+#ifdef _WIN32
+        static HANDLE hires_timer;
+        static int hires_state; /* 0: untried, 1: usable, -1: spin only */
+        if (hires_state == 0) {
+            const char *mode = g_getenv("XEMU_MAINLOOP_WAIT");
+            if (!mode || strcmp(mode, "spin")) {
+                hires_timer = CreateWaitableTimerExW(
+                    NULL, NULL, 0x00000002 /* HIGH_RESOLUTION */,
+                    TIMER_ALL_ACCESS);
+            }
+            hires_state = hires_timer ? 1 : -1;
+        }
+        if (hires_state == 1 && timeout > XBOX_BUSYWAIT_SPIN_NS) {
+            LARGE_INTEGER due;
+            due.QuadPart = -((timeout - XBOX_BUSYWAIT_SPIN_NS) / 100);
+            if (SetWaitableTimer(hires_timer, &due, 0, NULL, NULL, FALSE)) {
+                WaitForSingleObject(hires_timer, 2);
+            }
+            now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+        }
+#endif
         while (now < end) {
+            cpu_relax();
             now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
         }
         timeout = 0;
