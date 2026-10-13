@@ -20,19 +20,6 @@ FIRST TIME
 6. Menu: XB Online > Play Rainbow Six 3 Black Arrow.
 
 
-"ADD CONTENT PACK" INSTEAD OF "START CLEAN"?
---------------------------------------------
-That appears when this folder came from the releases page instead of the
-full package. The Xbox BIOS, clean hard disk and dashboard discs are not in
-those downloads. They come in one zip, BlackArrowOnline-content.zip, from
-where Black Arrow Online is shared.
-1. Download BlackArrowOnline-content.zip. Do not unzip it.
-2. Click "Add content pack". A zip in your Downloads folder or next to
-   "Black Arrow Online" is found by itself; otherwise pick it.
-3. The button changes to "Start clean". This is only needed once.
-The full package already has these files, so you will not see this there.
-
-
 EVERY TIME AFTER THAT
 ---------------------
 Double-click "Black Arrow Online". There is no setup window any more: it
@@ -65,6 +52,7 @@ Live sign-in, saves, settings and games are not touched. The previous
 emulator is kept as system\xemu.previous.exe.
 To turn the check off, create an empty file system\no-update-check.txt.
 Builds and notes: https://github.com/Rubyxm88/Black-Arrow-Online/releases
+The downloads there are updates for this folder, not the full package.
 
 
 CONTROLLER
@@ -87,6 +75,9 @@ console and your account. Never send them to anyone. Share the original zip.
 
 TROUBLE
 -------
+Setup window says "Add content pack" instead of "Start clean": this folder
+  is an update download, not the full package. Get the full package from
+  where Black Arrow Online is shared and start from that.
 Game looks wrong: Machine > Settings > Display, turn off
   "Skip render target copy-back (speed hack)".
 Slow: View > Int. Resolution Scale, choose 1x.

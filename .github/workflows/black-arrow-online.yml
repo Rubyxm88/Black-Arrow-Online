@@ -301,7 +301,7 @@ jobs:
           echo
           echo "To update by hand, close the emulator and unzip \`BlackArrowOnline-update.zip\` over your Black Arrow Online folder."
           echo
-          echo "**New here?** Get the full package from where Black Arrow Online is shared. This download has no Xbox BIOS, dashboard or game files; unzipped on its own it asks for the content pack (BlackArrowOnline-content.zip) the first time. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme)."
+          echo "**New here?** Get the full package from where Black Arrow Online is shared. This download is an update for a package you already have: it has no Xbox BIOS, dashboard or game files and cannot set up a new console on its own. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme)."
           echo
           echo "### Files"
           echo

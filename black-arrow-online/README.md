@@ -68,10 +68,15 @@ csc.exe /nologo /target:winexe /optimize+ /win32icon:ui\icons\xemu-icon.ico ^
     /r:System.IO.Compression.FileSystem.dll black-arrow-online\package\Launcher.cs
 ```
 
-## The content pack
+## The full package and the content pack
 
-The files that are not in this repository go into one zip, laid out like the
-package folder, with a marker file so the launcher recognises it:
+Players get the full package: a release plus the files that are not in this
+repository, in one zip, shared outside GitHub. Releases then keep it up to
+date through the launcher.
+
+For assembling or repairing a package, the launcher can also take those
+files as a separate zip, laid out like the package folder, with a marker
+file so the launcher recognises it:
 
 ```
 BlackArrowOnline-content.zip
