@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths-ignore:
       - '**.md'
+      - '.github/**'
       - 'black-arrow-online/docs/**'
   schedule:
     - cron: '23 9 * * *'
@@ -129,8 +130,9 @@ jobs:
           echo "- Updated to xemu release $UPSTREAM" >> meta/changes.md
         fi
         if [ -n "$prev_commit" ] && git cat-file -e "$prev_commit^{commit}" 2>/dev/null; then
+          # Changes to the build setup are of no interest to players
           git log --no-merges --first-parent --format='- %s' "$prev_commit..$COMMIT" |
-              head -n 20 >> meta/changes.md
+              { grep -v '^- ci:' || true; } | head -n 20 >> meta/changes.md
         fi
         head -n 1 meta/changes.md | cut -c 3- > meta/notes.txt
 
