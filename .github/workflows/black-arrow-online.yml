@@ -86,8 +86,10 @@ jobs:
         fi
 
         version=$(git describe --tags --match 'v*' | cut -c 2-)
-        image=$(grep -o 'xemu-win64-toolchain-gcc:sha-[0-9a-f]*' \
-                .github/workflows/build-windows.yml | head -n 1)
+        # The toolchain image the xemu Windows build uses
+        tag=$({ grep -o -e '-gcc:sha-[0-9a-f]*' .github/workflows/build-windows.yml || true; } |
+              head -n 1)
+        image="xemu-win64-toolchain${tag:--gcc:sha-2881edd}"
         echo "upstream=$latest" >> "$GITHUB_OUTPUT"
         echo "commit=$commit" >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
