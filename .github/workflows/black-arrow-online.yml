@@ -264,7 +264,7 @@ jobs:
         cp black-arrow-online/package/Launcher.cs pkg/system/Launcher-source.cs
         notes=$(cat meta/notes.txt 2>/dev/null || true)
         printf 'build=%s\nxemu=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
-            "$BUILD" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
+            "$BUILD" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
             > pkg/system/version.txt
         (cd pkg && 7z a -tzip -bso0 ../BlackArrowOnline-update.zip .)
         cp pkg/system/version.txt version.txt
@@ -278,7 +278,7 @@ jobs:
         trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         images="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${COMMIT}/black-arrow-online/docs/images"
         {
-          echo "Build $BUILD of Black Arrow Online, based on xemu $VERSION."
+          echo "Build $BUILD of Black Arrow Online, based on xemu ${UPSTREAM#v} (source version $VERSION)."
           echo
           if [ -s meta/changes.md ]; then
             echo "### What changed"
@@ -308,7 +308,7 @@ jobs:
       shell: bash
       run: |
         if ! out=$(gh release create "build-$BUILD" --target "$COMMIT" --latest \
-            --title "Build $BUILD (xemu $VERSION)" --notes-file notes.md \
+            --title "Build $BUILD (xemu ${UPSTREAM#v})" --notes-file notes.md \
             BlackArrowOnline-update.zip version.txt \
             "BlackArrowOnline-source-build-$BUILD.tar.zst" 2>&1); then
           echo "::error::$(echo "$out" | tr '\n' ' ')"
