@@ -347,6 +347,9 @@ net:
       type: string
       default: 1.2.3.4:9368
   nat:
+    lan_address:
+      type: bool
+      default: true
     forward_ports:
       type: array
       items:
