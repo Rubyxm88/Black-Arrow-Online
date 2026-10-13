@@ -307,6 +307,11 @@ jobs:
     - name: Publish
       shell: bash
       run: |
-        gh release create "build-$BUILD" --target "$COMMIT" --latest \
+        if ! out=$(gh release create "build-$BUILD" --target "$COMMIT" --latest \
             --title "Build $BUILD (xemu $VERSION)" --notes-file notes.md \
-            BlackArrowOnline-update.zip version.txt "BlackArrowOnline-source-build-$BUILD.tar.zst"
+            BlackArrowOnline-update.zip version.txt \
+            "BlackArrowOnline-source-build-$BUILD.tar.zst" 2>&1); then
+          echo "::error::$(echo "$out" | tr '\n' ' ')"
+          exit 1
+        fi
+        echo "$out"
