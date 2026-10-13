@@ -43,6 +43,8 @@ jobs:
       image: ${{ steps.merge.outputs.image }}
     env:
       GH_TOKEN: ${{ github.token }}
+      # Not the upstream remote, which gh would prefer
+      GH_REPO: ${{ github.repository }}
     steps:
     - name: Clone tree
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
@@ -219,6 +221,8 @@ jobs:
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      # Not the upstream remote, which gh would prefer
+      GH_REPO: ${{ github.repository }}
       BUILD: ${{ needs.prepare.outputs.build }}
       VERSION: ${{ needs.prepare.outputs.version }}
       UPSTREAM: ${{ needs.prepare.outputs.upstream }}
