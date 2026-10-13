@@ -263,7 +263,7 @@ jobs:
         cp black-arrow-online/package/README.txt pkg/README.txt
         cp black-arrow-online/package/Launcher.cs pkg/system/Launcher-source.cs
         notes=$(cat meta/notes.txt 2>/dev/null || true)
-        printf 'build=%s\nxemu=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
+        printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
             "$BUILD" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
             > pkg/system/version.txt
         (cd pkg && 7z a -tzip -bso0 ../BlackArrowOnline-update.zip .)
