@@ -1,0 +1,306 @@
+name: Black Arrow Online release
+
+# Builds xemu.exe and the launcher and publishes them as a release that the
+# launcher offers to players as an update.
+#
+# A release is made when the main branch changes and when xemu publishes a
+# new release. A new xemu release is merged at build time only; when it does
+# not merge cleanly an issue is opened and nothing is released.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'black-arrow-online/docs/**'
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Release even when nothing changed
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: black-arrow-online-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Check for changes and package the source
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.merge.outputs.version }}
+      upstream: ${{ steps.merge.outputs.upstream }}
+      commit: ${{ steps.merge.outputs.commit }}
+      image: ${{ steps.merge.outputs.image }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Clone tree
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        fetch-depth: 0
+    - name: Merge the latest xemu release
+      id: merge
+      run: |
+        set -euo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        # Files this repository replaces keep its version
+        git config merge.ours.driver true
+        printf '%s merge=ours\n' README.md .github/workflows/ci.yml \
+            .github/workflows/bump-subproject-wraps.yml >> .git/info/attributes
+
+        git remote add upstream https://github.com/xemu-project/xemu.git
+        git fetch --quiet --tags upstream master
+        latest=$(gh api repos/xemu-project/xemu/releases/latest --jq .tag_name)
+        commit=$(git rev-parse HEAD)
+
+        if ! git merge-base --is-ancestor "$latest" HEAD; then
+          echo "Merging xemu $latest"
+          if ! git merge --no-edit "$latest"; then
+            files=$(git diff --name-only --diff-filter=U)
+            title="Update to xemu $latest needs a manual merge"
+            open=$(gh issue list --state open --search "\"$title\" in:title" \
+                   --json number --jq 'length')
+            if [ "$open" = "0" ]; then
+              gh issue create --title "$title" --body "xemu $latest does not merge cleanly into main, so no new build was released. Merge it by hand and push; the next run releases it.
+
+        Files with conflicts:
+
+        \`\`\`
+        $files
+        \`\`\`"
+            fi
+            exit 1
+          fi
+        fi
+
+        version=$(git describe --tags --match 'v*' | cut -c 2-)
+        image=$(grep -o 'xemu-win64-toolchain-gcc:sha-[0-9a-f]*' \
+                .github/workflows/build-windows.yml | head -n 1)
+        echo "upstream=$latest" >> "$GITHUB_OUTPUT"
+        echo "commit=$commit" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "image=ghcr.io/xemu-project/$image" >> "$GITHUB_OUTPUT"
+    - name: Compare with the latest release
+      id: plan
+      env:
+        UPSTREAM: ${{ steps.merge.outputs.upstream }}
+        COMMIT: ${{ steps.merge.outputs.commit }}
+        FORCE: ${{ inputs.force }}
+      run: |
+        set -euo pipefail
+        mkdir -p prev meta
+        gh release download --pattern version.txt --dir prev 2>/dev/null || true
+        field() {
+          { grep -m 1 "^$1=" prev/version.txt 2>/dev/null || true; } | cut -d= -f2- | tr -d '\r'
+        }
+        prev_build=$(field build)
+        prev_commit=$(field commit)
+        prev_upstream=$(field upstream)
+
+        if [ "$prev_commit" = "$COMMIT" ] && [ "$prev_upstream" = "$UPSTREAM" ] &&
+           [ "$FORCE" != "true" ]; then
+          echo "Build $prev_build is current."
+          echo "release=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        : > meta/changes.md
+        if [ -z "$prev_build" ]; then
+          echo "- First build published from this repository" >> meta/changes.md
+        fi
+        if [ -n "$prev_upstream" ] && [ "$prev_upstream" != "$UPSTREAM" ]; then
+          echo "- Updated to xemu release $UPSTREAM" >> meta/changes.md
+        fi
+        if [ -n "$prev_commit" ] && git cat-file -e "$prev_commit^{commit}" 2>/dev/null; then
+          git log --no-merges --first-parent --format='- %s' "$prev_commit..$COMMIT" |
+              head -n 20 >> meta/changes.md
+        fi
+        head -n 1 meta/changes.md | cut -c 3- > meta/notes.txt
+
+        echo "release=true" >> "$GITHUB_OUTPUT"
+        echo "build=$(( ${prev_build:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+    - name: Install dependencies
+      if: steps.plan.outputs.release == 'true'
+      run: sudo apt-get install meson
+    - name: Create source package
+      if: steps.plan.outputs.release == 'true'
+      env:
+        VERSION: ${{ steps.merge.outputs.version }}
+      run: |
+        set -euo pipefail
+        pkg_name="xemu-${VERSION}"
+        ./scripts/archive-source.sh "${pkg_name}.tar" "./${pkg_name}/"
+        git rev-parse HEAD | tr -d '\n' > XEMU_COMMIT
+        echo -n "${VERSION}" > XEMU_VERSION
+        tar -r --file "${pkg_name}.tar" --transform "s,^./,./${pkg_name}/," ./XEMU_COMMIT ./XEMU_VERSION
+        zstd "${pkg_name}.tar"
+    - name: Upload source package
+      if: steps.plan.outputs.release == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: src
+        path: xemu-${{ steps.merge.outputs.version }}.tar.zst
+        compression-level: 0
+    - name: Upload release notes
+      if: steps.plan.outputs.release == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: meta
+        path: meta
+
+  build:
+    name: Build xemu.exe
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.prepare.outputs.image }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CCACHE_DIR: /tmp/xemu-ccache
+      CCACHE_MAXSIZE: 512M
+      LTO_CACHE_DIR: /tmp/xemu-lto-ccache
+      CROSSPREFIX: x86_64-w64-mingw32.static-
+      CROSSAR: x86_64-w64-mingw32.static-gcc-ar
+    steps:
+    - name: Download source package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: src
+    - name: Install curl
+      run: |
+        apt-get update
+        apt-get install -qy curl zstd
+    - name: Extract source package
+      run: tar -xf xemu-${{ needs.prepare.outputs.version }}.tar.zst --strip-components=2
+    - name: Initialize compiler cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4
+      with:
+        path: |
+          ${{ env.CCACHE_DIR }}
+          ${{ env.LTO_CACHE_DIR }}
+        key: cache-bao-wincross-${{ github.sha }}-${{ github.run_id }}
+        restore-keys: cache-bao-wincross-
+    - name: Compile
+      run: |
+        mkdir -p "${CCACHE_DIR}" "${LTO_CACHE_DIR}"
+        ./build.sh -p win64-cross \
+            --extra-cflags="-flto-incremental=${LTO_CACHE_DIR} -flto-partition=cache" \
+            -Db_lto=true \
+            -Dx86_version=3 \
+            --enable-whpx
+        "${CROSSPREFIX}strip" dist/xemu.exe
+    - name: Upload build
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: xemu
+        path: dist
+
+  release:
+    name: Package and release
+    needs: [prepare, build]
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD: ${{ needs.prepare.outputs.build }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      UPSTREAM: ${{ needs.prepare.outputs.upstream }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+    - name: Clone the launcher and package files
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        ref: ${{ needs.prepare.outputs.commit }}
+        sparse-checkout: |
+          black-arrow-online
+          ui/icons
+    - name: Download xemu.exe
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: xemu
+        path: pkg/system
+    - name: Download source package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: src
+        path: src
+    - name: Download release notes
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: meta
+        path: meta
+    - name: Build the launcher
+      shell: pwsh
+      run: |
+        & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
+            "/win32icon:ui\icons\xemu-icon.ico" "/out:pkg\Black Arrow Online.exe" `
+            /r:System.Windows.Forms.dll /r:System.Drawing.dll `
+            /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll `
+            black-arrow-online\package\Launcher.cs
+        if ($LASTEXITCODE) { exit 1 }
+    - name: Package
+      shell: bash
+      run: |
+        set -euo pipefail
+        cp black-arrow-online/package/README.txt pkg/README.txt
+        cp black-arrow-online/package/Launcher.cs pkg/system/Launcher-source.cs
+        notes=$(cat meta/notes.txt 2>/dev/null || true)
+        printf 'build=%s\nxemu=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
+            "$BUILD" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
+            > pkg/system/version.txt
+        (cd pkg && 7z a -tzip -bso0 ../BlackArrowOnline-update.zip .)
+        cp pkg/system/version.txt version.txt
+        echo "sha256=$(sha256sum BlackArrowOnline-update.zip | cut -d' ' -f1)" >> version.txt
+        mv src/*.tar.zst "BlackArrowOnline-source-build-$BUILD.tar.zst"
+        cat version.txt
+    - name: Write release notes
+      shell: bash
+      run: |
+        set -euo pipefail
+        images="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${COMMIT}/black-arrow-online/docs/images"
+        {
+          echo "Build $BUILD of Black Arrow Online, based on xemu $VERSION."
+          echo
+          if [ -s meta/changes.md ]; then
+            echo "### What changed"
+            echo
+            cat meta/changes.md
+            echo
+          fi
+          echo "### How to get it"
+          echo
+          echo "**Already playing?** Start Black Arrow Online as usual. It finds this build and offers to install it. Your console, Xbox Live sign-in, saves, settings and games are not touched."
+          echo
+          echo "<img src=\"$images/launcher-update.png\" width=\"420\" alt=\"The update window\">"
+          echo
+          echo "To update by hand, close the emulator and unzip \`BlackArrowOnline-update.zip\` over your Black Arrow Online folder."
+          echo
+          echo "**New here?** This download is an update, not the full package: it has no Xbox BIOS, dashboard or game files. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme) for how to get started."
+          echo
+          echo "### Files"
+          echo
+          echo "| File | What it is |"
+          echo "|---|---|"
+          echo "| \`BlackArrowOnline-update.zip\` | The launcher and xemu.exe |"
+          echo "| \`version.txt\` | What the launcher reads to find this build |"
+          echo "| \`BlackArrowOnline-source-build-$BUILD.tar.zst\` | The complete source this build was made from |"
+        } > notes.md
+    - name: Publish
+      shell: bash
+      run: |
+        gh release create "build-$BUILD" --target "$COMMIT" --latest \
+            --title "Build $BUILD (xemu $VERSION)" --notes-file notes.md \
+            BlackArrowOnline-update.zip version.txt "BlackArrowOnline-source-build-$BUILD.tar.zst"
