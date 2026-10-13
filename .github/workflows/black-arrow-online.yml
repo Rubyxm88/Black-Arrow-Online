@@ -52,6 +52,7 @@ jobs:
       id: merge
       run: |
         set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         # Files this repository replaces keep its version
@@ -99,6 +100,7 @@ jobs:
         FORCE: ${{ inputs.force }}
       run: |
         set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         mkdir -p prev meta
         gh release download --pattern version.txt --dir prev 2>/dev/null || true
         field() {
@@ -139,6 +141,7 @@ jobs:
         VERSION: ${{ steps.merge.outputs.version }}
       run: |
         set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         pkg_name="xemu-${VERSION}"
         ./scripts/archive-source.sh "${pkg_name}.tar" "./${pkg_name}/"
         git rev-parse HEAD | tr -d '\n' > XEMU_COMMIT
@@ -255,6 +258,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         cp black-arrow-online/package/README.txt pkg/README.txt
         cp black-arrow-online/package/Launcher.cs pkg/system/Launcher-source.cs
         notes=$(cat meta/notes.txt 2>/dev/null || true)
@@ -270,6 +274,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         images="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${COMMIT}/black-arrow-online/docs/images"
         {
           echo "Build $BUILD of Black Arrow Online, based on xemu $VERSION."
