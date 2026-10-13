@@ -21,6 +21,13 @@ extern "C" {
 #define XEMU_XBONLINE_SETUP_DISC "XBL Dashboard.iso"
 
 /*
+ * Small disc image that starts the XBL Dashboard installed on the hard disk.
+ * It is preferred when the hard disk has the dashboard, because only that
+ * copy can update itself.
+ */
+#define XEMU_XBONLINE_LOADER_DISC "XBL Dashboard Loader.iso"
+
+/*
  * Optional disc image, also kept next to the executable, that installs the
  * title update and downloadable content of the main game.
  */
@@ -31,6 +38,27 @@ extern "C" {
  * Returns 1 if it does, 0 if it does not, -1 if the image could not be read.
  */
 int xemu_xbonline_hdd_has_account(const char *hdd_path);
+
+/*
+ * Check whether the XBL Dashboard is installed on the hard disk image.
+ * Returns 1 if it is, 0 if it is not, -1 if the image could not be read.
+ */
+int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
+
+/*
+ * Look at the hard disk image once, before the machine starts using it, so
+ * xemu_xbonline_setup_disc() knows which disc to offer.
+ */
+void xemu_xbonline_probe_hdd(const char *hdd_path);
+
+/*
+ * Disc image to boot for Xbox Live account setup, or NULL if none is
+ * available.
+ */
+const char *xemu_xbonline_setup_disc(void);
+
+/* Whether the path names one of the dashboard or update discs, not a game */
+bool xemu_xbonline_is_system_disc(const char *path);
 
 /*
  * Choose the disc image to boot from the games directory when none is

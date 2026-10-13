@@ -3076,8 +3076,7 @@ void qemu_init(int argc, char **argv)
 
     const char *dvd_path = g_config.sys.files.dvd_path;
     if (!dvd_path[0] || qemu_access(dvd_path, F_OK) == -1 ||
-        g_str_has_suffix(dvd_path, XEMU_XBONLINE_SETUP_DISC) ||
-        g_str_has_suffix(dvd_path, XEMU_XBONLINE_UPDATE_DISC)) {
+        xemu_xbonline_is_system_disc(dvd_path)) {
         // No game disc configured: fall back to the games directory
         char *game = xemu_xbonline_pick_game(g_config.general.games_dir);
         xemu_settings_set_string(&g_config.sys.files.dvd_path,
@@ -3085,16 +3084,18 @@ void qemu_init(int argc, char **argv)
         g_free(game);
         dvd_path = g_config.sys.files.dvd_path;
     }
+    xemu_xbonline_probe_hdd(g_config.sys.files.hdd_path);
+    const char *setup_disc = xemu_xbonline_setup_disc();
     if (g_config.net.enable &&
         g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
-        qemu_access(XEMU_XBONLINE_SETUP_DISC, F_OK) == 0) {
+        setup_disc) {
         bool has_account =
             xemu_xbonline_hdd_has_account(g_config.sys.files.hdd_path) == 1;
         if (!g_config.general.xb_online_setup_offered) {
             // First start of a newly set up console: boot the XBL Dashboard
             // so the Xbox Live account and network can be set up or checked
             g_config.general.xb_online_setup_offered = true;
-            dvd_path = XEMU_XBONLINE_SETUP_DISC;
+            dvd_path = setup_disc;
             xemu_queue_notification(
                 has_account ? "Check your Xbox Live sign-in here, then choose "
                               "XB Online > Play" :
@@ -3102,7 +3103,7 @@ void qemu_init(int argc, char **argv)
                               "choose XB Online > Play");
         } else if (!dvd_path[0]) {
             // No game to start: the XBL Dashboard is the home screen
-            dvd_path = XEMU_XBONLINE_SETUP_DISC;
+            dvd_path = setup_disc;
         }
     }
     // Allow overriding the dvd path from command line

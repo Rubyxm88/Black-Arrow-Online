@@ -85,8 +85,9 @@ void ActionXboxLiveSetup(void)
 {
     // The XBL Dashboard, where the Xbox Live account is managed, runs from
     // its own disc image
-    if (qemu_access(XEMU_XBONLINE_SETUP_DISC, F_OK) == 0) {
-        ActionPlayDiscFile(XEMU_XBONLINE_SETUP_DISC);
+    const char *disc = xemu_xbonline_setup_disc();
+    if (disc) {
+        ActionPlayDiscFile(disc);
     } else {
         ActionXboxDashboard();
     }

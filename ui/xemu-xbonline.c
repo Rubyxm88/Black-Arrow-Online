@@ -133,6 +133,168 @@ int xemu_xbonline_hdd_has_account(const char *hdd_path)
     return result;
 }
 
+/* Data partition (E:) of the Xbox hard disk */
+#define FATX_E_OFFSET 0xABE80000ULL
+#define FATX_E_SIZE 0x1312D6000ULL
+#define FATX_MAGIC 0x58544146 /* "FATX" */
+#define FATX_ENTRY_SIZE 64
+#define FATX_ATTR_DIRECTORY 0x10
+#define FATX_MAX_CLUSTER (128 * 1024)
+
+typedef struct Fatx {
+    HddImage *img;
+    uint64_t fat_offset, data_offset;
+    uint32_t cluster_size, cluster_count;
+    bool wide;
+} Fatx;
+
+/* Sectors the image has no data for read as zeroes */
+static bool hdd_read_bytes(HddImage *img, uint64_t offset, uint8_t *buf,
+                           size_t len)
+{
+    while (len) {
+        uint8_t sector[SECTOR_SIZE];
+        size_t skip = offset % SECTOR_SIZE;
+        size_t n = MIN(len, SECTOR_SIZE - skip);
+        int r = hdd_read_sector(img, offset / SECTOR_SIZE, sector);
+
+        if (r < 0) {
+            return false;
+        }
+        if (r == 0) {
+            memset(sector, 0, sizeof(sector));
+        }
+        memcpy(buf, sector + skip, n);
+        buf += n;
+        offset += n;
+        len -= n;
+    }
+    return true;
+}
+
+static bool fatx_open(Fatx *fs, HddImage *img)
+{
+    uint8_t hdr[16];
+    uint64_t fat_size;
+
+    if (!hdd_read_bytes(img, FATX_E_OFFSET, hdr, sizeof(hdr)) ||
+        ldl_le_p(hdr) != FATX_MAGIC) {
+        return false;
+    }
+    fs->img = img;
+    fs->cluster_size = ldl_le_p(hdr + 8) * SECTOR_SIZE;
+    if (fs->cluster_size < SECTOR_SIZE || fs->cluster_size > FATX_MAX_CLUSTER) {
+        return false;
+    }
+    fs->cluster_count = FATX_E_SIZE / fs->cluster_size;
+    fs->wide = fs->cluster_count >= 0xfff0;
+    fat_size = (uint64_t)fs->cluster_count * (fs->wide ? 4 : 2);
+    fat_size = (fat_size + 0xfff) & ~0xfffULL;
+    fs->fat_offset = FATX_E_OFFSET + 0x1000;
+    fs->data_offset = fs->fat_offset + fat_size;
+    return true;
+}
+
+/* Next cluster of a chain, or 0 at its end */
+static uint32_t fatx_next(Fatx *fs, uint32_t cluster)
+{
+    uint8_t entry[4];
+    uint32_t next;
+
+    if (!hdd_read_bytes(fs->img,
+                        fs->fat_offset + (uint64_t)cluster * (fs->wide ? 4 : 2),
+                        entry, fs->wide ? 4 : 2)) {
+        return 0;
+    }
+    next = fs->wide ? ldl_le_p(entry) : lduw_le_p(entry);
+    if (next == 0 || next >= (fs->wide ? 0xfffffff0 : 0xfff0) ||
+        next > fs->cluster_count) {
+        return 0;
+    }
+    return next;
+}
+
+/*
+ * Find a name in a directory. Returns its first cluster, or 0 if there is no
+ * such entry of the wanted kind.
+ */
+static uint32_t fatx_find(Fatx *fs, uint32_t dir_cluster, const char *name,
+                          bool want_dir)
+{
+    uint8_t *data = g_malloc(fs->cluster_size);
+    size_t name_len = strlen(name);
+    uint32_t found = 0;
+    bool done = false;
+
+    /* A directory is at most 4096 entries long */
+    for (int hops = 0; dir_cluster && !done && hops < 4096; hops++) {
+        if (!hdd_read_bytes(fs->img,
+                            fs->data_offset +
+                            (uint64_t)(dir_cluster - 1) * fs->cluster_size,
+                            data, fs->cluster_size)) {
+            break;
+        }
+        for (uint32_t i = 0; i < fs->cluster_size; i += FATX_ENTRY_SIZE) {
+            const uint8_t *e = data + i;
+            if (e[0] == 0x00 || e[0] == 0xff) {
+                done = true; /* end of the directory */
+                break;
+            }
+            if (e[0] == name_len &&
+                !g_ascii_strncasecmp((const char *)e + 2, name, name_len) &&
+                !(e[1] & FATX_ATTR_DIRECTORY) == !want_dir) {
+                found = ldl_le_p(e + 44);
+                done = true;
+                break;
+            }
+        }
+        dir_cluster = fatx_next(fs, dir_cluster);
+    }
+
+    g_free(data);
+    return found;
+}
+
+int xemu_xbonline_hdd_has_dashboard(const char *hdd_path)
+{
+    HddImage img;
+    Fatx fs;
+    int result = -1;
+
+    if (hdd_open(&img, hdd_path) && fatx_open(&fs, &img)) {
+        uint32_t dir = fatx_find(&fs, 1, "XBLDashboard", true);
+        result = dir && fatx_find(&fs, dir, "default.xbe", false) ? 1 : 0;
+    }
+    hdd_close(&img);
+    return result;
+}
+
+static bool hdd_has_dashboard;
+
+void xemu_xbonline_probe_hdd(const char *hdd_path)
+{
+    hdd_has_dashboard = xemu_xbonline_hdd_has_dashboard(hdd_path) == 1;
+}
+
+const char *xemu_xbonline_setup_disc(void)
+{
+    if (hdd_has_dashboard &&
+        qemu_access(XEMU_XBONLINE_LOADER_DISC, F_OK) == 0) {
+        return XEMU_XBONLINE_LOADER_DISC;
+    }
+    if (qemu_access(XEMU_XBONLINE_SETUP_DISC, F_OK) == 0) {
+        return XEMU_XBONLINE_SETUP_DISC;
+    }
+    return NULL;
+}
+
+bool xemu_xbonline_is_system_disc(const char *path)
+{
+    return g_str_has_suffix(path, XEMU_XBONLINE_SETUP_DISC) ||
+           g_str_has_suffix(path, XEMU_XBONLINE_LOADER_DISC) ||
+           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC);
+}
+
 char *xemu_xbonline_pick_game(const char *games_dir)
 {
     GDir *dir;
