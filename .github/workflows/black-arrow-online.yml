@@ -267,6 +267,7 @@ jobs:
         set -euo pipefail
         trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         cp black-arrow-online/package/README.txt pkg/README.txt
+        cp "black-arrow-online/package/Start over.bat" "pkg/system/Start over.bat"
         cp black-arrow-online/package/Launcher.cs pkg/system/Launcher-source.cs
         notes=$(cat meta/notes.txt 2>/dev/null || true)
         printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
@@ -300,7 +301,7 @@ jobs:
           echo
           echo "To update by hand, close the emulator and unzip \`BlackArrowOnline-update.zip\` over your Black Arrow Online folder."
           echo
-          echo "**New here?** This download is an update, not the full package: it has no Xbox BIOS, dashboard or game files. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme) for how to get started."
+          echo "**New here?** Get the full package from where Black Arrow Online is shared. This download has no Xbox BIOS, dashboard or game files; unzipped on its own it asks for the content pack (BlackArrowOnline-content.zip) the first time. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme)."
           echo
           echo "### Files"
           echo

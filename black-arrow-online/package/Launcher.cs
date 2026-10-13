@@ -59,6 +59,8 @@ static class Launcher
             return 1;
         }
 
+        EnsureSettings();
+
         // Unattended modes, used for testing
         string mode = Arg(args, "--mode"), preview = Arg(args, "--preview");
         string previewUpdate = Arg(args, "--preview-update");
@@ -89,7 +91,10 @@ static class Launcher
             }
         }
         try {
-            if (mode == "update") {
+            if (mode == "content") {
+                InstallContent(Arg(args, "--pack"), null);
+                return 0;
+            } else if (mode == "update") {
                 UpdateInfo update = Updater.Check();
                 if (update == null) {
                     Console.Error.WriteLine("No update.");
@@ -134,8 +139,157 @@ static class Launcher
 
     // --- setup actions ---
 
+    // --- content pack ---
+    //
+    // The Xbox BIOS, boot ROM, clean hard disk and dashboard discs are not
+    // part of the builds published on the releases page. They come in a
+    // separate zip, the content pack, laid out like the package folder.
+
+    public const string ContentPackName = "BlackArrowOnline-content.zip";
+    const string ContentMarker = "system/content.txt";
+
+    const string DefaultSettings =
+        "[general]\n" +
+        "show_welcome = false\n" +
+        "skip_boot_anim = true\n" +
+        "games_dir = '..\\games'\n" +
+        "\n" +
+        "[general.updates]\n" +
+        "check = false\n" +
+        "\n" +
+        "[display.quality]\n" +
+        "surface_scale = 2\n" +
+        "skip_reuse_copyback = true\n" +
+        "\n" +
+        "[net]\n" +
+        "enable = true\n" +
+        "dns_redirect = 'xb_online'\n" +
+        "\n" +
+        "[net.nat]\n" +
+        "forward_ports = [\n" +
+        "    { host = 3074, guest = 3074, protocol = 'udp'}\n" +
+        "    ]\n" +
+        "\n" +
+        "[sys.files]\n" +
+        "bootrom_path = '" + BundledMcpx + "'\n" +
+        "flashrom_path = '" + BundledBios + "'\n" +
+        "eeprom_path = 'eeprom.bin'\n" +
+        "hdd_path = 'xbox_hdd.qcow2'\n";
+
+    // A folder made from a release alone has no settings or games folder yet
+    static void EnsureSettings()
+    {
+        try {
+            if (!File.Exists(toml)) {
+                File.WriteAllText(toml, DefaultSettings);
+            }
+            Directory.CreateDirectory(GamesDir);
+        } catch (IOException) {
+        } catch (UnauthorizedAccessException) {
+        }
+    }
+
+    static bool HasBundled(string name)
+    {
+        return File.Exists(Path.Combine(systemDir, name));
+    }
+
+    // Whether a clean start is impossible until the content pack is added
+    public static bool ContentMissing
+    {
+        get {
+            return !HasBundled(BundledBios) || !HasBundled(BundledMcpx) ||
+                   !File.Exists(Path.Combine(systemDir, "fresh", "xbox_hdd.qcow2"));
+        }
+    }
+
+    public static string DownloadsDir
+    {
+        get {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        }
+    }
+
+    // A content pack next to this program or in Downloads, newest first
+    public static string FindContentPack()
+    {
+        foreach (string dir in new[] { AppDomain.CurrentDomain.BaseDirectory, DownloadsDir }) {
+            try {
+                string found = Directory.GetFiles(dir, "BlackArrowOnline-content*.zip")
+                    .OrderByDescending(f => File.GetLastWriteTimeUtc(f)).FirstOrDefault();
+                if (found != null) {
+                    return found;
+                }
+            } catch (IOException) {
+            } catch (UnauthorizedAccessException) {
+            }
+        }
+        return null;
+    }
+
+    public static void InstallContent(string zip, Action<int> progress)
+    {
+        if (string.IsNullOrEmpty(zip) || !File.Exists(zip)) {
+            throw new InvalidOperationException("The content pack was not found.");
+        }
+        string root = AppDomain.CurrentDomain.BaseDirectory;
+        string system = Path.GetFullPath(systemDir).TrimEnd(Path.DirectorySeparatorChar);
+        // The console's own files and the programs do not come from a pack
+        string[] keep = { "xemu.toml", "eeprom.bin", "xbox_hdd.qcow2", "xemu.exe" };
+
+        ZipArchive archive;
+        try {
+            archive = ZipFile.OpenRead(zip);
+        } catch (InvalidDataException) {
+            throw new InvalidOperationException(
+                "That file is not a zip, or it did not download completely.");
+        }
+        using (archive) {
+            if (!archive.Entries.Any(e => e.FullName.Replace('\\', '/').Equals(
+                    ContentMarker, StringComparison.OrdinalIgnoreCase))) {
+                throw new InvalidOperationException(
+                    "That is not a Black Arrow Online content pack.\n\n" +
+                    "It is a zip named " + ContentPackName + ".");
+            }
+            long total = Math.Max(archive.Entries.Sum(e => e.Length), 1), done = 0;
+            var buffer = new byte[4 * 1024 * 1024];
+            foreach (ZipArchiveEntry entry in archive.Entries) {
+                string name = entry.FullName.Replace('\\', '/');
+                if (name.EndsWith("/")) {
+                    continue;
+                }
+                string target = Path.GetFullPath(Path.Combine(root, name));
+                string folder = Path.GetDirectoryName(target);
+                // Only into the system folder, whatever the zip says
+                if (!(folder + Path.DirectorySeparatorChar).StartsWith(
+                        system + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                    (string.Equals(folder, system, StringComparison.OrdinalIgnoreCase) &&
+                     keep.Contains(Path.GetFileName(target), StringComparer.OrdinalIgnoreCase))) {
+                    done += entry.Length;
+                    continue;
+                }
+                Directory.CreateDirectory(folder);
+                using (Stream src = entry.Open())
+                using (var dst = new FileStream(target, FileMode.Create, FileAccess.Write)) {
+                    int n;
+                    while ((n = src.Read(buffer, 0, buffer.Length)) > 0) {
+                        dst.Write(buffer, 0, n);
+                        done += n;
+                        if (progress != null) {
+                            progress((int)Math.Min(100, done * 100 / total));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     public static void StartClean(Action<int> progress)
     {
+        if (ContentMissing) {
+            throw new InvalidOperationException("Add the content pack first.");
+        }
         CopyFile(Path.Combine(systemDir, "fresh", "xbox_hdd.qcow2"), hddTarget, progress);
         File.Delete(eepromTarget);
         SetTomlPath("flashrom_path", BundledBios);
@@ -155,6 +309,12 @@ static class Launcher
               "An Xbox BIOS file is 256 KB or 1 MB.");
         Check(mcpx, "MCPX boot ROM", false, n => n == 512,
               "An MCPX boot ROM file is exactly 512 bytes.");
+        if ((string.IsNullOrEmpty(bios) && !HasBundled(BundledBios)) ||
+            (string.IsNullOrEmpty(mcpx) && !HasBundled(BundledMcpx))) {
+            throw new InvalidOperationException(
+                "This folder has no BIOS and MCPX boot ROM yet.\n\n" +
+                "Choose your own BIOS and MCPX files, or add the content pack first.");
+        }
 
         CopyFile(hdd, hddTarget, progress);
         File.Copy(eeprom, eepromTarget, true);
@@ -668,7 +828,9 @@ class SetupForm : Form
     readonly TextBox hddBox, eepromBox, biosBox, mcpxBox;
     readonly Button cleanButton, importButton;
     readonly ProgressBar progress;
-    readonly Label status, gamesLabel;
+    readonly Label status, gamesLabel, cleanText;
+
+    const string IdleStatus = "Close xemu before copying files that it is using.";
 
     public SetupForm(string previewPath)
     {
@@ -692,11 +854,16 @@ class SetupForm : Form
         // --- clean start ---
         var clean = AddPanel(24, 92, 632, 112);
         AddLabel(clean, "Clean start", 18, 12, 420, 28, 13F, true, TextColor);
-        AddLabel(clean, "A brand new console with the Xbox dashboards already installed.\n" +
-                        "Choose this if you have never used xemu, or want a fresh Xbox Live setup.",
-                 18, 44, 440, 56, 9F, false, Dim);
-        cleanButton = AddButton(clean, "Start clean", 468, 36, 146, 42, true);
-        cleanButton.Click += delegate { Run(p => Launcher.StartClean(p)); };
+        cleanText = AddLabel(clean, "", 18, 44, 440, 56, 9F, false, Dim);
+        cleanButton = AddButton(clean, "", 468, 36, 146, 42, true);
+        cleanButton.Click += delegate {
+            if (Launcher.ContentMissing) {
+                AddContent();
+            } else {
+                Run("Copying files...", p => Launcher.StartClean(p), null);
+            }
+        };
+        ShowClean();
 
         // --- existing files ---
         var import = AddPanel(24, 216, 632, 428);
@@ -725,7 +892,7 @@ class SetupForm : Form
         importButton.Click += delegate {
             string hdd = hddBox.Text.Trim(), eeprom = eepromBox.Text.Trim();
             string bios = biosBox.Text.Trim(), mcpx = mcpxBox.Text.Trim();
-            Run(p => Launcher.ImportExisting(hdd, eeprom, bios, mcpx, p));
+            Run("Copying files...", p => Launcher.ImportExisting(hdd, eeprom, bios, mcpx, p), null);
         };
 
         // --- what happens next ---
@@ -755,8 +922,7 @@ class SetupForm : Form
         Activated += delegate { ShowGames(); };
         ShowGames();
 
-        status = AddLabel(this, "Close xemu before copying files that it is using.",
-                          26, 656, 630, 22, 9F, false, Dim);
+        status = AddLabel(this, IdleStatus, 26, 656, 630, 22, 9F, false, Dim);
         UpdateInfo installed = Updater.Installed();
         if (installed.Build > 0) {
             Label build = AddLabel(this, "Build " + installed.Build, 668, 656, 320, 22, 9F,
@@ -779,34 +945,78 @@ class SetupForm : Form
         }
     }
 
-    void Run(Action<Action<int>> work)
+    // Without the content pack the clean start button asks for it instead
+    void ShowClean()
+    {
+        if (Launcher.ContentMissing) {
+            cleanText.ForeColor = Color.FromArgb(230, 180, 70);
+            cleanText.Text = "Needs the content pack first: " + Launcher.ContentPackName + ".\n" +
+                             "Download it from where you got Black Arrow Online, then add it " +
+                             "here. It is only needed once.";
+            cleanButton.Text = "Add content pack";
+        } else {
+            cleanText.ForeColor = Dim;
+            cleanText.Text = "A brand new console with the Xbox dashboards already installed.\n" +
+                             "Choose this if you have never used xemu, or want a fresh Xbox " +
+                             "Live setup.";
+            cleanButton.Text = "Start clean";
+        }
+    }
+
+    void AddContent()
+    {
+        string zip = Launcher.FindContentPack();
+        if (zip == null) {
+            using (var dialog = new OpenFileDialog()) {
+                dialog.Title = "Choose the content pack (" + Launcher.ContentPackName + ")";
+                dialog.Filter = "Content pack (*.zip)|*.zip|All files (*.*)|*.*";
+                if (Directory.Exists(Launcher.DownloadsDir)) {
+                    dialog.InitialDirectory = Launcher.DownloadsDir;
+                }
+                if (dialog.ShowDialog(this) != DialogResult.OK) {
+                    return;
+                }
+                zip = dialog.FileName;
+            }
+        }
+        Run("Adding the content pack...", p => Launcher.InstallContent(zip, p), ShowClean);
+    }
+
+    // Runs work in the background. With no "then", success finishes the setup
+    void Run(string what, Action<Action<int>> work, Action then)
     {
         cleanButton.Enabled = false;
         importButton.Enabled = false;
         progress.Value = 0;
         progress.Visible = true;
-        status.Text = "Copying files...";
+        status.Text = what;
 
         var worker = new BackgroundWorker();
         worker.WorkerReportsProgress = true;
         worker.DoWork += delegate { work(p => worker.ReportProgress(p)); };
         worker.ProgressChanged += delegate(object s, ProgressChangedEventArgs e) {
             progress.Value = Math.Min(100, e.ProgressPercentage);
-            status.Text = "Copying files... " + e.ProgressPercentage + "%";
+            status.Text = what + " " + e.ProgressPercentage + "%";
         };
         worker.RunWorkerCompleted += delegate(object s, RunWorkerCompletedEventArgs e) {
-            if (e.Error == null) {
+            if (e.Error == null && then == null) {
                 Completed = true;
                 Close();
                 return;
             }
-            Launcher.RemovePartialHdd();
+            if (then == null) {
+                Launcher.RemovePartialHdd();
+            }
             cleanButton.Enabled = true;
             importButton.Enabled = true;
             progress.Visible = false;
-            status.Text = "Close xemu before copying files that it is using.";
-            MessageBox.Show(this, e.Error.Message, "Black Arrow Online",
-                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            status.Text = IdleStatus;
+            if (e.Error != null) {
+                MessageBox.Show(this, e.Error.Message, "Black Arrow Online",
+                                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            } else {
+                then();
+            }
         };
         worker.RunWorkerAsync();
     }

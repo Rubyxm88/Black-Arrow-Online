@@ -68,6 +68,28 @@ csc.exe /nologo /target:winexe /optimize+ /win32icon:ui\icons\xemu-icon.ico ^
     /r:System.IO.Compression.FileSystem.dll black-arrow-online\package\Launcher.cs
 ```
 
+## The content pack
+
+The files that are not in this repository go into one zip, laid out like the
+package folder, with a marker file so the launcher recognises it:
+
+```
+BlackArrowOnline-content.zip
+    system/content.txt
+    system/mcpx.bin
+    system/Complex_4627v1.03.bin
+    system/XBL Dashboard.iso
+    system/XBL Dashboard Loader.iso
+    system/Black Arrow Update and Maps.iso
+    system/fresh/xbox_hdd.qcow2
+```
+
+A release unzipped into an empty folder plus the content pack is a complete
+package. The launcher writes a default `xemu.toml` when there is none, and
+while the BIOS, MCPX or clean disk is missing its clean start button asks
+for the content pack instead. It only ever unpacks into `system` and never
+over `xemu.toml`, `eeprom.bin`, `xbox_hdd.qcow2` or `xemu.exe`.
+
 ## Releases and updates
 
 `.github/workflows/black-arrow-online.yml` builds `xemu.exe` and the launcher

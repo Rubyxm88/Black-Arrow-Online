@@ -16,7 +16,7 @@ the map packs.
 
 | | |
 |---|---|
-| **The Black Arrow Online package** | Shared in the community. The [releases](../../releases) here are updates for it, not the full package. |
+| **The Black Arrow Online package** | Shared in the community, complete and ready to run. The [releases](../../releases) here keep it up to date. |
 | **Your own Black Arrow disc image** | An `.iso` of your game. It is not included. |
 | **An xb.live account** | Free, at [xb.live](https://xb.live). |
 | **A Windows PC** | Windows 10 or 11, 64-bit. A controller is recommended. |
@@ -122,6 +122,13 @@ the package files and the build scripts are in
 
 The Xbox BIOS and MCPX boot ROM, the Xbox dashboard, the XBL Dashboard, hard
 disk images and game content are not in this repository or its releases.
+
+They come with the full package, or separately as the **content pack**
+(`BlackArrowOnline-content.zip`), from where the package is shared. A folder
+made from a release alone asks for the content pack the first time: choose
+**Add content pack** in the setup window, pick the zip, and a clean start
+works from then on. If the zip is next to `Black Arrow Online.exe` or in your
+Downloads folder it is found by itself.
 
 ## Credits and licence
 
