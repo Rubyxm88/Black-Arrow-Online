@@ -40,6 +40,7 @@ that the package maintainer assembles.
 
 | Folder | Contents |
 |---|---|
+| `docs/` | Images used by the README and the release notes |
 | `package/` | Launcher source (`Launcher.cs`), the `xemu.toml` shipped with the package, the player README and the reset script |
 | `tools/` | Build script for the Windows executable, the clean hard disk builder, and FATX / Xbox disc image helpers |
 
@@ -63,8 +64,31 @@ On Windows, with the C# compiler that ships with the .NET Framework:
 ```
 csc.exe /nologo /target:winexe /optimize+ /win32icon:ui\icons\xemu-icon.ico ^
     "/out:Black Arrow Online.exe" /r:System.Windows.Forms.dll ^
-    /r:System.Drawing.dll black-arrow-online\package\Launcher.cs
+    /r:System.Drawing.dll /r:System.IO.Compression.dll ^
+    /r:System.IO.Compression.FileSystem.dll black-arrow-online\package\Launcher.cs
 ```
+
+## Releases and updates
+
+`.github/workflows/black-arrow-online.yml` builds `xemu.exe` and the launcher
+and publishes them as a release named `build-N`. It runs when `main` changes
+and once a day, when it looks for a new xemu release. A new xemu release is
+merged at build time, not pushed to `main`; if it does not merge cleanly the
+workflow opens an issue and releases nothing until `main` has been merged by
+hand.
+
+Each release has three files:
+
+| File | Contents |
+|---|---|
+| `BlackArrowOnline-update.zip` | Launcher, `xemu.exe`, README and `system/version.txt`, laid out like the package |
+| `version.txt` | Build number, xemu version and the SHA-256 of the zip |
+| `BlackArrowOnline-source-build-N.tar.zst` | The complete source of that build |
+
+The launcher compares `system\version.txt` with the `version.txt` of the
+latest release and offers the update when the build number is higher. It
+never replaces `xemu.toml`, `eeprom.bin`, `xbox_hdd.qcow2` or anything in
+`games`.
 
 ## Package layout
 

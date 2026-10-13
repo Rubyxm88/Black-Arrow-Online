@@ -44,6 +44,16 @@ it can update itself when it offers an update. If you brought your own hard
 disk it runs from the disc image instead and stays at the bundled version.
 
 
+UPDATES
+-------
+When a newer build is out, Black Arrow Online offers it when you start.
+An update replaces the launcher and the emulator only. Your console, Xbox
+Live sign-in, saves, settings and games are not touched. The previous
+emulator is kept as system\xemu.previous.exe.
+To turn the check off, create an empty file system\no-update-check.txt.
+Builds and notes: https://github.com/Rubyxm88/Black-Arrow-Online/releases
+
+
 CONTROLLER
 ----------
 Plug in a controller before starting and it is used automatically.
