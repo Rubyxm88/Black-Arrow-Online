@@ -104,6 +104,18 @@ static int hdd_read_sector(HddImage *img, uint64_t sector, uint8_t *buf)
     return hdd_read_at(img, offset, buf, SECTOR_SIZE) ? 1 : -1;
 }
 
+/* Whether text appears in the bytes, which may hold zeros */
+static bool has_bytes(const uint8_t *buf, size_t len, const char *text)
+{
+    size_t n = strlen(text);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (!memcmp(buf + i, text, n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int xemu_xbonline_hdd_account_names(const char *hdd_path, char *out,
                                     size_t out_len)
 {
@@ -132,7 +144,7 @@ int xemu_xbonline_hdd_account_names(const char *hdd_path, char *out,
         memcpy(name, buf + 24, 16);
         name[16] = 0;
         if (!name[0] || !strncmp(name, "SN.", 3) ||
-            !g_strstr_len((const char *)buf + 40, 64, "xbox.com")) {
+            !has_bytes(buf + 40, 64, "xbox.com")) {
             continue;
         }
         for (const char *c = name; *c; c++) {
