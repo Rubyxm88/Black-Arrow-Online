@@ -84,7 +84,10 @@ void xemu_diag_count_frame(int64_t now_us, int64_t gap_us, bool slow,
 /* With the lock held: count a second for the summary */
 void xemu_diag_count_second(int frames);
 
-/* With the lock held: " cpu=..% sys_cpu=..% mem_mb=.." for the second line */
+/*
+ * With the lock held: " disc_read=.. hdd_read=.. cpu=..% sys_cpu=..%
+ * mem_mb=.." for the second line
+ */
 void xemu_diag_print_system(FILE *log);
 
 const char *xemu_diag_cause_name(XemuDiagCause cause);

@@ -16,6 +16,10 @@
 #include "qemu/atomic.h"
 #include "qemu/timer.h"
 #include "qemu/xemu-perf.h"
+#include "qemu/main-loop.h"
+#include "block/aio.h"
+#include "block/accounting.h"
+#include "system/block-backend.h"
 #include <SDL3/SDL.h>
 #include <glib/gstdio.h>
 #ifdef _WIN32
@@ -220,7 +224,8 @@ static void write_header(FILE *f)
         "#\n"
         "# Lines:\n"
         "#   t=SECOND  one per second: frames shown, slow frames, longest "
-        "gap, cpu (xemu, whole PC), memory, work done (count/total ms), GPU "
+        "gap, disc and hard disk reads (MB/time spent), cpu (xemu, whole "
+        "PC), memory, work done (count/total ms), GPU "
         "counters\n"
         "#   SLOW      a frame of 50 ms or more, with its likely cause and "
         "the work done during it\n"
@@ -306,6 +311,7 @@ bool xemu_diag_start_path(const char *path)
     g_mutex_unlock(&lock);
 
     qatomic_set(&xemu_perf_enabled, true);
+    aio_bh_schedule_oneshot(qemu_get_aio_context(), io_start_bh, NULL);
     xemu_diag_write_check();
 
     if (!exit_registered) {
@@ -519,6 +525,85 @@ void xemu_diag_count_second(int frames)
     }
 }
 
+/*
+ * Disc and hard disk reads. The block layer keeps byte and time totals per
+ * drive, but may only be walked from the main loop, so a timer there copies
+ * them every IO_SAMPLE_MS for the frame logger to print.
+ */
+#define IO_SAMPLE_MS 250
+
+enum { IO_HDD, IO_DISC, IO__COUNT };
+enum { IO_READ_BYTES, IO_READ_NS, IO_WRITE_BYTES, IO__FIELDS };
+
+static uint64_t io_totals[IO__COUNT][IO__FIELDS];
+static QEMUTimer *io_timer;
+
+static void io_sample(void *opaque)
+{
+    uint64_t v[IO__COUNT][IO__FIELDS] = { 0 };
+
+    for (BlockBackend *blk = blk_next(NULL); blk; blk = blk_next(blk)) {
+        BlockAcctStats *stats = blk_get_stats(blk);
+        int drive = strstr(blk_name(blk), "-cd") ? IO_DISC : IO_HDD;
+        v[drive][IO_READ_BYTES] += stats->nr_bytes[BLOCK_ACCT_READ];
+        v[drive][IO_READ_NS] += stats->total_time_ns[BLOCK_ACCT_READ];
+        v[drive][IO_WRITE_BYTES] += stats->nr_bytes[BLOCK_ACCT_WRITE];
+    }
+    for (int d = 0; d < IO__COUNT; d++) {
+        for (int i = 0; i < IO__FIELDS; i++) {
+            qatomic_set(&io_totals[d][i], v[d][i]);
+        }
+    }
+    if (xemu_diag_active()) {
+        timer_mod(io_timer,
+                  qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + IO_SAMPLE_MS);
+    }
+}
+
+static void io_start_bh(void *opaque)
+{
+    if (!io_timer) {
+        io_timer = timer_new_ms(QEMU_CLOCK_REALTIME, io_sample, NULL);
+    }
+    io_sample(NULL);
+}
+
+/* " disc_read=MB/ms hdd_read=MB/ms hdd_write=MB" since the last call */
+static void print_io(FILE *f)
+{
+    static const char *const names[IO__COUNT] = { "hdd", "disc" };
+    static uint64_t last[IO__COUNT][IO__FIELDS];
+    static int last_generation = -1;
+
+    if (last_generation != generation) {
+        /* First second of a recording: only take the starting point */
+        last_generation = generation;
+        for (int d = 0; d < IO__COUNT; d++) {
+            for (int i = 0; i < IO__FIELDS; i++) {
+                last[d][i] = qatomic_read(&io_totals[d][i]);
+            }
+        }
+        return;
+    }
+    for (int d = IO__COUNT - 1; d >= 0; d--) {
+        uint64_t now[IO__FIELDS];
+        for (int i = 0; i < IO__FIELDS; i++) {
+            now[i] = qatomic_read(&io_totals[d][i]);
+        }
+        uint64_t rd = now[IO_READ_BYTES] - last[d][IO_READ_BYTES];
+        uint64_t rd_ns = now[IO_READ_NS] - last[d][IO_READ_NS];
+        uint64_t wr = now[IO_WRITE_BYTES] - last[d][IO_WRITE_BYTES];
+        if (rd) {
+            fprintf(f, " %s_read=%.1fMB/%.0fms", names[d], rd / 1048576.0,
+                    rd_ns / 1e6);
+        }
+        if (wr) {
+            fprintf(f, " %s_write=%.1fMB", names[d], wr / 1048576.0);
+        }
+        memcpy(last[d], now, sizeof(now));
+    }
+}
+
 #ifdef _WIN32
 static ULONGLONG filetime(FILETIME ft)
 {
@@ -528,6 +613,7 @@ static ULONGLONG filetime(FILETIME ft)
 
 void xemu_diag_print_system(FILE *f)
 {
+    print_io(f);
 #ifdef _WIN32
     static ULONGLONG last_proc, last_busy, last_total, last_wall;
     FILETIME c, e, k, u, idle, kern, user;
@@ -557,7 +643,5 @@ void xemu_diag_print_system(FILE *f)
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), &mem, sizeof(mem))) {
         fprintf(f, " mem_mb=%zu", (size_t)(mem.WorkingSetSize >> 20));
     }
-#else
-    (void)f;
 #endif
 }
