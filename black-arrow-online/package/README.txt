@@ -104,6 +104,14 @@ TROUBLE
 Setup window says "Add content pack" instead of "Start clean": this folder
   is an update download, not the full package. Get the full package from
   where Black Arrow Online is shared and start from that.
+"Xbox Live not found" or sign-in fails in the game:
+  - Close any other xemu or emulator and any game that is still running,
+    then start Black Arrow Online again. Another program on UDP port 3074
+    switched the console's network off in older builds.
+  - Sign in with the account the XBL Dashboard added for XB Online. An
+    account made for Insignia only does not work on XB Online until you
+    link it there (FIRST TIME, step 3).
+  - Still failing: send system\xemu.log to whoever shared the package.
 Game looks wrong: Machine > Settings > Display, turn off
   "Skip render target copy-back (speed hack)".
 Slow: View > Int. Resolution Scale, choose 1x.

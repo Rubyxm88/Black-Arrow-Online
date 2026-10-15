@@ -238,14 +238,22 @@ void xemu_net_enable(void)
             int host_port = g_config.net.nat.forward_ports[i].host;
             int guest_port = g_config.net.nat.forward_ports[i].guest;
 
+            /*
+             * A port that another program already holds only stops others
+             * from reaching games hosted here. Keep the network (and the DNS
+             * redirect) running: switching it off left the console without
+             * Xbox Live at all.
+             */
             if (slirp_add_hostfwd(s, is_udp, host_addr, host_port, guest_addr,
                                   guest_port) < 0) {
-                error_setg(&local_err,
-                           "Could not set host forwarding rule "
-                           "%d -> %d (%s)\n",
-                           host_port, guest_port, is_udp ? "udp" : "tcp");
-                xemu_queue_error_message(error_get_pretty(local_err));
-                break;
+                char *msg = g_strdup_printf(
+                    "Port %d (%s) is in use by another program, so other "
+                    "players cannot join games hosted here. Xbox Live still "
+                    "works. Close other emulators and restart to host.",
+                    host_port, is_udp ? "udp" : "tcp");
+                fprintf(stderr, "nat: %s\n", msg);
+                xemu_queue_notification(msg);
+                g_free(msg);
             }
 
         }
