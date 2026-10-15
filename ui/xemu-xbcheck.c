@@ -13,6 +13,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/bswap.h"
 #include "qemu/sockets.h"
 #include "qemu/thread.h"
 #include "xemu-settings.h"
