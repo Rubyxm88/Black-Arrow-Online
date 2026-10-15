@@ -1,0 +1,27 @@
+# Xbox Live hostnames the original Xbox looks up, and what XB Online's DNS
+# server (159.223.51.240) answers for them. Queried directly from a PC on
+# 2026-10-15. xemu's DNS fallback (net/filter-dns-redirect.c) uses the same
+# list when dns_redirect = 'xb_online' and the network gives the console a
+# wrong answer or none at all.
+#
+# Where the names come from:
+#   MACS, AS, TGS  XOnline library in every Live title and the dashboard
+#                  ("MACS%s%.4s.XBOXLIVE.COM" etc., the suffixes are empty
+#                  on retail consoles): machine account, Kerberos AS, TGS
+#   XDS            dashboard network test (MTU/ICMP check), xonlinedash.xbe
+#   MACS.XBOX.COM  also found in the XOnline library (Kerberos realm name);
+#                  xb.live answers it too, so it is listed
+#
+# xb.live answers every one of these with the same single address. Every
+# other name tried (xeas, xemacs, xetgs, xexds, sg, www, xboxlive.com,
+# xbox.com, made-up *.xboxlive.com names, google.com) is refused (REFUSED,
+# no address). Public DNS (1.1.1.1) answers macs/as.xboxlive.com with
+# Microsoft's 40.90.8.164, which is what a VPN or ISP DNS intercept gives
+# the console.
+#
+# name                  address
+macs.xboxlive.com       159.223.51.240
+as.xboxlive.com         159.223.51.240
+tgs.xboxlive.com        159.223.51.240
+xds.xboxlive.com        159.223.51.240
+macs.xbox.com           159.223.51.240
