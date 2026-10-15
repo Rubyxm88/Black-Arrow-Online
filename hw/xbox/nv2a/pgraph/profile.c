@@ -77,8 +77,7 @@ static void perf_log_frame(int64_t now)
         }
         if (log) {
             fprintf(log, "# renderer=%s use_dsp=%d cache_shaders=%d "
-                    "slow_frame_ms=%d
-",
+                    "slow_frame_ms=%d\n",
                     g_config.display.renderer == CONFIG_DISPLAY_RENDERER_VULKAN ?
                     "vulkan" : "opengl", g_config.audio.use_dsp,
                     g_config.perf.cache_shaders, PERF_SLOW_FRAME_US / 1000);
@@ -121,8 +120,7 @@ static void perf_log_frame(int64_t now)
                         g_nv2a_stats.frame_working.counters[i]);
             }
         }
-        fputc('
-', log);
+        fputc('\n', log);
     }
 
     if (now - window_start < 1000000) {
@@ -138,8 +136,7 @@ static void perf_log_frame(int64_t now)
             fprintf(log, " %s=%d", nv2a_profile_get_counter_name(i), totals[i]);
         }
     }
-    fputc('
-', log);
+    fputc('\n', log);
     fflush(log);
 
     window_start = now;
