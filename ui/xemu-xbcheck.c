@@ -169,7 +169,7 @@ static int dns_lookup(const char *server, const char *name, uint32_t *addr)
                 rdlen = lduw_be_p(r + o + 8);
                 o += 10;
                 if (type == 1 && rdlen == 4 && o + 4 <= n) {
-                    *addr = ldl_be_p(r + o);
+                    *addr = (uint32_t)ldl_be_p(r + o);
                     result = 1;
                     break;
                 }
@@ -344,7 +344,7 @@ static void check_dns(void)
                  "be replacing DNS answers (router, ISP or DNS filter).",
                  server);
     } else if (g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
-               addr != ldl_be_p((uint8_t[]){ 159, 223, 51, 240 })) {
+               addr != (uint32_t)ldl_be_p((uint8_t[]){ 159, 223, 51, 240 })) {
         item_set(i, XBCHECK_FAIL,
                  "Xbox Live was sent to %u.%u.%u.%u instead of XB Online. "
                  "Something between this PC and the internet answers DNS "
@@ -380,7 +380,7 @@ static bool clock_offset(int64_t *offset, char *server_used, size_t len)
             n = recv(fd, pkt, sizeof(pkt), 0);
             now = g_get_real_time();
             if (n == sizeof(pkt) && ldl_be_p(pkt + 40)) {
-                int64_t server_time = (int64_t)ldl_be_p(pkt + 40) -
+                int64_t server_time = (int64_t)(uint32_t)ldl_be_p(pkt + 40) -
                                       NTP_UNIX_OFFSET;
                 int64_t local_time = (sent + now) / 2 / G_USEC_PER_SEC;
                 *offset = local_time - server_time;
