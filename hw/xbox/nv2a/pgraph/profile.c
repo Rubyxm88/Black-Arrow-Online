@@ -32,28 +32,6 @@ int64_t xemu_perf_max_ns[XEMU_PERF__COUNT];
 /* A frame that takes this long is a hitch and gets a line of its own */
 #define PERF_SLOW_FRAME_US 50000
 
-static const char *const perf_names[XEMU_PERF__COUNT] = {
-    [XEMU_PERF_SHADER_GEN] = "shader_new",
-    [XEMU_PERF_SHADER_LOAD] = "shader_cached",
-    [XEMU_PERF_AUDIO_VP] = "audio_voices",
-    [XEMU_PERF_AUDIO_DSP] = "audio_dsp",
-    [XEMU_PERF_TCG] = "code_translate",
-    [XEMU_PERF_SHADER_ASYNC] = "shader_async",
-    [XEMU_PERF_DRAW_SKIPPED] = "draw_skipped",
-};
-
-/* " name=count/total_ms(max_ms)" for each kind of work that happened */
-static void perf_print_work(FILE *log, const int64_t *count, const int64_t *ns,
-                            const int64_t *max_ns)
-{
-    for (int i = 0; i < XEMU_PERF__COUNT; i++) {
-        if (count[i]) {
-            fprintf(log, " %s=%" PRId64 "/%.1fms(max %.1f)", perf_names[i],
-                    count[i], ns[i] / 1e6, max_ns[i] / 1e6);
-        }
-    }
-}
-
 /* The likely cause of a slow frame, from the work done during it */
 static XemuDiagCause perf_cause(int64_t gap_us, const int64_t *ns)
 {
@@ -79,55 +57,19 @@ static XemuDiagCause perf_cause(int64_t gap_us, const int64_t *ns)
 }
 
 /*
- * The frame lines of the diagnostics log (ui/xemu-diag.h), recorded from
- * XB Online > Diagnostics Log or, from the start, when the XEMU_PERF_LOG
- * environment variable names a file. One line is written per second with
- * the frame count, the longest gap between frames, CPU and memory use, the
- * work done and the per-second totals of every non-zero counter. Each frame
- * that took longer than PERF_SLOW_FRAME_US gets a "SLOW" line with its
- * likely cause and the work done during that frame alone.
+ * Reports each frame to the diagnostics log (ui/xemu-diag.h), which keeps
+ * the per-second lines for a log being recorded (XB Online > Diagnostics
+ * Log, or XEMU_PERF_LOG) and for freeze reports: the gap since the last
+ * frame, the work done in it and its GPU counters. A frame that took longer
+ * than PERF_SLOW_FRAME_US is slow and gets a likely cause.
  */
 static void perf_log_frame(int64_t now)
 {
-    static bool env_checked;
-    static int log_generation = -1;
-    static int64_t window_start, last_frame;
-    static int frames, slow_frames;
-    static int64_t max_gap;
-    static int totals[NV2A_PROF__COUNT];
-    static int64_t sec_count[XEMU_PERF__COUNT], sec_ns[XEMU_PERF__COUNT],
-                   sec_max[XEMU_PERF__COUNT];
+    static bool was_recording;
+    static int64_t last_frame;
 
-    if (!env_checked) {
-        const char *path = getenv("XEMU_PERF_LOG");
-        env_checked = true;
-        if (path && path[0]) {
-            xemu_diag_start_path(path);
-        }
-    }
-
-    int generation;
-    int64_t start;
-    FILE *log = xemu_diag_lock(&generation, &start);
-    if (!log) {
-        return;
-    }
-    if (generation != log_generation) {
-        /* A new recording: start counting from here */
-        log_generation = generation;
-        window_start = last_frame = now;
-        frames = slow_frames = 0;
-        max_gap = 0;
-        memset(totals, 0, sizeof(totals));
-        memset(sec_count, 0, sizeof(sec_count));
-        memset(sec_ns, 0, sizeof(sec_ns));
-        memset(sec_max, 0, sizeof(sec_max));
-        for (int i = 0; i < XEMU_PERF__COUNT; i++) {
-            qatomic_set(&xemu_perf_count[i], 0);
-            qatomic_set(&xemu_perf_ns[i], 0);
-            qatomic_set(&xemu_perf_max_ns[i], 0);
-        }
-        xemu_diag_unlock();
+    if (!xemu_diag_recording()) {
+        was_recording = false;
         return;
     }
 
@@ -138,62 +80,20 @@ static void perf_log_frame(int64_t now)
         count[i] = qatomic_xchg(&xemu_perf_count[i], 0);
         ns[i] = qatomic_xchg(&xemu_perf_ns[i], 0);
         max_ns[i] = qatomic_xchg(&xemu_perf_max_ns[i], 0);
-        sec_count[i] += count[i];
-        sec_ns[i] += ns[i];
-        sec_max[i] = MAX(sec_max[i], max_ns[i]);
+    }
+    if (!was_recording) {
+        /* Count from here */
+        was_recording = true;
+        last_frame = now;
+        return;
     }
 
     int64_t gap = now - last_frame;
     bool slow = gap >= PERF_SLOW_FRAME_US;
-    frames++;
-    max_gap = MAX(max_gap, gap);
     last_frame = now;
-    for (int i = 0; i < NV2A_PROF__COUNT; i++) {
-        totals[i] += g_nv2a_stats.frame_working.counters[i];
-    }
-
     XemuDiagCause cause = slow ? perf_cause(gap, ns) : XEMU_DIAG_CAUSE_OTHER;
-    xemu_diag_count_frame(now, gap, slow, cause);
-    if (slow) {
-        slow_frames++;
-        fprintf(log, "SLOW t=%.2f frame_ms=%.1f cause=%s", (now - start) / 1e6,
-                gap / 1e3, xemu_diag_cause_name(cause));
-        perf_print_work(log, count, ns, max_ns);
-        for (int i = 0; i < NV2A_PROF__COUNT; i++) {
-            if (g_nv2a_stats.frame_working.counters[i]) {
-                fprintf(log, " %s=%d", nv2a_profile_get_counter_name(i),
-                        g_nv2a_stats.frame_working.counters[i]);
-            }
-        }
-        fputc('\n', log);
-    }
-
-    if (now - window_start >= 1000000) {
-        fprintf(log, "t=%d frames=%d slow=%d max_gap_ms=%d",
-                (int)((now - start) / 1000000), frames, slow_frames,
-                (int)(max_gap / 1000));
-        xemu_diag_print_system(log);
-        perf_print_work(log, sec_count, sec_ns, sec_max);
-        for (int i = 0; i < NV2A_PROF__COUNT; i++) {
-            if (totals[i]) {
-                fprintf(log, " %s=%d", nv2a_profile_get_counter_name(i),
-                        totals[i]);
-            }
-        }
-        fputc('\n', log);
-        fflush(log);
-        xemu_diag_count_second(frames);
-
-        window_start = now;
-        frames = 0;
-        slow_frames = 0;
-        max_gap = 0;
-        memset(totals, 0, sizeof(totals));
-        memset(sec_count, 0, sizeof(sec_count));
-        memset(sec_ns, 0, sizeof(sec_ns));
-        memset(sec_max, 0, sizeof(sec_max));
-    }
-    xemu_diag_unlock();
+    xemu_diag_frame(now, gap, slow, cause, count, ns, max_ns,
+                    g_nv2a_stats.frame_working.counters, NV2A_PROF__COUNT);
 }
 
 void nv2a_profile_increment(void)

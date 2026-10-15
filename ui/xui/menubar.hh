@@ -20,6 +20,7 @@
 
 void ProcessKeyboardShortcuts(void);
 void ShowMainMenu();
+void DrawFreezeToast();
 
 #ifdef CONFIG_RENDERDOC
 extern bool g_capture_renderdoc_frame;

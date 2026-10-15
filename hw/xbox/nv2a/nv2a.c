@@ -200,6 +200,40 @@ int nv2a_get_screen_off(void)
     return g_nv2a->vga.sr[VGA_SEQ_CLOCK_MODE] & VGA_SR01_SCREEN_OFF;
 }
 
+void nv2a_freeze_state(GString *out)
+{
+    NV2AState *d = g_nv2a;
+    if (!d) {
+        return;
+    }
+    /* Read without the locks: a stuck GPU thread may be holding them */
+    const uint32_t *r = d->pfifo.regs;
+    PGRAPHState *pg = &d->pgraph;
+    g_string_append_printf(out,
+        "GPU fifo dma_put=%08x dma_get=%08x dma_push=%x dma_state=%x "
+        "status=%x push0=%x pull0=%x halt=%d\n",
+        r[NV_PFIFO_CACHE1_DMA_PUT], r[NV_PFIFO_CACHE1_DMA_GET],
+        r[NV_PFIFO_CACHE1_DMA_PUSH], r[NV_PFIFO_CACHE1_DMA_STATE],
+        r[NV_PFIFO_CACHE1_STATUS], r[NV_PFIFO_CACHE1_PUSH0],
+        r[NV_PFIFO_CACHE1_PULL0], d->pfifo.halt);
+    g_string_append_printf(out,
+        "GPU graph waiting_for_nop=%d waiting_for_flip=%d "
+        "waiting_for_context_switch=%d flush_pending=%d sync_pending=%d "
+        "framebuffer_in_use=%d\n",
+        pg->waiting_for_nop, pg->waiting_for_flip,
+        pg->waiting_for_context_switch, pg->flush_pending, pg->sync_pending,
+        pg->framebuffer_in_use);
+    g_string_append_printf(out,
+        "GPU interrupts pmc=%x/%x fifo=%x/%x graph=%x/%x crtc=%x/%x "
+        "timer=%x/%x\n",
+        d->pmc.pending_interrupts, d->pmc.enabled_interrupts,
+        d->pfifo.pending_interrupts, d->pfifo.enabled_interrupts,
+        pg->pending_interrupts, pg->enabled_interrupts,
+        d->pcrtc.pending_interrupts, d->pcrtc.enabled_interrupts,
+        d->ptimer.pending_interrupts, d->ptimer.enabled_interrupts);
+    g_string_append_printf(out, "GPU frames=%u\n", g_nv2a_stats.frame_count);
+}
+
 static void nv2a_vga_gfx_update(void *opaque)
 {
     VGACommonState *vga = opaque;

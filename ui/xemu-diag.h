@@ -8,6 +8,12 @@
  * its likely cause, events (markers, focus changes, disc changes, connection
  * check results, shader precache) and a summary when recording stops.
  *
+ * Freeze reports: the same lines are also kept in memory for the last
+ * minute, without writing anything. When the game shows no new picture for
+ * FREEZE_SECONDS while the emulator runs, a short report with those lines
+ * and what the emulated CPU and GPU were doing is written to the logs folder
+ * (RSO Settings > Diagnostics > Save a report when the game freezes).
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -66,31 +72,35 @@ void xemu_diag_event(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
 /* Write the connection check results, when a check has finished */
 void xemu_diag_write_check(void);
 
-/* Called from the UI each frame: watches focus and disc changes */
+/*
+ * Called from the UI each frame: starts the background capture, watches
+ * focus and disc changes
+ */
 void xemu_diag_poll(void);
 
-/*
- * For the frame logger: the open file, locked, or NULL when not recording.
- * *generation changes every time a new recording starts and *start_us is
- * when it started (QEMU_CLOCK_REALTIME). Unlock after writing.
- */
-FILE *xemu_diag_lock(int *generation, int64_t *start_us);
-void xemu_diag_unlock(void);
-
-/* With the lock held: count a frame for the summary */
-void xemu_diag_count_frame(int64_t now_us, int64_t gap_us, bool slow,
-                           XemuDiagCause cause);
-
-/* With the lock held: count a second for the summary */
-void xemu_diag_count_second(int frames);
+/* Whether the frame logger should report frames (a log or freeze reports) */
+bool xemu_diag_recording(void);
 
 /*
- * With the lock held: " disc_read=.. hdd_read=.. cpu=..% sys_cpu=..%
- * mem_mb=.." for the second line
+ * From the frame logger, once per frame: the gap since the previous frame,
+ * the work done in it (per XemuPerfKind) and the GPU counters of the frame
+ * (gpu_n of them, named by nv2a_profile_get_counter_name)
  */
-void xemu_diag_print_system(FILE *log);
+void xemu_diag_frame(int64_t now_us, int64_t gap_us, bool slow,
+                     XemuDiagCause cause, const int64_t *count,
+                     const int64_t *ns, const int64_t *max_ns, const int *gpu,
+                     int gpu_n);
 
 const char *xemu_diag_cause_name(XemuDiagCause cause);
+
+/* Seconds since this run wrote a freeze report, or -1 if it has not */
+double xemu_diag_freeze_age(void);
+
+/* The newest freeze report in the logs folder, or NULL. Free with g_free. */
+char *xemu_diag_last_freeze_report(void);
+
+/* Open the newest freeze report. False if there is none. */
+bool xemu_diag_open_freeze_report(void);
 
 #ifdef __cplusplus
 }

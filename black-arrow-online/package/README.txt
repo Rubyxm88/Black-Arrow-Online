@@ -49,6 +49,7 @@ HELP
   Connection Check              Runs the XB Online check (see below).
   Record Diagnostics Log        Records a log while you play (see LAG).
   Mark Lag Spike (F9)           Marks the moment in the log you are recording.
+  Open Last Freeze Report       Opens the newest freeze report (see FREEZES).
   Open Logs Folder              Opens system\logs.
   Shader Cache                  See SHADERS below.
 
@@ -81,6 +82,9 @@ GRAPHICS
   Vertical sync                 Turn off only if you know you need to.
 DIAGNOSTICS
   Record Diagnostics Log, Open Logs Folder (see LAG).
+  Save a report when the game freezes
+                                On by default (see FREEZES).
+  Open Last Freeze Report       See FREEZES.
 
 
 SHADERS
@@ -102,6 +106,18 @@ usual, and press F9 right after each lag spike. Stop the log from the same
 menu (or just close the emulator). The log is in system\logs (Open Logs
 Folder); send it to whoever shared the package. It holds your PC's
 specs, frame times and what caused each slow frame, not your account.
+
+
+FREEZES
+-------
+You don't have to turn anything on. While you play, the emulator keeps the
+last minute of the diagnostics log in memory and writes nothing. If the
+game freezes (no new picture for 10 seconds while the emulator runs), it
+saves a short freeze report in system\logs and shows "The game stopped
+responding" in the top left. Open it with XB Online > Help > Open Last
+Freeze Report and send it to whoever shared the package. Only the newest 5
+reports are kept. To turn it off: RSO Settings > Save a report when the
+game freezes.
 
 
 NEW ACCOUNT

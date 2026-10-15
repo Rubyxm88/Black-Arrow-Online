@@ -4,7 +4,8 @@
  * Time spent on work that can cause a hitch: compiling a new shader, loading
  * a cached one, mixing audio and translating guest code the first time it
  * runs. The NV2A profiler (hw/xbox/nv2a/pgraph/profile.c) reads and clears
- * them each frame when the XEMU_PERF_LOG environment variable is set.
+ * them each frame while a diagnostics log records or freeze reports are on
+ * (ui/xemu-diag.h).
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

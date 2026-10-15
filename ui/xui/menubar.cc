@@ -29,6 +29,7 @@
 #include "update.hh"
 #include "xbcheck.hh"
 #include "shader-cache.hh"
+#include "viewport-manager.hh"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
@@ -135,6 +136,60 @@ static void StopDiagnosticsLog()
     xemu_diag_stop();
     xemu_queue_notification("Diagnostics log saved in the logs folder");
     xemu_diag_open_folder();
+}
+
+static void OpenFreezeReport()
+{
+    if (!xemu_diag_open_freeze_report()) {
+        xemu_queue_notification("No freeze report yet: one is saved by "
+                                "itself when the game freezes");
+    }
+}
+
+// How long the notice stays after a freeze report was saved
+#define FREEZE_TOAST_SECONDS 20.0
+
+// Top left, under the XB Online and shader notices
+void DrawFreezeToast()
+{
+    double age = xemu_diag_freeze_age();
+    if (age < 0 || age > FREEZE_TOAST_SECONDS) {
+        return;
+    }
+
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    float scale = g_viewport_mgr.m_scale;
+    float pad = 10.0f * scale;
+    float below = pad + ImGui::GetFrameHeightWithSpacing() * 4.2f;
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + below));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    if (ImGui::Begin("Freeze Report", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        // An exclamation mark in an orange circle, drawn: the font has no
+        // such glyph
+        float size = ImGui::GetTextLineHeight();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImVec2 c(p.x + size / 2, p.y + size / 2);
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        dl->AddCircleFilled(c, size / 2, IM_COL32(230, 130, 30, 255));
+        dl->AddLine(ImVec2(c.x, c.y - size * 0.28f),
+                    ImVec2(c.x, c.y + size * 0.08f), IM_COL32_WHITE,
+                    2.0f * scale);
+        dl->AddCircleFilled(ImVec2(c.x, c.y + size * 0.24f), 1.4f * scale,
+                            IM_COL32_WHITE);
+        ImGui::Dummy(ImVec2(size, size));
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::Text("The game stopped responding");
+        ImGui::TextDisabled("A freeze report was saved:");
+        ImGui::TextDisabled("XB Online > Help > Open Last Freeze Report");
+        ImGui::EndGroup();
+    }
+    ImGui::End();
 }
 
 void ShowMainMenu()
@@ -291,6 +346,9 @@ void ShowMainMenu()
             } else if (ImGui::MenuItem("Record Diagnostics Log")) {
                 StartDiagnosticsLog();
             }
+            if (ImGui::MenuItem("Open Last Freeze Report")) {
+                OpenFreezeReport();
+            }
             if (ImGui::MenuItem("Open Logs Folder")) {
                 xemu_diag_open_folder();
             }
@@ -385,6 +443,15 @@ void ShowMainMenu()
                 }
             } else if (ImGui::MenuItem("Record Diagnostics Log")) {
                 StartDiagnosticsLog();
+            }
+            MenuToggle("Save a report when the game freezes",
+                       &g_config.perf.freeze_report,
+                       "When the game shows no new picture for 10 seconds, "
+                       "save a short report of the last minute and what "
+                       "the Xbox was doing to the logs folder. Nothing is "
+                       "written until then.");
+            if (ImGui::MenuItem("Open Last Freeze Report")) {
+                OpenFreezeReport();
             }
             if (ImGui::MenuItem("Open Logs Folder")) {
                 xemu_diag_open_folder();

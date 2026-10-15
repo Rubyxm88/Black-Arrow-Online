@@ -352,6 +352,7 @@ void xemu_hud_update(void)
 #endif
     if (!first_boot_window.is_open) xbcheck_window.Draw();
     if (!first_boot_window.is_open) shader_cache_window.Draw();
+    if (!first_boot_window.is_open) DrawFreezeToast();
     g_scene_mgr.Draw();
     if (!first_boot_window.is_open) notification_manager.Draw();
     g_snapshot_mgr.Draw();

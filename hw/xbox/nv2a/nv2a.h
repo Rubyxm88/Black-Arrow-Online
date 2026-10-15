@@ -30,4 +30,7 @@ unsigned int nv2a_get_surface_scale_factor(void);
 const uint8_t *nv2a_get_dac_palette(void);
 int nv2a_get_screen_off(void);
 
+/* What the GPU is doing, for a freeze report (ui/xemu-diag.c) */
+void nv2a_freeze_state(GString *out);
+
 #endif
