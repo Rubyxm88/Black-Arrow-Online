@@ -130,8 +130,12 @@ static void InitializeStyle()
     g_base_style = s;
 }
 
+static SDL_Window *hud_window;
+static int hud_frames;
+
 void xemu_hud_init(SDL_Window* window, void* sdl_gl_context)
 {
+    hud_window = window;
     xemu_monitor_init();
     g_vsync = g_config.display.window.vsync;
 
@@ -357,6 +361,16 @@ void xemu_hud_update(void)
 
 void xemu_hud_render()
 {
+    /*
+     * Started by the Black Arrow Online launcher, the window opens behind
+     * other windows. Once it is on screen, force it to the front, once.
+     */
+    if (++hud_frames == 5 && hud_window) {
+        SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "1");
+        SDL_RaiseWindow(hud_window);
+        SDL_ResetHint(SDL_HINT_FORCE_RAISEWINDOW);
+    }
+
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
