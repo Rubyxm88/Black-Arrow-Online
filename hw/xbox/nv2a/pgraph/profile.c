@@ -62,7 +62,8 @@ static XemuDiagCause perf_cause(int64_t gap_us, const int64_t *ns)
     if (gap_us >= 2000000) {
         return XEMU_DIAG_CAUSE_PAUSE;
     }
-    if (ns[XEMU_PERF_SHADER_GEN] * 3 >= gap_us * 1000) {
+    if ((ns[XEMU_PERF_SHADER_GEN] + ns[XEMU_PERF_SHADER_ASYNC]) * 3 >=
+        gap_us * 1000) {
         return XEMU_DIAG_CAUSE_SHADER;
     }
     if (ns[XEMU_PERF_TCG] * 3 >= gap_us * 1000) {
