@@ -20,6 +20,9 @@
 #include "xemu-net.h"
 #include "xemu-xbonline.h"
 #include "xemu-xbcheck.h"
+#ifdef _WIN32
+#include <iphlpapi.h>
+#endif
 
 /* A clock further off than this breaks the Kerberos sign-in */
 #define CLOCK_LIMIT_SECONDS 120
@@ -212,6 +215,112 @@ static void check_network(void)
     }
 }
 
+#ifdef _WIN32
+/* Names of the network adapter that holds an address, false if none does */
+static bool adapter_of(uint32_t addr, char *name, size_t name_len,
+                       char *desc, size_t desc_len, bool *virtual_if)
+{
+    ULONG size = 32 * 1024;
+    IP_ADAPTER_ADDRESSES *list = NULL;
+    bool found = false;
+    ULONG r = ERROR_BUFFER_OVERFLOW;
+
+    for (int tries = 0; tries < 3 && r == ERROR_BUFFER_OVERFLOW; tries++) {
+        g_free(list);
+        list = g_malloc(size);
+        r = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST |
+                                 GAA_FLAG_SKIP_MULTICAST |
+                                 GAA_FLAG_SKIP_DNS_SERVER, NULL, list, &size);
+    }
+    for (IP_ADAPTER_ADDRESSES *a = r == NO_ERROR ? list : NULL;
+         a && !found; a = a->Next) {
+        for (IP_ADAPTER_UNICAST_ADDRESS *u = a->FirstUnicastAddress; u;
+             u = u->Next) {
+            struct sockaddr_in *sin =
+                (struct sockaddr_in *)u->Address.lpSockaddr;
+            if (sin->sin_family == AF_INET &&
+                ntohl(sin->sin_addr.s_addr) == addr) {
+                gchar *n = g_utf16_to_utf8((gunichar2 *)a->FriendlyName, -1,
+                                           NULL, NULL, NULL);
+                gchar *d = g_utf16_to_utf8((gunichar2 *)a->Description, -1,
+                                           NULL, NULL, NULL);
+                snprintf(name, name_len, "%s", n ? n : "?");
+                snprintf(desc, desc_len, "%s", d ? d : "?");
+                g_free(n);
+                g_free(d);
+                /* PPP, tunnel and virtual adapters are how VPNs connect */
+                *virtual_if = a->IfType == IF_TYPE_PPP ||
+                              a->IfType == IF_TYPE_TUNNEL ||
+                              a->IfType == IF_TYPE_PROP_VIRTUAL;
+                found = true;
+                break;
+            }
+        }
+    }
+    g_free(list);
+    return found;
+}
+#endif
+
+static bool looks_like_vpn(const char *name, const char *desc)
+{
+    static const char *const words[] = {
+        "vpn", "wireguard", "wintun", "tap-windows", "tap adapter", "openvpn",
+        "nordlynx", "surfshark", "proton", "mullvad", "expressvpn", "windscribe",
+        "hamachi", "zerotier", "radmin", "tailscale", "cloudflare", "anyconnect",
+        "fortinet", "forticlient", "globalprotect", "pangp", "cyberghost",
+        "ipvanish", "private internet access", "hotspot shield", "tunnel",
+    };
+    gchar *text = g_ascii_strdown(name, -1);
+    gchar *d = g_ascii_strdown(desc, -1);
+    bool found = false;
+
+    for (int i = 0; i < ARRAY_SIZE(words) && !found; i++) {
+        found = strstr(text, words[i]) || strstr(d, words[i]);
+    }
+    g_free(text);
+    g_free(d);
+    return found;
+}
+
+/*
+ * The console's traffic leaves through whichever adapter Windows uses for
+ * the internet. Through a VPN, DNS lookups are usually answered by the VPN
+ * itself, so the console never reaches XB Online.
+ */
+static void check_route(void)
+{
+    int i = item_add("Internet connection");
+    uint32_t addr;
+    char ip[16], name[128] = "", desc[128] = "";
+    bool virtual_if = false, known = false;
+
+    if (!xemu_net_lan_address(&addr)) {
+        item_set(i, XBCHECK_FAIL,
+                 "This PC has no internet connection the console can use.");
+        return;
+    }
+    snprintf(ip, sizeof(ip), "%u.%u.%u.%u", addr >> 24, (addr >> 16) & 255,
+             (addr >> 8) & 255, addr & 255);
+#ifdef _WIN32
+    known = adapter_of(addr, name, sizeof(name), desc, sizeof(desc),
+                       &virtual_if);
+#endif
+    if (known && (virtual_if || looks_like_vpn(name, desc))) {
+        item_set(i, XBCHECK_WARN,
+                 "Goes through \"%s\" (%s, %s), which looks like a VPN. VPNs "
+                 "answer Xbox Live lookups themselves, so the game says Xbox "
+                 "Live not found. Turn the VPN off (also its auto-connect and "
+                 "kill switch) and restart Black Arrow Online.",
+                 name, desc, ip);
+    } else if (known) {
+        item_set(i, XBCHECK_OK, "Through \"%s\" (%s), address %s.", name, desc,
+                 ip);
+    } else {
+        item_set(i, XBCHECK_OK, "Address %s.", ip);
+    }
+}
+
 static void check_dns(void)
 {
     int i = item_add("XB Online server");
@@ -383,6 +492,7 @@ static void *check_thread(void *opaque)
 {
     fprintf(stderr, "xbcheck: start\n");
     check_network();
+    check_route();
     check_dns();
     check_clock();
     check_disc();

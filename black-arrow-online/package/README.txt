@@ -118,6 +118,11 @@ Setup window says "Add content pack" instead of "Start clean": this folder
 "Xbox Live not found" or sign-in fails in the game:
   - Look at the XB Online check panel (XB Online > Check Connection) and
     fix whatever it marks FIX or WARN first.
+  - VPN: turn it off completely (also auto-connect and kill switch) and
+    restart Black Arrow Online. A VPN answers the Xbox Live lookups itself,
+    so the console never reaches XB Online. A sign: Settings > Network in
+    the dashboard shows an address that is not this PC's normal one
+    (for example 10.14.0.2).
   - "PC clock": Xbox Live sign-in fails when the Windows clock or time
     zone is wrong. Settings > Time: set time and time zone automatically.
   - "Game update": XB Online > Install Game Update + Maps.

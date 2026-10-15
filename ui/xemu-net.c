@@ -65,7 +65,7 @@ const char *xemu_net_dns_redirect_server(void)
  * Address of this computer on its local network: the source address used for
  * traffic to the internet. No packet is sent to find it.
  */
-static bool get_lan_address(uint32_t *addr)
+bool xemu_net_lan_address(uint32_t *addr)
 {
     struct sockaddr_in remote = { .sin_family = AF_INET,
                                   .sin_port = htons(53) };
@@ -107,7 +107,7 @@ static bool get_lan_nat_network(char **net, char **host, char **dns,
 {
     uint32_t addr;
 
-    if (!get_lan_address(&addr)) {
+    if (!xemu_net_lan_address(&addr)) {
         return false;
     }
 

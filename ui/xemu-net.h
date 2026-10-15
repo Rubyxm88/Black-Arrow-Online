@@ -33,6 +33,12 @@ int xemu_net_is_enabled(void);
 /* DNS server the console's lookups are sent to, or NULL if not redirected */
 const char *xemu_net_dns_redirect_server(void);
 
+/*
+ * Address this computer uses for traffic to the internet, which the console
+ * takes in NAT mode. False if there is none.
+ */
+bool xemu_net_lan_address(uint32_t *addr);
+
 #ifdef __cplusplus
 }
 #endif
