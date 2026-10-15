@@ -47,12 +47,61 @@ XB LIVE ACCOUNT
   Link Code                     Opens xb.live/link in your browser.
 HELP
   Connection Check              Runs the XB Online check (see below).
+  Record Diagnostics Log        Records a log while you play (see LAG).
+  Mark Lag Spike (F9)           Marks the moment in the log you are recording.
+  Open Logs Folder              Opens system\logs.
+  Shader Cache                  See SHADERS below.
 
 On a controller, press the Guide/Home button for the same options.
 
 The XBL Dashboard is installed on the console's hard disk (clean start), so
 it can update itself when it offers an update. If you brought your own hard
 disk it runs from the disc image instead and stays at the bundled version.
+
+
+THE RSO SETTINGS MENU (next to XB Online)
+-----------------------------------------
+Every switch here can be turned back off if something looks wrong.
+SHADERS
+  Shader Cache...               How many shaders are ready, build or clear them.
+  Save shaders to disk          Keep built shaders for the next start.
+  Build shaders in the background
+                                A new effect builds without freezing the game;
+                                it may be missing for a frame or two instead.
+  Precache shaders automatically
+                                See SHADERS below.
+  Precache this PC's own shaders
+                                Also rebuild shaders this PC saw before (after
+                                a driver update or a resolution change).
+GRAPHICS
+  Renderer                      OpenGL (recommended) or Vulkan. Needs a restart.
+                                Shader caching works with OpenGL only.
+  Resolution                    1x (fastest) to 4x. 2x is the default.
+  Skip render target copy-back  Speed hack. Turn off if the game looks wrong.
+  Vertical sync                 Turn off only if you know you need to.
+DIAGNOSTICS
+  Record Diagnostics Log, Open Logs Folder (see LAG).
+
+
+SHADERS
+-------
+The first time an effect appears (a map, night vision, thermal, a menu),
+your graphics card has to build a shader for it, which used to make the
+game hitch. Black Arrow Online ships a list of the game's shaders: a few
+seconds after starting, it builds the ones not ready yet for your graphics
+card and resolution in the background. A small notice in the top left shows
+the progress, then "Shaders ready". This takes a few seconds and only
+happens again after a graphics driver update or a resolution change.
+To turn it off: RSO Settings > Precache shaders automatically.
+
+
+LAG
+---
+If the game stutters or lags: XB Online > Record Diagnostics Log, play as
+usual, and press F9 right after each lag spike. Stop the log from the same
+menu (or just close the emulator). The log is in system\logs (Open Logs
+Folder); send it to whoever shared the package. It holds your PC's
+specs, frame times and what caused each slow frame, not your account.
 
 
 NEW ACCOUNT
@@ -67,7 +116,7 @@ Your gamertag then shows in the XB Online menu under XB LIVE ACCOUNT.
 UPDATES
 -------
 When a newer build is out, Black Arrow Online offers it when you start.
-An update replaces the launcher and the emulator only. Your console, Xbox
+An update replaces the launcher, the emulator and the shader list only. Your console, Xbox
 Live sign-in, saves, settings and games are not touched. The previous
 emulator is kept as system\xemu.previous.exe.
 To turn the check off, create an empty file system\no-update-check.txt.
@@ -129,9 +178,9 @@ Setup window says "Add content pack" instead of "Start clean": this folder
     account that is not linked to xb.live does not work until you link it
     (FIRST TIME, step 3).
   - Still failing: send system\xemu.log to whoever shared the package.
-Game looks wrong: Machine > Settings > Display, turn off
-  "Skip render target copy-back (speed hack)".
-Slow: View > Int. Resolution Scale, choose 1x.
+Game looks wrong: RSO Settings, turn off "Skip render target copy-back".
+  Effects missing or flickering: turn off "Build shaders in the background".
+Slow: RSO Settings > Resolution, choose 1x.
 Stutter on a 144 Hz (or other high refresh) monitor: the game runs at 30
   frames, which divides evenly into 60, 120 or 240 Hz but not 144 or 165.
   Set the monitor to 120 Hz (or 60 Hz) in Windows display settings.

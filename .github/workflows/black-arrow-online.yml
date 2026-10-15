@@ -269,6 +269,7 @@ jobs:
         cp black-arrow-online/package/README.txt pkg/README.txt
         cp "black-arrow-online/package/Start over.bat" "pkg/system/Start over.bat"
         cp black-arrow-online/package/Launcher.cs pkg/system/Launcher-source.cs
+        cp black-arrow-online/package/shader-list.bin pkg/system/shader-list.bin
         notes=$(cat meta/notes.txt 2>/dev/null || true)
         printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
             "$BUILD" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
@@ -307,7 +308,7 @@ jobs:
           echo
           echo "| File | What it is |"
           echo "|---|---|"
-          echo "| \`BlackArrowOnline-update.zip\` | The launcher and xemu.exe |"
+          echo "| \`BlackArrowOnline-update.zip\` | The launcher, xemu.exe and the shader list |"
           echo "| \`version.txt\` | What the launcher reads to find this build |"
           echo "| \`BlackArrowOnline-source-build-$BUILD.tar.zst\` | The complete source this build was made from |"
         } > notes.md
