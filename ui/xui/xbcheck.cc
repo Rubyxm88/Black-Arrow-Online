@@ -53,10 +53,11 @@ void XbCheckWindow::Draw()
     XbCheckItem items[XBCHECK_MAX_ITEMS];
     bool running;
     int n = xemu_xbcheck_get(items, XBCHECK_MAX_ITEMS, &running);
-    bool problem = false;
+    bool problem = false, needs_action = false;
     for (int i = 0; i < n; i++) {
         problem |= items[i].state == XBCHECK_WARN ||
                    items[i].state == XBCHECK_FAIL;
+        needs_action |= items[i].action != XBCHECK_ACTION_NONE;
     }
 
     double now = ImGui::GetTime();
@@ -64,7 +65,7 @@ void XbCheckWindow::Draw()
         m_done_time = -1;
     } else if (m_done_time < 0) {
         m_done_time = now;
-    } else if (!problem && now - m_done_time > CLOSE_DELAY) {
+    } else if (!problem && !needs_action && now - m_done_time > CLOSE_DELAY) {
         is_open = false;
         return;
     }
@@ -120,6 +121,13 @@ void XbCheckWindow::Draw()
                                   ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
             ImGui::TextWrapped("%s", items[i].detail);
             ImGui::PopStyleColor();
+            if (items[i].action == XBCHECK_ACTION_OPEN_GAMES_FOLDER) {
+                ImGui::PushID(i);
+                if (ImGui::SmallButton("Open games folder")) {
+                    xemu_xbcheck_open_games_folder();
+                }
+                ImGui::PopID();
+            }
             ImGui::Unindent(ImGui::CalcTextSize("  OK   ").x);
         }
     }

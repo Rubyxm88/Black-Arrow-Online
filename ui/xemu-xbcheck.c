@@ -20,6 +20,7 @@
 #include "xemu-net.h"
 #include "xemu-xbonline.h"
 #include "xemu-xbcheck.h"
+#include <SDL3/SDL.h>
 #ifdef _WIN32
 #include <iphlpapi.h>
 #endif
@@ -53,6 +54,7 @@ static int item_add(const char *name)
     i = item_count++;
     items[i].name = name;
     items[i].state = XBCHECK_RUNNING;
+    items[i].action = XBCHECK_ACTION_NONE;
     snprintf(items[i].detail, sizeof(items[i].detail), "Checking...");
     qemu_mutex_unlock(&lock);
     return i;
@@ -450,6 +452,9 @@ static void check_disc(void)
         item_set(i, XBCHECK_INFO,
                  "No game yet. Copy your Black Arrow disc image (.iso) into "
                  "the \"games\" folder, then choose XB Online > Play and your game.");
+        qemu_mutex_lock(&lock);
+        items[i].action = XBCHECK_ACTION_OPEN_GAMES_FOLDER;
+        qemu_mutex_unlock(&lock);
     } else if (!path || !path[0]) {
         item_set(i, XBCHECK_INFO, "No disc loaded. To play, choose XB Online "
                  "> Play and your game.");
@@ -566,4 +571,27 @@ int xemu_xbcheck_get(XbCheckItem *out, int max, bool *is_running)
 void xemu_xbcheck_note_port_busy(int port)
 {
     port_busy = port;
+}
+
+void xemu_xbcheck_open_games_folder(void)
+{
+    const char *dir = g_config.general.games_dir;
+    gchar *path, *url;
+
+    if (!dir || !dir[0]) {
+        return;
+    }
+    path = g_canonicalize_filename(dir, NULL);
+    g_mkdir_with_parents(path, 0755);
+#ifdef _WIN32
+    /* Explorer opens a folder given as a plain path */
+    url = g_strdup(path);
+#else
+    url = g_filename_to_uri(path, NULL, NULL);
+#endif
+    if (url) {
+        SDL_OpenURL(url);
+    }
+    g_free(url);
+    g_free(path);
 }

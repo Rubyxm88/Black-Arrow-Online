@@ -22,9 +22,16 @@ typedef enum XbCheckState {
     XBCHECK_FAIL,
 } XbCheckState;
 
+/* A button the panel shows under an item */
+typedef enum XbCheckAction {
+    XBCHECK_ACTION_NONE,
+    XBCHECK_ACTION_OPEN_GAMES_FOLDER,
+} XbCheckAction;
+
 typedef struct XbCheckItem {
     const char *name;
     XbCheckState state;
+    XbCheckAction action;
     char detail[320];
 } XbCheckItem;
 
@@ -38,6 +45,9 @@ void xemu_xbcheck_start(void);
  * while the check has not finished.
  */
 int xemu_xbcheck_get(XbCheckItem *items, int max, bool *running);
+
+/* Open the games folder in the file manager, creating it if needed */
+void xemu_xbcheck_open_games_folder(void);
 
 /* Called by the network setup when a forwarded port could not be opened */
 void xemu_xbcheck_note_port_busy(int port);
