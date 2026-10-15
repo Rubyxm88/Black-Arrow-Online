@@ -30,6 +30,7 @@
 #include "xbcheck.hh"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
+#include "../xemu-xbcheck.h"
 #include <filesystem>
 #include <map>
 #include <string>
@@ -87,6 +88,14 @@ void ProcessKeyboardShortcuts(void)
         nv2a_dbg_renderdoc_capture_frames(num_frames, io.KeyCtrl);
     }
 #endif
+}
+
+// Section title inside a menu, in Xbox green
+static void MenuHeader(const char *title)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.80f, 0.30f, 1.0f));
+    ImGui::SeparatorText(title);
+    ImGui::PopStyleColor();
 }
 
 void ShowMainMenu()
@@ -158,8 +167,19 @@ void ShowMainMenu()
             ImGui::EndMenu();
         }
 
+        static bool xbonline_menu_open;
         if (ImGui::BeginMenu("XB Online"))
         {
+            // Read the accounts once each time the menu opens
+            static char account_names[128];
+            static int account_count = -1;
+            if (!xbonline_menu_open) {
+                account_count = xemu_xbonline_hdd_account_names(
+                    g_config.sys.files.hdd_path, account_names,
+                    sizeof(account_names));
+            }
+            xbonline_menu_open = true;
+
             std::multimap<std::string, std::string> games;
             std::filesystem::path games_dir(g_config.general.games_dir);
             std::error_code ec;
@@ -175,6 +195,7 @@ void ShowMainMenu()
                 }
             }
 
+            MenuHeader("Games");
             std::filesystem::path current(g_config.sys.files.dvd_path);
             for (const auto &[label, path] : games) {
                 std::string item = "Play " + label;
@@ -183,36 +204,44 @@ void ShowMainMenu()
                     ActionPlayDiscFile(path.c_str());
                 }
             }
-            if (games.empty()) {
-                ImGui::MenuItem("No games in the games folder", NULL, false,
-                                false);
+            if (games.empty() &&
+                ImGui::MenuItem("No games yet: Open Games Folder")) {
+                xemu_xbcheck_open_games_folder();
             }
-            if (ImGui::MenuItem("Add or Load Another Game...")) ActionLoadDisc();
-
-            ImGui::Separator();
-
-            if (ImGui::MenuItem("XBL Dashboard (Account Setup)")) ActionXboxLiveSetup();
-            if (ImGui::MenuItem("Original Xbox Dashboard")) ActionXboxDashboard();
             if (qemu_access(XEMU_XBONLINE_UPDATE_DISC, F_OK) == 0 &&
-                ImGui::MenuItem("Install Game Update + Maps")) {
+                ImGui::MenuItem("Black Arrow - Install Game Updates")) {
                 ActionPlayDiscFile(XEMU_XBONLINE_UPDATE_DISC);
             }
-            if (ImGui::MenuItem("Get a Link Code (xb.live)")) {
-                SDL_OpenURL("https://xb.live/link");
+
+            MenuHeader("Dashboards");
+            if (ImGui::MenuItem("XBL Dashboard")) ActionXboxLiveSetup();
+            if (ImGui::MenuItem("Original Xbox Dashboard")) ActionXboxDashboard();
+
+            MenuHeader("XB Live Account");
+            if (account_count > 0) {
+                std::string item = std::string(account_count > 1 ?
+                                               "Accounts: " : "Account: ") +
+                                   account_names;
+                if (ImGui::MenuItem(item.c_str())) {
+                    SDL_OpenURL(XEMU_XBONLINE_URL_DASHBOARD);
+                }
+            } else if (ImGui::MenuItem("No account yet: add it in XBL Dashboard")) {
+                ActionXboxLiveSetup();
             }
-            if (ImGui::MenuItem("Check Connection")) {
-                xbcheck_window.Start();
+            if (ImGui::MenuItem("Create an Account")) {
+                SDL_OpenURL(XEMU_XBONLINE_URL_CREATE);
+            }
+            if (ImGui::MenuItem("Link Code")) {
+                SDL_OpenURL(XEMU_XBONLINE_URL_LINK);
             }
 
-            ImGui::Separator();
-            if (ImGui::MenuItem("New Account: Register Xbox (Insignia)") &&
-                xemu_xbonline_insignia_fetch()) {
-                ActionPlayDiscFile(XEMU_XBONLINE_INSIGNIA_DISC);
-            }
-            if (ImGui::MenuItem("New Account: Get a Code (insignia.live)")) {
-                SDL_OpenURL("https://insignia.live/");
+            MenuHeader("Help");
+            if (ImGui::MenuItem("Connection Check")) {
+                xbcheck_window.Start(true);
             }
             ImGui::EndMenu();
+        } else {
+            xbonline_menu_open = false;
         }
 
         if (ImGui::BeginMenu("View"))

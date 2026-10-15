@@ -1,8 +1,10 @@
 //
 // xemu User Interface: XB Online connection check
 //
-// A small panel in the top left corner that shows the results of the
-// connection check. It never takes focus, so the game keeps its controls.
+// The connection check runs by itself at start. When something is wrong a
+// panel in the top left corner shows what and how to fix it; when all is
+// well a short "XB Online Connected" message appears instead. Neither takes
+// focus, so the game keeps its controls.
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,21 +22,76 @@
 /* Seconds a panel with nothing wrong stays on screen */
 #define CLOSE_DELAY 10.0
 
+/* Seconds the "XB Online Connected" message stays on screen */
+#define TOAST_TIME 4.0
+
+static const ImVec4 xbox_green(0.063f, 0.486f, 0.063f, 1.0f);
+static const ImVec4 xbox_green_hover(0.10f, 0.62f, 0.10f, 1.0f);
+static const ImVec4 xbox_green_active(0.05f, 0.40f, 0.05f, 1.0f);
+
+/* Buttons in Xbox green, so they stand out on the dark panel */
+static void PushGreenButtons()
+{
+    ImGui::PushStyleColor(ImGuiCol_Button, xbox_green);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, xbox_green_hover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, xbox_green_active);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+}
+
+static void PopGreenButtons()
+{
+    ImGui::PopStyleColor(4);
+}
+
 XbCheckWindow xbcheck_window;
 
 XbCheckWindow::XbCheckWindow()
 {
     is_open = false;
     m_started = false;
+    m_quiet = false;
     m_done_time = -1;
+    m_toast_end = -1;
 }
 
-void XbCheckWindow::Start()
+void XbCheckWindow::Start(bool show)
 {
     xemu_xbcheck_start();
     m_started = true;
+    m_quiet = !show;
     m_done_time = -1;
-    is_open = true;
+    m_toast_end = -1;
+    is_open = show;
+}
+
+void XbCheckWindow::DrawToast()
+{
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    float scale = g_viewport_mgr.m_scale;
+    float pad = 10.0f * scale;
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + pad));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    if (ImGui::Begin("XB Online Connected", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        // A checkmark in a green circle, drawn: the font has no such glyph
+        float size = ImGui::GetTextLineHeight();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImVec2 c(p.x + size / 2, p.y + size / 2);
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        dl->AddCircleFilled(c, size / 2, ImGui::GetColorU32(xbox_green_hover));
+        ImVec2 tick[3] = { ImVec2(c.x - size * 0.24f, c.y + size * 0.02f),
+                           ImVec2(c.x - size * 0.06f, c.y + size * 0.20f),
+                           ImVec2(c.x + size * 0.26f, c.y - size * 0.18f) };
+        dl->AddPolyline(tick, 3, IM_COL32_WHITE, 0, 2.0f * scale);
+        ImGui::Dummy(ImVec2(size, size));
+        ImGui::SameLine();
+        ImGui::Text("XB Online Connected");
+    }
+    ImGui::End();
 }
 
 void XbCheckWindow::Draw()
@@ -44,9 +101,14 @@ void XbCheckWindow::Draw()
             ImGui::GetTime() < FIRST_CHECK_DELAY) {
             return;
         }
-        Start();
+        Start(false);
     }
-    if (!is_open) {
+
+    double now = ImGui::GetTime();
+    if (m_toast_end > now) {
+        DrawToast();
+    }
+    if (!is_open && !m_quiet) {
         return;
     }
 
@@ -60,7 +122,20 @@ void XbCheckWindow::Draw()
         needs_action |= items[i].action != XBCHECK_ACTION_NONE;
     }
 
-    double now = ImGui::GetTime();
+    if (m_quiet) {
+        // Decide once the check has finished: panel or short message
+        if (running) {
+            return;
+        }
+        m_quiet = false;
+        if (problem || needs_action) {
+            is_open = true;
+        } else {
+            m_toast_end = now + TOAST_TIME;
+            return;
+        }
+    }
+
     if (running) {
         m_done_time = -1;
     } else if (m_done_time < 0) {
@@ -123,9 +198,11 @@ void XbCheckWindow::Draw()
             ImGui::PopStyleColor();
             if (items[i].action == XBCHECK_ACTION_OPEN_GAMES_FOLDER) {
                 ImGui::PushID(i);
-                if (ImGui::SmallButton("Open games folder")) {
+                PushGreenButtons();
+                if (ImGui::Button("Open Games Folder")) {
                     xemu_xbcheck_open_games_folder();
                 }
+                PopGreenButtons();
                 ImGui::PopID();
             }
             ImGui::Unindent(ImGui::CalcTextSize("  OK   ").x);
@@ -134,13 +211,15 @@ void XbCheckWindow::Draw()
 
     if (!running) {
         ImGui::Separator();
-        if (ImGui::Button("Check again")) {
-            Start();
+        PushGreenButtons();
+        if (ImGui::Button("Check Again")) {
+            Start(true);
         }
         ImGui::SameLine();
         if (ImGui::Button("Close")) {
             is_open = false;
         }
+        PopGreenButtons();
         ImGui::SameLine();
         ImGui::TextDisabled("Results are also in system\\xemu.log");
     }

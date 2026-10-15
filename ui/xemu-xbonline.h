@@ -33,26 +33,23 @@ extern "C" {
  */
 #define XEMU_XBONLINE_UPDATE_DISC "Black Arrow Update and Maps.iso"
 
-/*
- * Optional disc image of Insignia's Setup Assistant, which registers the
- * console with Insignia so an Xbox Live account can be created on the
- * original dashboard.
- */
-#define XEMU_XBONLINE_INSIGNIA_DISC "Insignia-Setup.iso"
-
-/*
- * True if the Insignia setup disc is there. If not, start downloading it
- * from Insignia and return false; xemu_xbonline_insignia_take_ready() then
- * returns true once, when the download has finished.
- */
-bool xemu_xbonline_insignia_fetch(void);
-bool xemu_xbonline_insignia_take_ready(void);
+/* XB Online web pages */
+#define XEMU_XBONLINE_URL_DASHBOARD "https://xb.live/dashboard"
+#define XEMU_XBONLINE_URL_CREATE "https://xb.live/xb-online"
+#define XEMU_XBONLINE_URL_LINK "https://xb.live/link"
 
 /*
  * Check whether the hard disk image holds an Xbox Live machine account.
  * Returns 1 if it does, 0 if it does not, -1 if the image could not be read.
  */
 int xemu_xbonline_hdd_has_account(const char *hdd_path);
+
+/*
+ * Gamertags of the Xbox Live accounts on the hard disk image, joined with
+ * ", " into out. Returns how many, or -1 if the image could not be read.
+ */
+int xemu_xbonline_hdd_account_names(const char *hdd_path, char *out,
+                                    size_t out_len);
 
 /*
  * Check whether the XBL Dashboard is installed on the hard disk image.

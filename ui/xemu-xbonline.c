@@ -9,10 +9,6 @@
 
 #include "qemu/osdep.h"
 #include "qemu/bswap.h"
-#include "qemu/thread.h"
-#include "qapi/error.h"
-#include "qemu/http.h"
-#include "xemu-notifications.h"
 #include "xemu-xbonline.h"
 
 #define SECTOR_SIZE 512
@@ -106,6 +102,61 @@ static int hdd_read_sector(HddImage *img, uint64_t sector, uint8_t *buf)
     }
 
     return hdd_read_at(img, offset, buf, SECTOR_SIZE) ? 1 : -1;
+}
+
+int xemu_xbonline_hdd_account_names(const char *hdd_path, char *out,
+                                    size_t out_len)
+{
+    HddImage img;
+    GPtrArray *names = g_ptr_array_new_with_free_func(g_free);
+    int count;
+
+    out[0] = 0;
+    if (!hdd_open(&img, hdd_path)) {
+        hdd_close(&img);
+        g_ptr_array_free(names, true);
+        return -1;
+    }
+
+    /* Account records sit in the first sectors of the config area */
+    for (uint64_t sector = 0; sector < 0x40; sector++) {
+        uint8_t buf[SECTOR_SIZE];
+        char name[17];
+        bool printable = true, seen = false;
+
+        if (hdd_read_sector(&img, sector, buf) <= 0 ||
+            ldl_le_p(buf) != CONFIG_MAGIC) {
+            continue;
+        }
+        /* A gamertag, then its realm; the machine account is "SN." */
+        memcpy(name, buf + 24, 16);
+        name[16] = 0;
+        if (!name[0] || !strncmp(name, "SN.", 3) ||
+            !g_strstr_len((const char *)buf + 40, 64, "xbox.com")) {
+            continue;
+        }
+        for (const char *c = name; *c; c++) {
+            printable &= *c >= 0x20 && *c < 0x7f;
+        }
+        /* Each account is stored twice; list it once */
+        for (guint i = 0; i < names->len; i++) {
+            seen |= !strcmp(g_ptr_array_index(names, i), name);
+        }
+        if (printable && !seen) {
+            g_ptr_array_add(names, g_strdup(name));
+        }
+    }
+    hdd_close(&img);
+
+    for (guint i = 0; i < names->len; i++) {
+        if (i) {
+            g_strlcat(out, ", ", out_len);
+        }
+        g_strlcat(out, g_ptr_array_index(names, i), out_len);
+    }
+    count = names->len;
+    g_ptr_array_free(names, true);
+    return count;
 }
 
 int xemu_xbonline_hdd_has_account(const char *hdd_path)
@@ -441,8 +492,7 @@ bool xemu_xbonline_is_system_disc(const char *path)
 {
     return g_str_has_suffix(path, XEMU_XBONLINE_SETUP_DISC) ||
            g_str_has_suffix(path, XEMU_XBONLINE_LOADER_DISC) ||
-           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC) ||
-           g_str_has_suffix(path, XEMU_XBONLINE_INSIGNIA_DISC);
+           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC);
 }
 
 char *xemu_xbonline_pick_game(const char *games_dir)
@@ -487,65 +537,3 @@ char *xemu_xbonline_pick_game(const char *games_dir)
     return NULL;
 }
 
-/*
- * Insignia's Setup Assistant, from Insignia's own releases. Folders set up
- * from a package without the disc fetch it when it is first asked for.
- */
-#define INSIGNIA_DISC_URL \
-    "https://github.com/insignia-live/setup-assistant-release/releases/" \
-    "download/2025-01-19/Insignia-Setup.iso"
-#define INSIGNIA_DISC_SHA256 \
-    "66a84282bb2a7fe8fe0d6a70e8333485b13e333cb827245ca7de8af8b429e883"
-
-static int insignia_state; /* 0 idle, 1 downloading, 2 ready to start */
-
-static void *insignia_fetch_thread(void *opaque)
-{
-    GByteArray *data = g_byte_array_new();
-    Error *err = NULL;
-    int status = http_get(INSIGNIA_DISC_URL, data, NULL, &err);
-    gchar *sum = NULL;
-    bool ok = false;
-
-    if (status == 200) {
-        sum = g_compute_checksum_for_data(G_CHECKSUM_SHA256, data->data,
-                                          data->len);
-        ok = !strcmp(sum, INSIGNIA_DISC_SHA256) &&
-             g_file_set_contents(XEMU_XBONLINE_INSIGNIA_DISC,
-                                 (const gchar *)data->data, data->len, NULL);
-    }
-    fprintf(stderr, "xbonline: Insignia setup disc download %s (http %d)\n",
-            ok ? "done" : "failed", status);
-    if (!ok) {
-        xemu_queue_notification(
-            "Could not download Insignia's setup disc. Check the internet "
-            "connection and try again, or get Insignia-Setup.iso from "
-            "insignia.live and put it in the system folder.");
-    }
-    error_free(err);
-    g_free(sum);
-    g_byte_array_free(data, true);
-    qatomic_set(&insignia_state, ok ? 2 : 0);
-    return NULL;
-}
-
-bool xemu_xbonline_insignia_fetch(void)
-{
-    QemuThread thread;
-
-    if (qemu_access(XEMU_XBONLINE_INSIGNIA_DISC, F_OK) == 0) {
-        return true;
-    }
-    if (qatomic_cmpxchg(&insignia_state, 0, 1) == 0) {
-        xemu_queue_notification("Downloading Insignia's setup disc. It "
-                                "starts by itself when it is ready.");
-        qemu_thread_create(&thread, "insignia-fetch", insignia_fetch_thread,
-                           NULL, QEMU_THREAD_DETACHED);
-    }
-    return false;
-}
-
-bool xemu_xbonline_insignia_take_ready(void)
-{
-    return qatomic_cmpxchg(&insignia_state, 2, 0) == 2;
-}

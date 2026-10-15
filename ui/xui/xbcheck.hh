@@ -15,12 +15,18 @@ public:
 
 private:
     bool   m_started;
+    bool   m_quiet;      // started by itself: show the panel only on problems
     double m_done_time;
+    double m_toast_end;  // "XB Online Connected" shown until then
 
 public:
     XbCheckWindow();
-    void Start();
+    // show: open the panel right away (the player asked for the check)
+    void Start(bool show);
     void Draw();
+
+private:
+    void DrawToast();
 };
 
 extern XbCheckWindow xbcheck_window;

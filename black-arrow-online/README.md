@@ -10,10 +10,10 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
 
 ## What is changed from xemu
 
-- **XB Online menu**: start a game from the games folder, open the XBL
-  Dashboard for account setup, open the original Xbox dashboard, run the game
-  update installer, and Insignia's Setup Assistant for creating a new Xbox
-  Live account when `Insignia-Setup.iso` is in the package.
+- **XB Online menu**: start a game from the games folder, run the game
+  update installer, open the XBL Dashboard for account setup or the original
+  Xbox dashboard, show the console's Xbox Live gamertag, and open the xb.live
+  pages to create an account or get a link code.
 - **XB Online DNS redirect**: a network setting that points the console's
   Xbox Live lookups at XB Online.
 - **Hosting**: with NAT networking the console takes the computer's own
@@ -90,7 +90,6 @@ BlackArrowOnline-content.zip
     system/XBL Dashboard.iso
     system/XBL Dashboard Loader.iso
     system/Black Arrow Update and Maps.iso
-    system/Insignia-Setup.iso
     system/fresh/xbox_hdd.qcow2
 ```
 
