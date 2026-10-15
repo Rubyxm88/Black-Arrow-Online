@@ -11,6 +11,7 @@
 //
 #include "common.hh"
 #include "xbcheck.hh"
+#include "viewport-manager.hh"
 #include "../xemu-xbcheck.h"
 
 /* Seconds after starting before the first check, so the network is up */
