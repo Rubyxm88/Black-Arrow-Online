@@ -872,6 +872,15 @@ static void nvnet_mmio_write(void *opaque, hwaddr addr, uint64_t val,
         set_reg_ext(s, addr, val, size);
         break;
     }
+
+    /*
+     * A packet that arrived while the guest could not take it is held by the
+     * network layer, and some backends stop reading until they are told to
+     * try again.
+     */
+    if (nvnet_can_receive(qemu_get_queue(s->nic))) {
+        qemu_flush_queued_packets(qemu_get_queue(s->nic));
+    }
 }
 
 static const MemoryRegionOps nvnet_mmio_ops = {
