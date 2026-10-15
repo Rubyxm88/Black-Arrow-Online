@@ -39,6 +39,12 @@ static class Launcher
     [DllImport("user32.dll")]
     static extern bool SetProcessDPIAware();
 
+    // Lets the emulator bring its window to the front, which Windows only
+    // allows a program that the foreground program hands it to
+    [DllImport("user32.dll")]
+    static extern bool AllowSetForegroundWindow(int processId);
+    const int ASFW_ANY = -1;
+
     [STAThread]
     static int Main(string[] args)
     {
@@ -80,6 +86,7 @@ static class Launcher
                     Application.Run(form);
                     if (form.Installed) {
                         // Carry on in the new launcher
+                        AllowSetForegroundWindow(ASFW_ANY);
                         Process.Start(new ProcessStartInfo {
                             FileName = Application.ExecutablePath,
                             Arguments = "--noupdate",
@@ -125,6 +132,7 @@ static class Launcher
             }
         }
         if (!noLaunch) {
+            AllowSetForegroundWindow(ASFW_ANY);
             Process.Start(new ProcessStartInfo {
                 FileName = Path.Combine(systemDir, "xemu.exe"),
                 WorkingDirectory = systemDir,

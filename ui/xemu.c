@@ -1103,6 +1103,12 @@ static void display_very_early_init(DisplayOptions *o)
         SDL_SetWindowPosition(m_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     }
 
+    /*
+     * Started by the Black Arrow Online launcher, the window would otherwise
+     * open behind it. The launcher allows this with AllowSetForegroundWindow.
+     */
+    SDL_RaiseWindow(m_window);
+
     m_context = SDL_GL_CreateContext(m_window);
 
     if (m_context != NULL && epoxy_gl_version() < 40) {
