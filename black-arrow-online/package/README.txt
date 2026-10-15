@@ -37,6 +37,7 @@ XBL Dashboard (Account Setup)   Sign in, link or fix your Xbox Live account.
 Original Xbox Dashboard         The standard Xbox dashboard (saves, settings).
 Install Game Update + Maps      Black Arrow title update and map packs.
 Get a Link Code                 Opens xb.live/link in your browser.
+Check Connection                Runs the XB Online check again (see below).
 New Account: Register Xbox      Insignia's Setup Assistant (see NEW ACCOUNT).
 New Account: Get a Code         Opens insignia.live in your browser.
 
@@ -99,12 +100,29 @@ After setup, system\eeprom.bin and system\xbox_hdd.qcow2 belong to your
 console and your account. Never send them to anyone. Share the original zip.
 
 
+XB ONLINE CHECK
+---------------
+A few seconds after starting, a panel in the top left corner checks what
+Xbox Live needs: the console network, the XB Online server, this PC's
+clock, the game disc, the game update and the Xbox Live account. When
+everything is fine it disappears by itself. When something is wrong it
+stays and says what to do. Run it again from XB Online > Check Connection.
+The results are also written to system\xemu.log.
+
+
 TROUBLE
 -------
 Setup window says "Add content pack" instead of "Start clean": this folder
   is an update download, not the full package. Get the full package from
   where Black Arrow Online is shared and start from that.
 "Xbox Live not found" or sign-in fails in the game:
+  - Look at the XB Online check panel (XB Online > Check Connection) and
+    fix whatever it marks FIX or WARN first.
+  - "PC clock": Xbox Live sign-in fails when the Windows clock or time
+    zone is wrong. Settings > Time: set time and time zone automatically.
+  - "Game update": XB Online > Install Game Update + Maps.
+  - "XB Online server": a firewall, antivirus, VPN or router DNS setting is
+    in the way. Allow xemu through the firewall, or try another network.
   - Close any other xemu or emulator and any game that is still running,
     then start Black Arrow Online again. Another program on UDP port 3074
     switched the console's network off in older builds.
