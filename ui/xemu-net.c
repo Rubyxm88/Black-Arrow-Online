@@ -262,12 +262,22 @@ void xemu_net_enable(void)
     }
 
     const char *dns_server = xemu_net_dns_redirect_server();
+    /* Diagnostic: send the lookups elsewhere to test the XB Online fallback */
+    const char *dns_test = g_getenv("XEMU_DNS_REDIRECT_TEST_SERVER");
+    if (dns_server && dns_test && dns_test[0]) {
+        fprintf(stderr, "dns-redirect: test server %s instead of %s\n",
+                dns_test, dns_server);
+        dns_server = dns_test;
+    }
     if (!local_err && dns_server) {
+        bool fallback =
+            g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE;
         object_new_with_props("filter-dns-redirect", object_get_objects_root(),
                               id_dns_redirect, &local_err,
                               "netdev", id,
                               "queue", "all",
                               "server", dns_server,
+                              "fallback", fallback ? "on" : "off",
                               NULL);
         if (local_err) {
             xemu_queue_error_message(error_get_pretty(local_err));

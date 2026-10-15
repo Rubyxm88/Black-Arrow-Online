@@ -28,11 +28,13 @@ typedef enum XbCheckAction {
     XBCHECK_ACTION_OPEN_GAMES_FOLDER,
 } XbCheckAction;
 
+#define XBCHECK_DETAIL_LEN 320
+
 typedef struct XbCheckItem {
     const char *name;
     XbCheckState state;
     XbCheckAction action;
-    char detail[320];
+    char detail[XBCHECK_DETAIL_LEN];
 } XbCheckItem;
 
 #define XBCHECK_MAX_ITEMS 8
@@ -51,6 +53,12 @@ void xemu_xbcheck_open_games_folder(void);
 
 /* Called by the network setup when a forwarded port could not be opened */
 void xemu_xbcheck_note_port_busy(int port);
+
+/*
+ * Called by the DNS redirect filter when it answered an Xbox Live name from
+ * its built-in list: adds a note to the "XB Online server" result
+ */
+void xemu_xbcheck_note_dns_fallback(void);
 
 #ifdef __cplusplus
 }

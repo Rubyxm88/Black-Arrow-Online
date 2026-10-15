@@ -42,6 +42,14 @@ const char *xemu_net_dns_redirect_server(void);
  */
 bool xemu_net_lan_address(uint32_t *addr);
 
+/*
+ * True once xemu answered an Xbox Live name from its built-in XB Online list
+ * because the network gave a wrong answer or none (net/filter-dns-redirect.c).
+ * Sets how often, the last name, and whether that one was a timeout.
+ */
+bool xemu_net_dns_fallback_used(int *count, const char **name,
+                                bool *timed_out);
+
 #ifdef __cplusplus
 }
 #endif

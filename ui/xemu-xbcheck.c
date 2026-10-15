@@ -324,41 +324,98 @@ static void check_route(void)
     }
 }
 
+/*
+ * "XB Online server" result, kept so a note about the DNS fallback can be
+ * added when xemu answers Xbox Live for the console after the check ran
+ */
+static int dns_item = -1;
+static XbCheckState dns_state;
+static char dns_detail[XBCHECK_DETAIL_LEN];
+static char dns_note[160];
+
+/* Show the server result with the fallback note, if any */
+static void dns_publish(void)
+{
+    XbCheckState state;
+    char detail[XBCHECK_DETAIL_LEN];
+    int i;
+
+    qemu_mutex_lock(&lock);
+    i = dns_detail[0] ? dns_item : -1; /* nothing to add to before a result */
+    state = dns_state == XBCHECK_OK && dns_note[0] ? XBCHECK_INFO : dns_state;
+    snprintf(detail, sizeof(detail), "%s%s", dns_detail, dns_note);
+    qemu_mutex_unlock(&lock);
+    if (i >= 0) {
+        item_set(i, state, "%s", detail);
+    }
+}
+
+static void G_GNUC_PRINTF(2, 3)
+dns_result(XbCheckState state, const char *fmt, ...)
+{
+    va_list ap;
+
+    qemu_mutex_lock(&lock);
+    va_start(ap, fmt);
+    vsnprintf(dns_detail, sizeof(dns_detail), fmt, ap);
+    va_end(ap);
+    dns_state = state;
+    qemu_mutex_unlock(&lock);
+    dns_publish();
+}
+
 static void check_dns(void)
 {
     int i = item_add("XB Online server");
     const char *server = xemu_net_dns_redirect_server();
+    bool xb_online =
+        g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE;
     uint32_t addr = 0;
+    bool noted;
     int r;
 
+    qemu_mutex_lock(&lock);
+    dns_item = i;
+    noted = dns_note[0];
+    qemu_mutex_unlock(&lock);
+
     if (!server) {
-        item_set(i, XBCHECK_FAIL, "Not checked: no Xbox Live service is set.");
+        dns_result(XBCHECK_FAIL, "Not checked: no Xbox Live service is set.");
         return;
     }
     r = dns_lookup(server, "macs.xboxlive.com", &addr);
     if (r < 0) {
-        item_set(i, XBCHECK_FAIL,
-                 "No answer from %s. Something on this PC or network blocks "
-                 "it: firewall or antivirus (allow xemu), VPN, or the router. "
-                 "Try another network (phone hotspot) to tell which.", server);
+        dns_result(xb_online ? XBCHECK_WARN : XBCHECK_FAIL,
+                   "No answer from %s. Something on this PC or network blocks "
+                   "it: firewall or antivirus (allow xemu), VPN, or the "
+                   "router. Try another network (phone hotspot) to tell "
+                   "which.%s",
+                   server,
+                   xb_online && !noted ? " xemu answers the console's Xbox "
+                                         "Live lookups itself meanwhile." : "");
+    } else if (xb_online &&
+               (r == 0 ||
+                addr != (uint32_t)ldl_be_p((uint8_t[]){ 159, 223, 51, 240 }))) {
+        char got[40] = "no address";
+        if (r > 0) {
+            snprintf(got, sizeof(got), "%u.%u.%u.%u", addr >> 24,
+                     (addr >> 16) & 255, (addr >> 8) & 255, addr & 255);
+        }
+        dns_result(XBCHECK_INFO,
+                   "This network answers DNS itself (VPN, ISP, router or DNS "
+                   "filter) and gave Xbox Live %s, not XB Online. xemu answers "
+                   "Xbox Live for the console from its built-in list, nothing "
+                   "to change.",
+                   got);
     } else if (r == 0) {
-        item_set(i, XBCHECK_FAIL,
-                 "%s answered but does not know Xbox Live. The network may "
-                 "be replacing DNS answers (router, ISP or DNS filter).",
-                 server);
-    } else if (g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
-               addr != (uint32_t)ldl_be_p((uint8_t[]){ 159, 223, 51, 240 })) {
-        item_set(i, XBCHECK_FAIL,
-                 "Xbox Live was sent to %u.%u.%u.%u instead of XB Online. "
-                 "Something between this PC and the internet answers DNS "
-                 "itself: router DNS settings, ISP, Pi-hole, NextDNS, "
-                 "antivirus web shield or VPN.",
-                 addr >> 24, (addr >> 16) & 255, (addr >> 8) & 255,
-                 addr & 255);
+        dns_result(XBCHECK_FAIL,
+                   "%s answered but does not know Xbox Live. The network may "
+                   "be replacing DNS answers (router, ISP or DNS filter).",
+                   server);
     } else {
-        item_set(i, XBCHECK_OK, "Reached %s, Xbox Live at %u.%u.%u.%u.",
-                 server, addr >> 24, (addr >> 16) & 255, (addr >> 8) & 255,
-                 addr & 255);
+        dns_result(XBCHECK_OK, "Reached %s, Xbox Live at %u.%u.%u.%u.", server,
+                   addr >> 24, (addr >> 16) & 255, (addr >> 8) & 255,
+                   addr & 255);
     }
 }
 
@@ -551,6 +608,8 @@ void xemu_xbcheck_start(void)
     }
     running = true;
     item_count = 0;
+    dns_item = -1;
+    dns_detail[0] = '\0';
     qemu_mutex_unlock(&lock);
 
     qemu_thread_create(&thread, "xbcheck", check_thread, NULL,
@@ -573,6 +632,32 @@ int xemu_xbcheck_get(XbCheckItem *out, int max, bool *is_running)
 void xemu_xbcheck_note_port_busy(int port)
 {
     port_busy = port;
+}
+
+void xemu_xbcheck_note_dns_fallback(void)
+{
+    char note[sizeof(dns_note)];
+    const char *name;
+    int count;
+    bool timed_out, changed;
+
+    if (!xemu_net_dns_fallback_used(&count, &name, &timed_out)) {
+        return;
+    }
+    snprintf(note, sizeof(note),
+             " xemu answered Xbox Live for the console itself (%s: %s).", name,
+             timed_out ? "no answer" : "wrong answer");
+
+    check_init();
+    qemu_mutex_lock(&lock);
+    changed = strcmp(note, dns_note) != 0;
+    if (changed) {
+        strcpy(dns_note, note);
+    }
+    qemu_mutex_unlock(&lock);
+    if (changed) {
+        dns_publish();
+    }
 }
 
 void xemu_xbcheck_open_games_folder(void)
