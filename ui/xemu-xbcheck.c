@@ -419,17 +419,43 @@ static void check_clock(void)
     }
 }
 
+/* Number of disc images in the games folder */
+static int games_in_folder(void)
+{
+    const char *dir_path = g_config.general.games_dir;
+    GDir *dir = dir_path && dir_path[0] ? g_dir_open(dir_path, 0, NULL) : NULL;
+    const char *name;
+    int count = 0;
+
+    while (dir && (name = g_dir_read_name(dir))) {
+        if (g_str_has_suffix(name, ".iso") || g_str_has_suffix(name, ".ISO") ||
+            g_str_has_suffix(name, ".xiso")) {
+            count++;
+        }
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+    return count;
+}
+
 static void check_disc(void)
 {
     int i = item_add("Game disc");
     const char *path = g_config.sys.files.dvd_path;
     XbOnlineXbe xbe;
 
-    if (!path || !path[0]) {
-        item_set(i, XBCHECK_INFO, "No disc loaded.");
+    if ((!path || !path[0] || xemu_xbonline_is_system_disc(path)) &&
+        games_in_folder() == 0) {
+        item_set(i, XBCHECK_INFO,
+                 "No game yet. Copy your Black Arrow disc image (.iso) into "
+                 "the \"games\" folder, then choose XB Online > Play and your game.");
+    } else if (!path || !path[0]) {
+        item_set(i, XBCHECK_INFO, "No disc loaded. To play, choose XB Online "
+                 "> Play and your game.");
     } else if (xemu_xbonline_is_system_disc(path)) {
         item_set(i, XBCHECK_INFO, "A dashboard or setup disc is loaded, not "
-                 "the game.");
+                 "the game. To play, choose XB Online > Play and your game.");
     } else if (!xemu_xbonline_disc_xbe(path, &xbe)) {
         item_set(i, XBCHECK_WARN,
                  "Could not read the loaded disc image as an Xbox disc. Use "
