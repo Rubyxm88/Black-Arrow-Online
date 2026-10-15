@@ -14,6 +14,7 @@
 //
 #include "common.hh"
 #include "shader-cache.hh"
+#include "notifications.hh"
 #include "viewport-manager.hh"
 #include "../xemu-settings.h"
 #include "hw/xbox/nv2a/shader-precache.h"
@@ -118,11 +119,8 @@ void ShaderCacheWindow::DrawToast(const ShaderPrecacheStatus &status)
         return;
     }
 
-    const ImGuiViewport *vp = ImGui::GetMainViewport();
     float scale = g_viewport_mgr.m_scale;
-    float pad = 10.0f * scale;
-    float below = pad + ImGui::GetFrameHeightWithSpacing() * 1.6f;
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + below));
+    PopupStackPlace();
     ImGui::SetNextWindowBgAlpha(0.88f);
     if (ImGui::Begin("Shader Precache", NULL,
                      ImGuiWindowFlags_NoDecoration |
@@ -160,6 +158,7 @@ void ShaderCacheWindow::DrawToast(const ShaderPrecacheStatus &status)
             ImGui::SameLine();
             ImGui::Text("Shaders ready (%d built)", m_toast_built);
         }
+        PopupStackTake();
     }
     ImGui::End();
 }

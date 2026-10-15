@@ -155,6 +155,12 @@ int nv2a_profile_get_counter_value(unsigned int cnt);
 void nv2a_profile_increment(void);
 void nv2a_profile_flip_stall(void);
 
+/*
+ * The times of the last frames (up to max, in microseconds, oldest first)
+ * and the time now on the same clock, for the performance overlay
+ */
+int nv2a_profile_get_frame_times(int64_t *times_us, int max, int64_t *now_us);
+
 static inline void nv2a_profile_inc_counter(enum NV2A_PROF_COUNTERS_ENUM cnt)
 {
     g_nv2a_stats.frame_working.counters[cnt] += 1;

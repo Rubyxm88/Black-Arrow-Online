@@ -55,12 +55,21 @@
 
 /*
  * A freeze: no new frame for FREEZE_SECONDS while the emulator runs, with
- * no disc or hard disk reads for FREEZE_IDLE_IO_SECONDS (a long load), or
- * no frame at all for FREEZE_ANYWAY_SECONDS
+ * the disc and hard disk reading less than FREEZE_LOADING_BYTES a second
+ * for FREEZE_IDLE_IO_SECONDS (more is a long load; a game that streams its
+ * music keeps reading a little), or no frame at all for
+ * FREEZE_ANYWAY_SECONDS
  */
 #define FREEZE_SECONDS 10
 #define FREEZE_IDLE_IO_SECONDS 3
-#define FREEZE_ANYWAY_SECONDS 30
+#define FREEZE_LOADING_BYTES (1024 * 1024)
+#define FREEZE_ANYWAY_SECONDS 20
+
+/*
+ * Seconds with frames before the watch starts, so a screen that never
+ * moves (some dashboards right after boot) does not count as a freeze
+ */
+#define FREEZE_ARM_SECONDS 10
 
 /* Freeze reports kept in the logs folder; older ones are deleted */
 #define FREEZE_REPORTS_KEPT 5
@@ -129,7 +138,7 @@ static WorstFrame worst[WORST_FRAMES];
 static int worst_count;
 
 /* Freeze watch, on the main loop only */
-static int no_frame_seconds, io_idle_seconds;
+static int frame_seconds, no_frame_seconds, io_idle_seconds;
 static bool freeze_noticed;
 static CpuSample cpu_samples[CPU_SAMPLES];
 static int cpu_sample_count;
@@ -717,7 +726,7 @@ void xemu_diag_frame(int64_t now, int64_t gap_us, bool slow,
  * Disc and hard disk reads. The block layer keeps byte and time totals per
  * drive, and may only be walked from the main loop, where the timer runs.
  * Appends " disc_read=MB/ms hdd_read=MB/ms hdd_write=MB" for the time since
- * the last call and returns whether anything was read.
+ * the last call and returns the bytes read.
  */
 enum { IO_HDD, IO_DISC, IO__COUNT };
 enum { IO_READ_BYTES, IO_READ_NS, IO_WRITE_BYTES, IO__FIELDS };
@@ -725,11 +734,11 @@ enum { IO_READ_BYTES, IO_READ_NS, IO_WRITE_BYTES, IO__FIELDS };
 static uint64_t io_last[IO__COUNT][IO__FIELDS];
 static bool io_have_last;
 
-static bool print_io(GString *s)
+static uint64_t print_io(GString *s)
 {
     static const char *const names[IO__COUNT] = { "hdd", "disc" };
     uint64_t v[IO__COUNT][IO__FIELDS] = { 0 };
-    bool read = false;
+    uint64_t read = 0;
 
     for (BlockBackend *blk = blk_next(NULL); blk; blk = blk_next(blk)) {
         BlockAcctStats *stats = blk_get_stats(blk);
@@ -745,7 +754,7 @@ static bool print_io(GString *s)
         if (rd) {
             g_string_append_printf(s, " %s_read=%.1fMB/%.0fms", names[d],
                                    rd / 1048576.0, rd_ns / 1e6);
-            read = true;
+            read += rd;
         }
         if (wr) {
             g_string_append_printf(s, " %s_write=%.1fMB", names[d],
@@ -1004,24 +1013,29 @@ static char *write_freeze_report(int64_t now)
 }
 
 /* Once a second while the emulator runs: no frames may mean a freeze */
-static void watch_freeze(int64_t now, int frames, bool io_read)
+static void watch_freeze(int64_t now, int frames, bool loading)
 {
     if (frames > 0) {
         if (freeze_noticed) {
             xemu_diag_event("the game shows pictures again after %d s",
                             no_frame_seconds);
         }
+        if (no_frame_seconds) {
+            frame_seconds = 0;
+        }
+        frame_seconds++;
         no_frame_seconds = 0;
         io_idle_seconds = 0;
         cpu_sample_count = 0;
         freeze_noticed = false;
         return;
     }
-    if (!frames_seen) {
+    if (frame_seconds < FREEZE_ARM_SECONDS) {
+        frame_seconds = 0;
         return;
     }
     no_frame_seconds++;
-    io_idle_seconds = io_read ? 0 : io_idle_seconds + 1;
+    io_idle_seconds = loading ? 0 : io_idle_seconds + 1;
     if (cpu_sample_count < CPU_SAMPLES) {
         cpu_samples[cpu_sample_count++] = sample_cpu(no_frame_seconds);
     }
@@ -1059,7 +1073,7 @@ static void tick(void *opaque)
     int64_t now = now_us();
     bool running = runstate_is_running();
     GString *system = g_string_new(NULL);
-    bool io_read = print_io(system);
+    bool loading = print_io(system) >= FREEZE_LOADING_BYTES;
     print_system(system);
 
     g_mutex_lock(&lock);
@@ -1085,7 +1099,7 @@ static void tick(void *opaque)
         print_gpu(s, last.gpu);
         add_line(now, NULL, s->str);
         g_string_free(s, true);
-        watch_freeze(now, last.frames, io_read);
+        watch_freeze(now, last.frames, loading);
     }
     g_string_free(system, true);
 }

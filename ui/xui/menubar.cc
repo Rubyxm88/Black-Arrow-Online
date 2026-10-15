@@ -30,6 +30,7 @@
 #include "xbcheck.hh"
 #include "shader-cache.hh"
 #include "viewport-manager.hh"
+#include "notifications.hh"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
@@ -107,10 +108,13 @@ static void MenuHeader(const char *title)
     ImGui::PopStyleColor();
 }
 
-// A menu item with a check mark that flips a setting; hovering explains it
+// A menu item with a check mark that flips a setting; hovering explains it.
+// The menu stays open, so several settings can be flipped in one go.
 static void MenuToggle(const char *label, bool *value, const char *help)
 {
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
     ImGui::MenuItem(label, NULL, value);
+    ImGui::PopItemFlag();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort |
                              ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::BeginTooltip();
@@ -149,7 +153,7 @@ static void OpenFreezeReport()
 // How long the notice stays after a freeze report was saved
 #define FREEZE_TOAST_SECONDS 20.0
 
-// Top left, under the XB Online and shader notices
+// In the popup column, under the XB Online and shader notices
 void DrawFreezeToast()
 {
     double age = xemu_diag_freeze_age();
@@ -157,11 +161,8 @@ void DrawFreezeToast()
         return;
     }
 
-    const ImGuiViewport *vp = ImGui::GetMainViewport();
     float scale = g_viewport_mgr.m_scale;
-    float pad = 10.0f * scale;
-    float below = pad + ImGui::GetFrameHeightWithSpacing() * 4.2f;
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + below));
+    PopupStackPlace();
     ImGui::SetNextWindowBgAlpha(0.88f);
     if (ImGui::Begin("Freeze Report", NULL,
                      ImGuiWindowFlags_NoDecoration |
@@ -188,8 +189,115 @@ void DrawFreezeToast()
         ImGui::TextDisabled("A freeze report was saved:");
         ImGui::TextDisabled("XB Online > Help > Open Last Freeze Report");
         ImGui::EndGroup();
+        PopupStackTake();
     }
     ImGui::End();
+}
+
+// A slider inside a menu; hovering explains it
+static void MenuSlider(const char *label, int *value, int min, int max,
+                       const char *format, const char *help)
+{
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
+    ImGui::SliderInt(label, value, min, max, format,
+                     ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextUnformatted(help);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+// One choice of several, as menu items with a dot on the chosen one
+static void MenuChoice(const char *const *labels, int count, int *value)
+{
+    for (int i = 0; i < count; i++) {
+        if (ImGui::MenuItem(labels[i], NULL, *value == i)) {
+            *value = i;
+        }
+    }
+}
+
+// RSO Settings > Performance Overlay > Customize. The menu stays open, so
+// changes show right away. Show lists only what the chosen style can show.
+static void OverlayMenu()
+{
+    auto &o = g_config.display.overlay;
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+
+    MenuHeader("Look");
+    if (ImGui::BeginMenu("Style")) {
+        static const char *const labels[] = {
+            "Detailed (frame rate, graph, then a line each)",
+            "Compact (all on one line)", "Minimal (big frame rate)"
+        };
+        MenuChoice(labels, 3, &o.style);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Position")) {
+        static const char *const labels[] = { "Top left", "Top right",
+                                              "Bottom left", "Bottom right" };
+        MenuChoice(labels, 4, &o.position);
+        ImGui::Separator();
+        MenuSlider("Distance from edge", &o.margin, 0, 80, "%d px",
+                   "Space between the overlay and the edge of the window.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Size")) {
+        static const char *const labels[] = { "Small", "Medium", "Large" };
+        MenuChoice(labels, 3, &o.size);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Background")) {
+        MenuSlider("Opacity", &o.opacity, 0, 100,
+                   o.opacity == 0 ? "None" : "%d%%",
+                   "How solid the box behind the numbers is. 0 leaves just "
+                   "the text. Under 35% the text gets a dark edge so it stays "
+                   "readable on bright pictures.");
+        MenuHeader("Color");
+        static const char *const labels[] = { "Charcoal", "Black", "Navy",
+                                              "Slate" };
+        MenuChoice(labels, 4, &o.background_color);
+        MenuHeader("Shape");
+        MenuToggle("Border", &o.border, "A thin light line around the box.");
+        MenuToggle("Rounded corners", &o.rounded, "Rounded or square "
+                   "corners.");
+        ImGui::EndMenu();
+    }
+
+    MenuHeader("Show");
+    bool minimal = o.style == CONFIG_DISPLAY_OVERLAY_STYLE_MINIMAL;
+    bool detailed = o.style == CONFIG_DISPLAY_OVERLAY_STYLE_DETAILED;
+    if (!minimal) {
+        MenuToggle("FPS", &o.show_fps, "Frames the game showed in the last "
+                   "second.");
+    }
+    MenuToggle("1% low", &o.show_lows, "The frame rate of the slowest 1% of "
+               "frames in the last 10 seconds: low means stutter, even when "
+               "the FPS looks fine.");
+    if (minimal) {
+        ImGui::PopItemFlag();
+        return;
+    }
+    MenuToggle("Frame time", &o.show_frame_time, "Average time per frame in "
+               "milliseconds (33.3 ms is 30 FPS, 16.7 ms is 60 FPS).");
+    if (detailed) {
+        MenuToggle("Frame time graph", &o.show_graph, "The last frames as "
+                   "bars: green is on time, yellow, orange and red are "
+                   "hitches. The line is the frame time the game aims for.");
+    }
+    MenuToggle("CPU", &o.show_cpu, "How busy the emulator keeps the "
+               "processor, and the whole PC in brackets.");
+    MenuToggle("GPU", &o.show_gpu, "How busy the graphics card is (all "
+               "programs).");
+    MenuToggle("RAM", &o.show_ram, "Memory the emulator uses.");
+    MenuToggle("VRAM", &o.show_vram, "Video memory the emulator uses.");
+    MenuToggle("Shader building", &o.show_shaders, "Progress while shaders "
+               "build in the background.");
+
+    ImGui::PopItemFlag();
 }
 
 void ShowMainMenu()
@@ -435,6 +543,17 @@ void ShowMainMenu()
             MenuToggle("Vertical sync", &g_config.display.window.vsync,
                        "Stops screen tearing. Turning it off can lower input "
                        "delay but may tear.");
+
+            MenuHeader("Performance Overlay");
+            MenuToggle("Show performance overlay",
+                       &g_config.display.overlay.enabled,
+                       "Frame rate, 1% lows, frame times and how busy the PC "
+                       "is, over the game. The frame times are the game's "
+                       "own frames, so every hitch shows.");
+            if (ImGui::BeginMenu("Customize")) {
+                OverlayMenu();
+                ImGui::EndMenu();
+            }
 
             MenuHeader("Diagnostics");
             if (xemu_diag_active()) {

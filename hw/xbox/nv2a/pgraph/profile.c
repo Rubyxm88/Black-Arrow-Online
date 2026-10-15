@@ -32,6 +32,11 @@ int64_t xemu_perf_max_ns[XEMU_PERF__COUNT];
 /* A frame that takes this long is a hitch and gets a line of its own */
 #define PERF_SLOW_FRAME_US 50000
 
+/* The times of the last frames, for the performance overlay */
+#define FRAME_TIMES 1024
+static int64_t frame_times[FRAME_TIMES];
+static unsigned int frame_times_next;
+
 /* The likely cause of a slow frame, from the work done during it */
 static XemuDiagCause perf_cause(int64_t gap_us, const int64_t *ns)
 {
@@ -120,6 +125,8 @@ void nv2a_profile_flip_stall(void)
     int64_t render_time = (now-g_nv2a_stats.last_flip_time)/1000;
 
     perf_log_frame(now);
+    frame_times[frame_times_next % FRAME_TIMES] = now;
+    qatomic_store_release(&frame_times_next, frame_times_next + 1);
 
     g_nv2a_stats.frame_working.mspf = render_time;
     g_nv2a_stats.frame_history[g_nv2a_stats.frame_ptr] =
@@ -128,6 +135,18 @@ void nv2a_profile_flip_stall(void)
         (g_nv2a_stats.frame_ptr + 1) % NV2A_PROF_NUM_FRAMES;
     g_nv2a_stats.frame_count++;
     memset(&g_nv2a_stats.frame_working, 0, sizeof(g_nv2a_stats.frame_working));
+}
+
+int nv2a_profile_get_frame_times(int64_t *times_us, int max, int64_t *now_us)
+{
+    unsigned int next = qatomic_load_acquire(&frame_times_next);
+    /* Leave out the oldest few, which a new frame may be overwriting */
+    int n = MIN(MIN(next, FRAME_TIMES - 8), (unsigned int)max);
+    for (int i = 0; i < n; i++) {
+        times_us[i] = frame_times[(next - n + i) % FRAME_TIMES];
+    }
+    *now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    return n;
 }
 
 const char *nv2a_profile_get_counter_name(unsigned int cnt)

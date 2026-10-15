@@ -49,6 +49,7 @@
 #include "debug.hh"
 #include "welcome.hh"
 #include "menubar.hh"
+#include "perf-overlay.hh"
 #include "compat.hh"
 #if defined(_WIN32)
 #include "update.hh"
@@ -350,9 +351,11 @@ void xemu_hud_update(void)
 #if defined(_WIN32)
     update_window.Draw();
 #endif
+    PopupStackReset();
     if (!first_boot_window.is_open) xbcheck_window.Draw();
     if (!first_boot_window.is_open) shader_cache_window.Draw();
     if (!first_boot_window.is_open) DrawFreezeToast();
+    if (!first_boot_window.is_open) DrawPerfOverlay();
     g_scene_mgr.Draw();
     if (!first_boot_window.is_open) notification_manager.Draw();
     g_snapshot_mgr.Draw();

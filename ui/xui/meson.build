@@ -14,6 +14,7 @@ xemu_ss.add(files(
   'xbcheck.cc',
   'shader-cache.cc',
   'notifications.cc',
+  'perf-overlay.cc',
   'popup-menu.cc',
   'reporting.cc',
   'scene-components.cc',

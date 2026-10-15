@@ -18,10 +18,38 @@
 //
 #include "notifications.hh"
 #include "common.hh"
+#include "viewport-manager.hh"
 
 #include "../xemu-notifications.h"
 
 NotificationManager notification_manager;
+
+static float popup_y;
+static bool popup_right;
+
+void PopupStackReset()
+{
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    popup_right = g_config.display.overlay.enabled &&
+                  g_config.display.overlay.position ==
+                      CONFIG_DISPLAY_OVERLAY_POSITION_TOP_LEFT;
+    popup_y = vp->WorkPos.y + 10.0f * g_viewport_mgr.m_scale;
+}
+
+void PopupStackPlace()
+{
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    float pad = 10.0f * g_viewport_mgr.m_scale;
+    float x = popup_right ? vp->WorkPos.x + vp->WorkSize.x - pad :
+                            vp->WorkPos.x + pad;
+    ImGui::SetNextWindowPos(ImVec2(x, popup_y), ImGuiCond_Always,
+                            ImVec2(popup_right ? 1.0f : 0.0f, 0.0f));
+}
+
+void PopupStackTake()
+{
+    popup_y += ImGui::GetWindowHeight() + 6.0f * g_viewport_mgr.m_scale;
+}
 
 NotificationManager::NotificationManager()
 {
@@ -93,16 +121,7 @@ void NotificationManager::DrawNotification(float t, const char *msg)
         return;
     }
 
-    const float DISTANCE = 10.0f;
-    static int corner = 1;
-    ImGuiIO& io = ImGui::GetIO();
-    if (corner != -1)
-    {
-        ImVec2 window_pos = ImVec2((corner & 1) ? io.DisplaySize.x - DISTANCE : DISTANCE, (corner & 2) ? io.DisplaySize.y - DISTANCE : DISTANCE);
-        window_pos.y = g_main_menu_height + DISTANCE;
-        ImVec2 window_pos_pivot = ImVec2((corner & 1) ? 1.0f : 0.0f, (corner & 2) ? 1.0f : 0.0f);
-        ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
-    }
+    PopupStackPlace();
 
     const float fade_in  = 0.1;
     const float fade_out = 0.9;
@@ -138,6 +157,7 @@ void NotificationManager::DrawNotification(float t, const char *msg)
         ))
     {
         ImGui::Text("%s", msg);
+        PopupStackTake();
     }
     ImGui::PopStyleColor();
     ImGui::PopStyleColor();

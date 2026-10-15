@@ -44,3 +44,13 @@ private:
 };
 
 extern NotificationManager notification_manager;
+
+//
+// Popups (the connection check panel, the notices and the notifications)
+// go in one column in a top corner, each under the one before, so none
+// hides another. The column is on the left, or on the right when the
+// performance overlay is in the top left.
+//
+void PopupStackReset();  // once a frame, before the first popup
+void PopupStackPlace();  // before a popup's Begin: puts it in the next slot
+void PopupStackTake();   // inside the popup, before End: takes the slot

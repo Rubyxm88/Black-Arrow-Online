@@ -2,9 +2,11 @@
 // xemu User Interface: XB Online connection check
 //
 // The connection check runs by itself at start. When something is wrong a
-// panel in the top left corner shows what and how to fix it; when all is
-// well a short "XB Online Connected" message appears instead. Neither takes
-// focus, so the game keeps its controls.
+// panel in the top left corner shows what and how to fix it, and after
+// SHORT_DELAY shrinks to one line so it is out of the way; when all is well
+// a short "XB Online Connected" message appears instead. Neither takes
+// focus, so the game keeps its controls. Both sit in the popup column
+// (notifications.hh), so other notices go under them, not over them.
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,7 +16,9 @@
 #include "common.hh"
 #include "xbcheck.hh"
 #include "viewport-manager.hh"
+#include "notifications.hh"
 #include "../xemu-xbcheck.h"
+#include <algorithm>
 
 /* Seconds after starting before the first check, so the network is up */
 #define FIRST_CHECK_DELAY 3.0
@@ -24,6 +28,9 @@
 
 /* Seconds the "XB Online Connected" message stays on screen */
 #define TOAST_TIME 4.0
+
+/* Seconds a panel that opened by itself stays full size */
+#define SHORT_DELAY 15.0
 
 static const ImVec4 xbox_green(0.063f, 0.486f, 0.063f, 1.0f);
 static const ImVec4 xbox_green_hover(0.10f, 0.62f, 0.10f, 1.0f);
@@ -52,6 +59,7 @@ XbCheckWindow::XbCheckWindow()
     m_quiet = false;
     m_done_time = -1;
     m_toast_end = -1;
+    m_full = false;
 }
 
 void XbCheckWindow::Start(bool show)
@@ -61,15 +69,14 @@ void XbCheckWindow::Start(bool show)
     m_quiet = !show;
     m_done_time = -1;
     m_toast_end = -1;
+    m_full = show;
     is_open = show;
 }
 
 void XbCheckWindow::DrawToast()
 {
-    const ImGuiViewport *vp = ImGui::GetMainViewport();
     float scale = g_viewport_mgr.m_scale;
-    float pad = 10.0f * scale;
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + pad));
+    PopupStackPlace();
     ImGui::SetNextWindowBgAlpha(0.88f);
     if (ImGui::Begin("XB Online Connected", NULL,
                      ImGuiWindowFlags_NoDecoration |
@@ -90,6 +97,39 @@ void XbCheckWindow::DrawToast()
         ImGui::Dummy(ImVec2(size, size));
         ImGui::SameLine();
         ImGui::Text("XB Online Connected");
+        PopupStackTake();
+    }
+    ImGui::End();
+}
+
+// The panel as one line: how many things to fix, Details and Close
+void XbCheckWindow::DrawShort(int to_fix)
+{
+    PopupStackPlace();
+    ImGui::SetNextWindowBgAlpha(0.80f);
+    if (ImGui::Begin("XB Online Check (short)", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                           to_fix == 1 ? "XB Online: 1 thing to fix" :
+                                         "XB Online: %d things to fix",
+                           to_fix);
+        ImGui::SameLine();
+        PushGreenButtons();
+        if (ImGui::SmallButton("Details")) {
+            m_full = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Close")) {
+            is_open = false;
+        }
+        PopGreenButtons();
+        PopupStackTake();
     }
     ImGui::End();
 }
@@ -145,9 +185,19 @@ void XbCheckWindow::Draw()
         return;
     }
 
-    const ImGuiViewport *vp = ImGui::GetMainViewport();
-    float pad = 10.0f * g_viewport_mgr.m_scale;
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + pad));
+    if (!running && !m_full && m_done_time >= 0 &&
+        now - m_done_time > SHORT_DELAY) {
+        int to_fix = 0;
+        for (int i = 0; i < n; i++) {
+            to_fix += items[i].state == XBCHECK_WARN ||
+                      items[i].state == XBCHECK_FAIL ||
+                      items[i].action != XBCHECK_ACTION_NONE;
+        }
+        DrawShort((std::max)(to_fix, 1));
+        return;
+    }
+
+    PopupStackPlace();
     ImGui::SetNextWindowSize(ImVec2(520.0f * g_viewport_mgr.m_scale, 0));
     ImGui::SetNextWindowBgAlpha(0.88f);
     if (!ImGui::Begin("XB Online Check", NULL,
@@ -223,5 +273,6 @@ void XbCheckWindow::Draw()
         ImGui::SameLine();
         ImGui::TextDisabled("Results are also in system\\xemu.log");
     }
+    PopupStackTake();
     ImGui::End();
 }

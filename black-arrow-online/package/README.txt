@@ -80,6 +80,17 @@ GRAPHICS
   Resolution                    1x (fastest) to 4x. 2x is the default.
   Skip render target copy-back  Speed hack. Turn off if the game looks wrong.
   Vertical sync                 Turn off only if you know you need to.
+PERFORMANCE OVERLAY
+  Show performance overlay      FPS, 1% low, frame times with a graph, CPU,
+                                GPU, RAM and video memory over the game, like
+                                the Steam overlay. Colors follow the game's
+                                own pace, so a steady 30 FPS is green.
+  Customize                     Style: Detailed (frame rate, graph, then a
+                                line each), Compact (all on one line) or
+                                Minimal (big frame rate). Also the corner
+                                and distance from it, size, the background
+                                (opacity, 0 leaves just the text; color,
+                                border, corners) and what the style shows.
 DIAGNOSTICS
   Record Diagnostics Log, Open Logs Folder (see LAG).
   Save a report when the game freezes

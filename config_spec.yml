@@ -259,6 +259,61 @@ display:
     vsync:
       type: bool
       default: true
+  overlay:
+    enabled: bool
+    style:
+      type: enum
+      values: [detailed, compact, minimal]
+      default: detailed
+    position:
+      type: enum
+      values: [top_left, top_right, bottom_left, bottom_right]
+      default: top_right
+    size:
+      type: enum
+      values: [small, medium, large]
+      default: small
+    margin:
+      type: integer
+      default: 12
+    opacity:
+      type: integer
+      default: 60
+    background_color:
+      type: enum
+      values: [charcoal, black, navy, slate]
+      default: charcoal
+    border: bool
+    rounded:
+      type: bool
+      default: true
+    show_fps:
+      type: bool
+      default: true
+    show_lows:
+      type: bool
+      default: true
+    show_frame_time:
+      type: bool
+      default: true
+    show_graph:
+      type: bool
+      default: true
+    show_cpu:
+      type: bool
+      default: true
+    show_gpu:
+      type: bool
+      default: true
+    show_ram:
+      type: bool
+      default: true
+    show_vram:
+      type: bool
+      default: true
+    show_shaders:
+      type: bool
+      default: true
   ui:
     show_menubar:
       type: bool

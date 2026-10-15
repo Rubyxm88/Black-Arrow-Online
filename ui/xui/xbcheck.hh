@@ -18,6 +18,8 @@ private:
     bool   m_quiet;      // started by itself: show the panel only on problems
     double m_done_time;
     double m_toast_end;  // "XB Online Connected" shown until then
+    bool   m_full;       // the player opened it or asked for the details:
+                         // stays full size, not shrunk to one line
 
 public:
     XbCheckWindow();
@@ -27,6 +29,7 @@ public:
 
 private:
     void DrawToast();
+    void DrawShort(int to_fix);
 };
 
 extern XbCheckWindow xbcheck_window;

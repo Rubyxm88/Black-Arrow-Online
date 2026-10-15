@@ -41,7 +41,8 @@ if host_os == 'windows'
   d3d11 = cc.find_library('d3d11', required: true)
   dxgi = cc.find_library('dxgi', required: true)
   iphlpapi = cc.find_library('iphlpapi', required: true)
-  xemu_ss.add(nvapi, d3d11, dxgi, iphlpapi)
+  pdh = cc.find_library('pdh', required: true)
+  xemu_ss.add(nvapi, d3d11, dxgi, iphlpapi, pdh)
 endif
 
 subdir('xui')
