@@ -20,6 +20,7 @@
  */
 
 #include "qemu/osdep.h"
+#include <glib/gstdio.h>
 #include "qemu/fast-hash.h"
 #include "qemu/mstring.h"
 #include "qemu/bswap.h"
