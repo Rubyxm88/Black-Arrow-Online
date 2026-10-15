@@ -77,6 +77,9 @@ When a newer build is out, Black Arrow Online offers it when you start.
 An update replaces the launcher and the emulator only. Your console, Xbox
 Live sign-in, saves, settings and games are not touched. The previous
 emulator is kept as system\xemu.previous.exe.
+If Insignia's setup disc (system\Insignia-Setup.iso) is missing, an update
+also downloads it from Insignia's own GitHub releases. Without it the "New
+Account" entries of the XB Online menu stay hidden.
 To turn the check off, create an empty file system\no-update-check.txt.
 Builds and notes: https://github.com/Rubyxm88/Black-Arrow-Online/releases
 The downloads there are updates for this folder, not the full package.

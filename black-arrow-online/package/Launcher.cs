@@ -102,6 +102,9 @@ static class Launcher
                 }
                 Updater.Install(update, delegate { });
                 return 0;
+            } else if (mode == "insignia") {
+                Updater.FetchInsigniaDisc();
+                return 0;
             } else if (mode == "clean") {
                 StartClean(null);
             } else if (mode == "import") {
@@ -450,6 +453,14 @@ static class Updater
     const string PackageName = "BlackArrowOnline-update.zip";
     const int CheckTimeoutMs = 5000;
 
+    // Insignia's Setup Assistant, fetched from Insignia's own releases rather
+    // than ours, for folders set up from a package that did not include it
+    const string InsigniaDisc = "Insignia-Setup.iso";
+    const string InsigniaUrl = "https://github.com/insignia-live/setup-assistant-release" +
+                               "/releases/download/2025-01-19/Insignia-Setup.iso";
+    const string InsigniaSha256 =
+        "66a84282bb2a7fe8fe0d6a70e8333485b13e333cb827245ca7de8af8b429e883";
+
     // Files that belong to the player's console and are never replaced
     static readonly string[] Keep = {
         "xemu.toml", "eeprom.bin", "xbox_hdd.qcow2"
@@ -647,6 +658,48 @@ static class Updater
 
         File.Delete(zip);
         Directory.Delete(folder, true);
+        FetchInsigniaDisc();
+    }
+
+    static string Sha256Of(string path)
+    {
+        using (var sha = SHA256.Create())
+        using (var stream = File.OpenRead(path)) {
+            return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "")
+                               .ToLowerInvariant();
+        }
+    }
+
+    // Adds the Insignia setup disc when it is missing. It only enables the
+    // New Account entries of the XB Online menu, so any failure is ignored.
+    public static void FetchInsigniaDisc()
+    {
+        string target = InSystem(InsigniaDisc), part = target + ".part";
+        if (File.Exists(target)) {
+            return;
+        }
+        try {
+            ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+            var request = (HttpWebRequest)WebRequest.Create(InsigniaUrl);
+            request.Timeout = 30000;
+            request.ReadWriteTimeout = 30000;
+            request.UserAgent = "BlackArrowOnline-Launcher";
+            using (WebResponse response = request.GetResponse())
+            using (Stream src = response.GetResponseStream())
+            using (var dst = new FileStream(part, FileMode.Create, FileAccess.Write)) {
+                src.CopyTo(dst);
+            }
+            if (Sha256Of(part) == InsigniaSha256) {
+                File.Move(part, target);
+            }
+        } catch (Exception) {
+            // Offline or moved: the menu entries stay hidden
+        } finally {
+            try {
+                File.Delete(part);
+            } catch (IOException) {
+            }
+        }
     }
 }
 
