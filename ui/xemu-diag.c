@@ -248,9 +248,11 @@ static void write_summary(void)
         slow_total += slow_count[i];
     }
 
+    /* Leave out the stretches with no frames at all */
+    double running = secs - slow_ms[XEMU_DIAG_CAUSE_PAUSE] / 1e3;
     fprintf(log_file, "SUMMARY recorded %.0f s, %" PRId64 " frames, "
-            "average %.1f fps\n", secs, frame_count,
-            secs > 0 ? frame_count / secs : 0.0);
+            "average %.1f fps while running\n", secs, frame_count,
+            running > 0 ? frame_count / running : 0.0);
     fprintf(log_file, "SUMMARY seconds under %d fps: %d of %d\n", LOW_FPS,
             low_second_count, second_count);
     fprintf(log_file, "SUMMARY slow frames: %" PRId64 "\n", slow_total);
@@ -517,23 +519,27 @@ void xemu_diag_count_second(int frames)
     }
 }
 
+#ifdef _WIN32
+static ULONGLONG filetime(FILETIME ft)
+{
+    return ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+}
+#endif
+
 void xemu_diag_print_system(FILE *f)
 {
 #ifdef _WIN32
     static ULONGLONG last_proc, last_busy, last_total, last_wall;
     FILETIME c, e, k, u, idle, kern, user;
-    ULARGE_INTEGER v;
 
-#define FT(ft) (v.LowPart = (ft).dwLowDateTime, \
-                v.HighPart = (ft).dwHighDateTime, v.QuadPart)
     if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u) ||
         !GetSystemTimes(&idle, &kern, &user)) {
         return;
     }
-    ULONGLONG proc = FT(k) + FT(u);
-    ULONGLONG total = FT(kern) + FT(user);  /* kernel time includes idle */
-    ULONGLONG busy = total - FT(idle);
-#undef FT
+    ULONGLONG proc = filetime(k) + filetime(u);
+    /* Kernel time includes idle time */
+    ULONGLONG total = filetime(kern) + filetime(user);
+    ULONGLONG busy = total - filetime(idle);
     ULONGLONG wall = now_us() * 10;  /* 100 ns units, like the times */
 
     if (last_wall && wall > last_wall && total > last_total) {
