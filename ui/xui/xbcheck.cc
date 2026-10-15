@@ -134,7 +134,7 @@ void XbCheckWindow::Draw()
             is_open = false;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("Results are also in system\xemu.log");
+        ImGui::TextDisabled("Results are also in system\\xemu.log");
     }
     ImGui::End();
 }
