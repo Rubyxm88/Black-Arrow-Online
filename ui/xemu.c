@@ -1105,9 +1105,11 @@ static void display_very_early_init(DisplayOptions *o)
 
     /*
      * Started by the Black Arrow Online launcher, the window would otherwise
-     * open behind it. The launcher allows this with AllowSetForegroundWindow.
+     * open behind other windows. Force it to the front once, at start only.
      */
+    SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "1");
     SDL_RaiseWindow(m_window);
+    SDL_ResetHint(SDL_HINT_FORCE_RAISEWINDOW);
 
     m_context = SDL_GL_CreateContext(m_window);
 
