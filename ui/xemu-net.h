@@ -30,6 +30,9 @@ void xemu_net_enable(void);
 void xemu_net_disable(void);
 int xemu_net_is_enabled(void);
 
+/* DNS server the console's lookups are sent to, or NULL if not redirected */
+const char *xemu_net_dns_redirect_server(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -52,6 +52,29 @@ int xemu_xbonline_hdd_has_account(const char *hdd_path);
  */
 int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
 
+/* Title ID of Rainbow Six 3: Black Arrow */
+#define XEMU_XBONLINE_TITLE_ID 0x55530037
+
+/* Title update version 2.01, installed by the update disc */
+#define XEMU_XBONLINE_TITLE_UPDATE_VERSION 0x201
+
+typedef struct XbOnlineXbe {
+    uint32_t title_id;
+    uint32_t version;
+    char name[40];
+} XbOnlineXbe;
+
+/*
+ * Look for the title update of a game on the hard disk image and count its
+ * downloadable content. Returns 1 if the update is there (its certificate in
+ * *xbe), 0 if it is not, -1 if the image could not be read.
+ */
+int xemu_xbonline_hdd_title_update(const char *hdd_path, uint32_t title_id,
+                                   XbOnlineXbe *xbe, int *content_count);
+
+/* Read the certificate of default.xbe on an Xbox disc image */
+bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe);
+
 /*
  * Look at the hard disk image once, before the machine starts using it, so
  * xemu_xbonline_setup_disc() knows which disc to offer.

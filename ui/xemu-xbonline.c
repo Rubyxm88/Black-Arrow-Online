@@ -255,6 +255,37 @@ static uint32_t fatx_find(Fatx *fs, uint32_t dir_cluster, const char *name,
     return found;
 }
 
+/* Number of subdirectories of a directory */
+static int fatx_count_dirs(Fatx *fs, uint32_t dir_cluster)
+{
+    uint8_t *data = g_malloc(fs->cluster_size);
+    int count = 0;
+    bool done = false;
+
+    for (int hops = 0; dir_cluster && !done && hops < 4096; hops++) {
+        if (!hdd_read_bytes(fs->img,
+                            fs->data_offset +
+                            (uint64_t)(dir_cluster - 1) * fs->cluster_size,
+                            data, fs->cluster_size)) {
+            break;
+        }
+        for (uint32_t i = 0; i < fs->cluster_size; i += FATX_ENTRY_SIZE) {
+            const uint8_t *e = data + i;
+            if (e[0] == 0x00 || e[0] == 0xff) {
+                done = true;
+                break;
+            }
+            if (e[0] != 0xe5 && (e[1] & FATX_ATTR_DIRECTORY)) {
+                count++;
+            }
+        }
+        dir_cluster = fatx_next(fs, dir_cluster);
+    }
+
+    g_free(data);
+    return count;
+}
+
 int xemu_xbonline_hdd_has_dashboard(const char *hdd_path)
 {
     HddImage img;
@@ -267,6 +298,120 @@ int xemu_xbonline_hdd_has_dashboard(const char *hdd_path)
     }
     hdd_close(&img);
     return result;
+}
+
+/* Version and title of an XBE from its first bytes; false if it is not one */
+static bool xbe_certificate(const uint8_t *xbe, size_t len, XbOnlineXbe *out)
+{
+    uint32_t base, cert;
+
+    if (len < 0x180 || memcmp(xbe, "XBEH", 4)) {
+        return false;
+    }
+    base = ldl_le_p(xbe + 0x104);
+    cert = ldl_le_p(xbe + 0x118) - base;
+    if (cert > len - 0xb0) {
+        return false;
+    }
+    out->title_id = ldl_le_p(xbe + cert + 8);
+    out->version = ldl_le_p(xbe + cert + 0xac);
+    for (int i = 0; i < 39; i++) {
+        uint16_t c = lduw_le_p(xbe + cert + 12 + 2 * i);
+        out->name[i] = c == 0 ? 0 : (c < 0x80 ? c : '?');
+        if (!c) {
+            break;
+        }
+    }
+    out->name[39] = 0;
+    return true;
+}
+
+int xemu_xbonline_hdd_title_update(const char *hdd_path, uint32_t title_id,
+                                   XbOnlineXbe *xbe, int *content_count)
+{
+    HddImage img;
+    Fatx fs;
+    int result = -1;
+    char tid[9];
+
+    *content_count = 0;
+    snprintf(tid, sizeof(tid), "%08X", title_id);
+    if (hdd_open(&img, hdd_path) && fatx_open(&fs, &img)) {
+        uint32_t tdata = fatx_find(&fs, 1, "TDATA", true);
+        uint32_t title = tdata ? fatx_find(&fs, tdata, tid, true) : 0;
+        uint32_t update = title ? fatx_find(&fs, title, "$u", true) : 0;
+        uint32_t content = title ? fatx_find(&fs, title, "$c", true) : 0;
+        uint32_t file = update ? fatx_find(&fs, update, "default.xbe", false)
+                               : 0;
+
+        result = 0;
+        if (file) {
+            uint8_t *data = g_malloc(fs.cluster_size);
+            if (hdd_read_bytes(&img, fs.data_offset +
+                               (uint64_t)(file - 1) * fs.cluster_size,
+                               data, fs.cluster_size) &&
+                xbe_certificate(data, fs.cluster_size, xbe)) {
+                result = 1;
+            }
+            g_free(data);
+        }
+        if (content) {
+            *content_count = fatx_count_dirs(&fs, content);
+        }
+    }
+    hdd_close(&img);
+    return result;
+}
+
+bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe)
+{
+    static const uint64_t bases[] = { 0, 0x18300000ULL, 0x1040000ULL,
+                                      0xFD90000ULL };
+    FILE *f = qemu_fopen(iso_path, "rb");
+    bool found = false;
+    uint8_t vd[28];
+
+    if (!f) {
+        return false;
+    }
+    for (int b = 0; b < ARRAY_SIZE(bases) && !found; b++) {
+        uint64_t base = bases[b];
+        uint32_t root, root_size;
+        uint8_t *dir;
+
+        if (fseeko(f, base + 32 * 2048, SEEK_SET) ||
+            fread(vd, 1, sizeof(vd), f) != sizeof(vd) ||
+            memcmp(vd, "MICROSOFT*XBOX*MEDIA", 20)) {
+            continue;
+        }
+        root = ldl_le_p(vd + 20);
+        root_size = ldl_le_p(vd + 24);
+        if (root_size == 0 || root_size > 1024 * 1024) {
+            break;
+        }
+        dir = g_malloc(root_size);
+        if (fseeko(f, base + (uint64_t)root * 2048, SEEK_SET) == 0 &&
+            fread(dir, 1, root_size, f) == root_size) {
+            /* Entries are 4-byte aligned; look at each for default.xbe */
+            for (uint32_t o = 0; o + 14 + 11 <= root_size && !found; o += 4) {
+                if (dir[o + 13] == 11 &&
+                    !g_ascii_strncasecmp((char *)dir + o + 14, "default.xbe",
+                                         11) &&
+                    !(dir[o + 12] & 0x10)) {
+                    uint8_t head[4096];
+                    uint32_t sector = ldl_le_p(dir + o + 4);
+                    if (fseeko(f, base + (uint64_t)sector * 2048,
+                               SEEK_SET) == 0 &&
+                        fread(head, 1, sizeof(head), f) == sizeof(head)) {
+                        found = xbe_certificate(head, sizeof(head), xbe);
+                    }
+                }
+            }
+        }
+        g_free(dir);
+    }
+    fclose(f);
+    return found;
 }
 
 static bool hdd_has_dashboard;

@@ -27,6 +27,7 @@
 #include "actions.hh"
 #include "compat.hh"
 #include "update.hh"
+#include "xbcheck.hh"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include <filesystem>
@@ -198,6 +199,9 @@ void ShowMainMenu()
             }
             if (ImGui::MenuItem("Get a Link Code (xb.live)")) {
                 SDL_OpenURL("https://xb.live/link");
+            }
+            if (ImGui::MenuItem("Check Connection")) {
+                xbcheck_window.Start();
             }
 
             if (qemu_access(XEMU_XBONLINE_INSIGNIA_DISC, F_OK) == 0) {

@@ -40,13 +40,14 @@
 #include <pcap/pcap.h>
 #endif
 #include "xemu-notifications.h"
+#include "xemu-xbcheck.h"
 
 static const char *id = "xemu-netdev";
 static const char *id_hubport = "xemu-netdev-hubport";
 static const char *id_dns_redirect = "xemu-dns-redirect";
 static const char *id_pcap = "xemu-net-pcap";
 
-static const char *get_dns_redirect_server(void)
+const char *xemu_net_dns_redirect_server(void)
 {
     switch (g_config.net.dns_redirect) {
     case CONFIG_NET_DNS_REDIRECT_INSIGNIA:
@@ -253,13 +254,14 @@ void xemu_net_enable(void)
                     host_port, is_udp ? "udp" : "tcp");
                 fprintf(stderr, "nat: %s\n", msg);
                 xemu_queue_notification(msg);
+                xemu_xbcheck_note_port_busy(host_port);
                 g_free(msg);
             }
 
         }
     }
 
-    const char *dns_server = get_dns_redirect_server();
+    const char *dns_server = xemu_net_dns_redirect_server();
     if (!local_err && dns_server) {
         object_new_with_props("filter-dns-redirect", object_get_objects_root(),
                               id_dns_redirect, &local_err,

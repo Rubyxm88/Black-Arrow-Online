@@ -52,6 +52,7 @@
 #include "compat.hh"
 #if defined(_WIN32)
 #include "update.hh"
+#include "xbcheck.hh"
 #endif
 
 bool g_screenshot_pending;
@@ -341,6 +342,7 @@ void xemu_hud_update(void)
 #if defined(_WIN32)
     update_window.Draw();
 #endif
+    if (!first_boot_window.is_open) xbcheck_window.Draw();
     g_scene_mgr.Draw();
     if (!first_boot_window.is_open) notification_manager.Draw();
     g_snapshot_mgr.Draw();

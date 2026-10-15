@@ -1364,6 +1364,9 @@ int main(int argc, char **argv)
         if (logfile != INVALID_HANDLE_VALUE) {
             freopen("xemu.log", "a", stdout);
             freopen("xemu.log", "a", stderr);
+            /* Unbuffered, so a log sent in after a crash or a forced close
+               still has the last lines */
+            setvbuf(stderr, NULL, _IONBF, 0);
         }
     }
 
