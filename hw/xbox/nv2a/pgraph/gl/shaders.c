@@ -21,6 +21,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/fast-hash.h"
+#include "qemu/xemu-perf.h"
 #include "qemu/mstring.h"
 
 #include "xemu-version.h"
@@ -814,11 +815,17 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
     LruNode *node = lru_lookup(&r->shader_cache, shader_state_hash, &state);
     ShaderBinding *binding = container_of(node, ShaderBinding, node);
 
-    if (!binding->initialized && !pgraph_gl_shader_load_from_memory(binding)) {
-        nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
-        generate_shaders(r, binding);
-        if (g_config.perf.cache_shaders) {
-            pgraph_gl_shader_cache_to_disk(binding);
+    if (!binding->initialized) {
+        int64_t perf_start = xemu_perf_start();
+        if (pgraph_gl_shader_load_from_memory(binding)) {
+            xemu_perf_end(XEMU_PERF_SHADER_LOAD, perf_start);
+        } else {
+            nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
+            generate_shaders(r, binding);
+            if (g_config.perf.cache_shaders) {
+                pgraph_gl_shader_cache_to_disk(binding);
+            }
+            xemu_perf_end(XEMU_PERF_SHADER_GEN, perf_start);
         }
     }
     assert(binding->initialized);

@@ -20,6 +20,7 @@
  */
 
 #include "apu_int.h"
+#include "qemu/xemu-perf.h"
 
 MCPXAPUState *g_state; // Used via debug handlers
 
@@ -244,8 +245,12 @@ static void se_frame(MCPXAPUState *d)
     /* Buffer for all mixbins for this frame */
     float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME] = { 0 };
 
+    int64_t perf_start = xemu_perf_start();
     mcpx_apu_vp_frame(d, mixbins);
+    xemu_perf_end(XEMU_PERF_AUDIO_VP, perf_start);
+    perf_start = xemu_perf_start();
     mcpx_apu_dsp_frame(d, mixbins);
+    xemu_perf_end(XEMU_PERF_AUDIO_DSP, perf_start);
     mcpx_apu_monitor_frame(d);
 
     d->ep_frame_div++;

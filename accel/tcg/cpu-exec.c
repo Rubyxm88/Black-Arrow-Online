@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/qemu-print.h"
+#include "qemu/xemu-perf.h"
 #include "qapi/error.h"
 #include "qapi/type-helpers.h"
 #include "hw/core/cpu.h"
@@ -990,9 +991,11 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                 CPUJumpCache *jc;
                 uint32_t h;
 
+                int64_t perf_start = xemu_perf_start();
                 mmap_lock();
                 tb = tb_gen_code(cpu, s);
                 mmap_unlock();
+                xemu_perf_end(XEMU_PERF_TCG, perf_start);
 
                 /*
                  * We add the TB in the virtual pc hash table
