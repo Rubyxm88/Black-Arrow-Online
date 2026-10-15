@@ -79,7 +79,8 @@ void ShaderCacheWindow::Open()
 // Open once per graphics driver when the list has shaders to build
 void ShaderCacheWindow::CheckOffer()
 {
-    if (m_offer_checked || ImGui::GetTime() < OFFER_DELAY) {
+    if (m_offer_checked || !g_config.perf.shader_precache_offer ||
+        ImGui::GetTime() < OFFER_DELAY) {
         return;
     }
 
@@ -101,15 +102,19 @@ void ShaderCacheWindow::CheckOffer()
         return;
     }
 
+    /* Offer again after a driver update or a resolution scale change */
     char *path = OfferFilePath();
+    char *want = g_strdup_printf("%s, scale %u", status.driver,
+                                 nv2a_get_surface_scale_factor());
     gchar *offered = NULL;
     bool same = g_file_get_contents(path, &offered, NULL, NULL) &&
-                !strcmp(offered, status.driver);
+                !strcmp(offered, want);
     if (!same) {
-        g_file_set_contents(path, status.driver, -1, NULL);
+        g_file_set_contents(path, want, -1, NULL);
         is_open = true;
     }
     g_free(offered);
+    g_free(want);
     g_free(path);
 }
 
@@ -145,8 +150,9 @@ void ShaderCacheWindow::Draw()
     ImGui::Separator();
 
     if (!status.supported) {
-        ImGui::TextWrapped("Shader precaching works with the OpenGL renderer. "
-                           "Choose it under View > Backend and restart.");
+        ImGui::TextWrapped("Not available with Vulkan. Shader precaching "
+                           "works with the OpenGL renderer: choose it under "
+                           "RSO Settings > Renderer and restart.");
     } else {
         ImGui::Text("Graphics card: %s", status.gpu);
         ImGui::Text("Driver: %s", status.driver);
@@ -156,8 +162,13 @@ void ShaderCacheWindow::Draw()
             if (status.list_total < 0) {
                 ImGui::TextDisabled("No shader list in this package.");
             } else if (!status.running) {
-                ImGui::Text("Black Arrow shader list: %d shaders, %d still to "
-                            "build", status.list_total, status.list_missing);
+                ImGui::Text("Shaders to have ready at %ux: %d, %d still to "
+                            "build", nv2a_get_surface_scale_factor(),
+                            status.list_total, status.list_missing);
+                ImGui::TextDisabled(g_config.perf.shader_precache_own ?
+                                    "From the Black Arrow list and the "
+                                    "shaders this PC has used." :
+                                    "From the Black Arrow list.");
             }
         } else {
             ImGui::TextDisabled("Counting shaders...");

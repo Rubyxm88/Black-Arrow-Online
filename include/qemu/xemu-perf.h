@@ -24,6 +24,8 @@ enum XemuPerfKind {
     XEMU_PERF_AUDIO_VP,     /* audio voices mixed */
     XEMU_PERF_AUDIO_DSP,    /* audio effects DSP */
     XEMU_PERF_TCG,          /* guest code translated */
+    XEMU_PERF_SHADER_ASYNC, /* new shader started or finished in background */
+    XEMU_PERF_DRAW_SKIPPED, /* draw skipped while its shader builds */
     XEMU_PERF__COUNT
 };
 

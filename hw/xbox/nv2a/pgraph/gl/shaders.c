@@ -257,6 +257,142 @@ static void generate_shaders(PGRAPHGLState *r, ShaderBinding *binding)
     update_shader_uniform_locs(binding);
 }
 
+/*
+ * Background shader building (RSO Settings > Build shaders in the
+ * background). With the driver's parallel shader compiler, a new shader is
+ * compiled and linked on the driver's own threads. Until it is ready, draws
+ * that need it use a program that draws nothing, so an effect is missing
+ * for a few frames instead of the game freezing. A shader still not ready
+ * after ASYNC_MAX_FRAMES frames is waited for, so nothing stays missing.
+ */
+
+#define ASYNC_MAX_FRAMES 3
+
+static bool async_supported;
+static ShaderBinding async_null_binding;
+
+static void async_init(void)
+{
+    if (glo_check_extension("GL_KHR_parallel_shader_compile")) {
+        glMaxShaderCompilerThreadsKHR(0xFFFFFFFF);
+        async_supported = true;
+    } else if (glo_check_extension("GL_ARB_parallel_shader_compile")) {
+        glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
+        async_supported = true;
+    }
+    fprintf(stderr, "nv2a: background shader building %s\n",
+            async_supported ? "available" : "not supported by this driver");
+
+    /* Every vertex lands outside the screen, so nothing is drawn */
+    static const char *vs =
+        "#version 330\n"
+        "void main() { gl_Position = vec4(2.0, 2.0, 0.0, 1.0); }\n";
+    static const char *fs =
+        "#version 330\n"
+        "out vec4 color;\n"
+        "void main() { color = vec4(0.0); }\n";
+    ShaderBinding *null = &async_null_binding;
+    null->gl_program = pgraph_gl_compile_shader(vs, fs);
+    null->initialized = true;
+    for (int i = 0; i < ARRAY_SIZE(null->uniform_locs.vsh); i++) {
+        null->uniform_locs.vsh[i] = -1;
+    }
+    for (int i = 0; i < ARRAY_SIZE(null->uniform_locs.psh); i++) {
+        null->uniform_locs.psh[i] = -1;
+    }
+}
+
+/* Compile one stage without waiting for it; the link reports failures */
+static void async_attach(GLuint program, GLenum kind, MString *code)
+{
+    const char *src = mstring_get_str(code);
+    GLuint shader = glCreateShader(kind);
+
+    glShaderSource(shader, 1, &src, 0);
+    glCompileShader(shader);
+    glAttachShader(program, shader);
+    /* Freed with the program */
+    glDeleteShader(shader);
+    mstring_unref(code);
+}
+
+/* Start building the program for a binding, the way generate_shaders() does */
+static void async_start(ShaderBinding *binding)
+{
+    ShaderState *state = &binding->state;
+    GLuint program = glCreateProgram();
+
+    bool need_geometry_shader = pgraph_glsl_need_geom(&state->geom);
+    if (need_geometry_shader) {
+        GenGeomGlslOptions geom_opts;
+        memset(&geom_opts, 0, sizeof(geom_opts));
+        async_attach(program, GL_GEOMETRY_SHADER,
+                     pgraph_glsl_gen_geom(&state->geom, geom_opts));
+    }
+    GenVshGlslOptions vsh_opts;
+    memset(&vsh_opts, 0, sizeof(vsh_opts));
+    vsh_opts.prefix_outputs = need_geometry_shader;
+    async_attach(program, GL_VERTEX_SHADER,
+                 pgraph_glsl_gen_vsh(&state->vsh, vsh_opts));
+    GenPshGlslOptions psh_opts;
+    memset(&psh_opts, 0, sizeof(psh_opts));
+    async_attach(program, GL_FRAGMENT_SHADER,
+                 pgraph_glsl_gen_psh(&state->psh, psh_opts));
+
+    glLinkProgram(program);
+    binding->gl_program = program;
+    binding->async_pending = true;
+    binding->async_frame = g_nv2a_stats.frame_count;
+}
+
+static bool async_ready(ShaderBinding *binding)
+{
+    GLint done = GL_FALSE;
+    glGetProgramiv(binding->gl_program, GL_COMPLETION_STATUS_KHR, &done);
+    return done ||
+           g_nv2a_stats.frame_count - binding->async_frame >= ASYNC_MAX_FRAMES;
+}
+
+/*
+ * Finish a binding whose program was linking in the background (waiting for
+ * it if needed). False if the link failed; the program is then deleted.
+ */
+static bool async_finish(ShaderBinding *binding)
+{
+    GLuint program = binding->gl_program;
+    GLint linked = 0;
+
+    binding->async_pending = false;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        GLchar log[2048];
+        glGetProgramInfoLog(program, sizeof(log), NULL, log);
+        fprintf(stderr, "nv2a: background shader link failed: %s\n", log);
+        glDeleteProgram(program);
+        binding->gl_program = 0;
+        return false;
+    }
+
+    glUseProgram(program);
+    binding->gl_primitive_mode =
+        get_gl_primitive_mode(binding->state.geom.polygon_front_mode,
+                              binding->state.geom.primitive_mode);
+    binding->initialized = true;
+    set_texture_sampler_uniforms(binding);
+    update_shader_uniform_locs(binding);
+    return true;
+}
+
+/* The binding that draws nothing, standing in for one still building */
+static ShaderBinding *async_stand_in(const ShaderState *state)
+{
+    ShaderBinding *null = &async_null_binding;
+    memcpy(&null->state, state, sizeof(*state));
+    null->gl_primitive_mode = get_gl_primitive_mode(
+        state->geom.polygon_front_mode, state->geom.primitive_mode);
+    return null;
+}
+
 static void precache_attach(PGRAPHState *pg);
 static void precache_detach(void);
 
@@ -426,6 +562,7 @@ static void shader_load_from_disk(PGRAPHState *pg, uint64_t hash)
     GLenum program_binary_format;
     ShaderState state;
     size_t shader_size;
+    bool keep_file = false;
 
     g_free(shader_bin_dir);
 
@@ -466,6 +603,7 @@ static void shader_load_from_disk(PGRAPHState *pg, uint64_t hash)
     READ_OR_ERR(cached_gl_vendor, gl_vendor_len);
     if (strcmp(cached_gl_vendor, shader_gl_vendor) != 0) {
         fclose(shader_file);
+        keep_file = true;
         goto error;
     }
 
@@ -475,6 +613,7 @@ static void shader_load_from_disk(PGRAPHState *pg, uint64_t hash)
     READ_OR_ERR(cached_gl_version, gl_version_len);
     if (strcmp(cached_gl_version, shader_gl_version) != 0) {
         fclose(shader_file);
+        keep_file = true;
         goto error;
     }
 
@@ -511,8 +650,13 @@ static void shader_load_from_disk(PGRAPHState *pg, uint64_t hash)
     return;
 
 error:
-    /* Delete the shader so it won't be loaded again */
-    qemu_unlink(shader_path);
+    /*
+     * Delete the shader so it won't be loaded again, unless it was only built
+     * by another graphics driver: the precache can rebuild it from its state
+     */
+    if (!keep_file) {
+        qemu_unlink(shader_path);
+    }
     g_free(shader_path);
     g_free(program_buffer);
     g_free(cached_xemu_version);
@@ -551,6 +695,8 @@ static void shader_cache_entry_init(Lru *lru, LruNode *node, const void *state)
     binding->cached = false;
     binding->program = NULL;
     binding->save_thread = NULL;
+    binding->gl_program = 0;
+    binding->async_pending = false;
 }
 
 static void shader_cache_entry_post_evict(Lru *lru, LruNode *node)
@@ -625,6 +771,7 @@ void pgraph_gl_init_shaders(PGRAPHState *pg)
     }
 
     precache_attach(pg);
+    async_init();
 
     r->shader_module_cache.init_node = shader_module_cache_entry_init;
     r->shader_module_cache.compare_nodes = shader_module_cache_entry_compare;
@@ -833,7 +980,8 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
     PGRAPHGLState *r = pg->gl_renderer_state;
 
     bool binding_changed = false;
-    if (r->shader_binding &&
+    /* A stand-in is never kept: look again whether the shader is ready */
+    if (r->shader_binding && r->shader_binding != &async_null_binding &&
         !pgraph_glsl_check_shader_state_dirty(pg, &r->shader_binding->state)) {
         nv2a_profile_inc_counter(NV2A_PROF_SHADER_BIND_NOTDIRTY);
         goto update_uniforms;
@@ -853,10 +1001,39 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
     LruNode *node = lru_lookup(&r->shader_cache, shader_state_hash, &state);
     ShaderBinding *binding = container_of(node, ShaderBinding, node);
 
-    if (!binding->initialized) {
+    bool stand_in = false;
+    if (binding->async_pending) {
+        int64_t perf_start = xemu_perf_start();
+        GLuint pending = binding->gl_program;
+        if (binding->program && pgraph_gl_shader_load_from_memory(binding)) {
+            /* The cache on disk delivered it first */
+            binding->async_pending = false;
+            glDeleteProgram(pending);
+            xemu_perf_end(XEMU_PERF_SHADER_LOAD, perf_start);
+        } else if (!async_ready(binding)) {
+            stand_in = true;
+        } else {
+            /* A shader still not ready after a few frames is waited for */
+            bool late = g_nv2a_stats.frame_count - binding->async_frame >=
+                        ASYNC_MAX_FRAMES;
+            if (!async_finish(binding)) {
+                generate_shaders(r, binding);
+            }
+            if (g_config.perf.cache_shaders) {
+                pgraph_gl_shader_cache_to_disk(binding);
+            }
+            xemu_perf_end(late ? XEMU_PERF_SHADER_GEN : XEMU_PERF_SHADER_ASYNC,
+                          perf_start);
+        }
+    } else if (!binding->initialized) {
         int64_t perf_start = xemu_perf_start();
         if (pgraph_gl_shader_load_from_memory(binding)) {
             xemu_perf_end(XEMU_PERF_SHADER_LOAD, perf_start);
+        } else if (async_supported && g_config.perf.shader_async) {
+            nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
+            async_start(binding);
+            stand_in = true;
+            xemu_perf_end(XEMU_PERF_SHADER_ASYNC, perf_start);
         } else {
             nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
             generate_shaders(r, binding);
@@ -866,6 +1043,11 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
             xemu_perf_end(XEMU_PERF_SHADER_GEN, perf_start);
         }
     }
+    if (stand_in) {
+        binding = async_stand_in(&state);
+        xemu_perf_end(XEMU_PERF_DRAW_SKIPPED, xemu_perf_start());
+    }
+
     assert(binding->initialized);
     r->shader_binding = binding;
     pg->program_data_dirty = false;
@@ -1137,29 +1319,119 @@ static bool precache_build(const ShaderState *state, uint64_t hash,
     return ok;
 }
 
+/* The state stored in one of this PC's cache files, whatever its driver */
+static bool shader_file_state(const char *path, ShaderState *state)
+{
+    FILE *f = qemu_fopen(path, "rb");
+    const char *tag = shader_cache_tag();
+    GLenum format;
+    bool ok = f != NULL;
+
+    /* Cache tag, GL vendor, GL version; only the tag has to match */
+    for (int i = 0; i < 3 && ok; i++) {
+        uint64_t len;
+        char buf[256];
+        ok = fread(&len, sizeof(len), 1, f) == 1 && len <= sizeof(buf) &&
+             fread(buf, len, 1, f) == 1;
+        if (ok && i == 0) {
+            ok = len == strlen(tag) + 1 && !memcmp(buf, tag, len);
+        }
+    }
+    ok = ok && fread(&format, sizeof(format), 1, f) == 1 &&
+         fread(state, sizeof(*state), 1, f) == 1;
+    if (f) {
+        fclose(f);
+    }
+    return ok;
+}
+
+/* Add the state of every shader in this PC's cache */
+static void precache_add_own(GArray *states)
+{
+    char *root = g_strdup_printf("%sshaders", xemu_settings_get_base_path());
+    GDir *dir = g_dir_open(root, 0, NULL);
+    const char *name;
+
+    while (dir && (name = g_dir_read_name(dir))) {
+        char *sub_path = g_build_filename(root, name, NULL);
+        GDir *sub = g_dir_open(sub_path, 0, NULL);
+        const char *file;
+        while (sub && (file = g_dir_read_name(sub))) {
+            char *file_path = g_build_filename(sub_path, file, NULL);
+            ShaderState state;
+            if (shader_file_state(file_path, &state)) {
+                g_array_append_val(states, state);
+            }
+            g_free(file_path);
+        }
+        if (sub) {
+            g_dir_close(sub);
+        }
+        g_free(sub_path);
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+    g_free(root);
+}
+
 static void *precache_thread(void *arg)
 {
     PGRAPHState *pg = arg;
-    int count;
-    ShaderState *states = shader_list_load(&count);
+    int list_count;
+    ShaderState *list = shader_list_load(&list_count);
+    GArray *all = g_array_new(FALSE, FALSE, sizeof(ShaderState));
+
+    if (list) {
+        g_array_append_vals(all, list, list_count);
+    }
+    g_free(list);
+    if (g_config.perf.shader_precache_own) {
+        precache_add_own(all);
+    }
+
+    /*
+     * The resolution scale is part of every vertex shader's state, so build
+     * each state at the scale the game runs at now, and drop the duplicates
+     * that leaves.
+     */
+    unsigned int scale = pg->surface_scale_factor;
+    ShaderState *states = g_new(ShaderState, MAX(all->len, 1));
+    uint64_t *hashes = g_new(uint64_t, MAX(all->len, 1));
+    GHashTable *seen = g_hash_table_new(g_int64_hash, g_int64_equal);
+    int count = 0;
+
+    for (guint i = 0; i < all->len; i++) {
+        states[count] = g_array_index(all, ShaderState, i);
+        states[count].vsh.surface_scale_factor = scale;
+        hashes[count] =
+            fast_hash((uint8_t *)&states[count], sizeof(ShaderState));
+        if (!g_hash_table_contains(seen, &hashes[count])) {
+            g_hash_table_add(seen, &hashes[count]);
+            count++;
+        }
+    }
+    g_hash_table_destroy(seen);
+    g_array_free(all, TRUE);
+
     uint64_t *missing = g_new(uint64_t, MAX(count, 1));
     int *missing_index = g_new(int, MAX(count, 1));
     int n_missing = 0;
 
     for (int i = 0; i < count; i++) {
-        uint64_t hash = fast_hash((uint8_t *)&states[i], sizeof(ShaderState));
-        if (!shader_on_disk(hash)) {
-            missing[n_missing] = hash;
+        if (!shader_on_disk(hashes[i])) {
+            missing[n_missing] = hashes[i];
             missing_index[n_missing++] = i;
         }
     }
+    g_free(hashes);
 
     int disk_count;
     uint64_t disk_bytes;
     shader_disk_usage(&disk_count, &disk_bytes);
 
     qemu_mutex_lock(&precache.lock);
-    precache.status.list_total = count;
+    precache.status.list_total = list_count < 0 && count == 0 ? -1 : count;
     precache.status.list_missing = n_missing;
     precache.status.disk_count = disk_count;
     precache.status.disk_bytes = disk_bytes;

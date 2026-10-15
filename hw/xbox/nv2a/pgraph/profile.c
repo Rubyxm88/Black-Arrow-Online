@@ -38,6 +38,8 @@ static const char *const perf_names[XEMU_PERF__COUNT] = {
     [XEMU_PERF_AUDIO_VP] = "audio_voices",
     [XEMU_PERF_AUDIO_DSP] = "audio_dsp",
     [XEMU_PERF_TCG] = "code_translate",
+    [XEMU_PERF_SHADER_ASYNC] = "shader_async",
+    [XEMU_PERF_DRAW_SKIPPED] = "draw_skipped",
 };
 
 /* " name=count/total_ms(max_ms)" for each kind of work that happened */

@@ -188,13 +188,16 @@ static void write_settings(FILE *f)
 
     fprintf(f, "# settings: renderer=%s surface_scale=%d vsync=%d "
             "skip_reuse_copyback=%d use_dsp=%d hard_fpu=%d "
-            "cache_shaders=%d\n",
+            "cache_shaders=%d shader_async=%d precache_offer=%d "
+            "precache_own=%d\n",
             renderer < 3 ? renderers[renderer] : "?",
             g_config.display.quality.surface_scale,
             g_config.display.window.vsync,
             g_config.display.quality.skip_reuse_copyback,
             g_config.audio.use_dsp,
-            g_config.perf.hard_fpu, g_config.perf.cache_shaders);
+            g_config.perf.hard_fpu, g_config.perf.cache_shaders,
+            g_config.perf.shader_async, g_config.perf.shader_precache_offer,
+            g_config.perf.shader_precache_own);
     fprintf(f, "# network: enabled=%d backend=%s dns_redirect=%s\n",
             g_config.net.enable, backend < 3 ? backends[backend] : "?",
             redirect < 4 ? redirects[redirect] : "?");

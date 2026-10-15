@@ -33,6 +33,7 @@
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
 #include "../xemu-diag.h"
+#include "hw/xbox/nv2a/shader-precache.h"
 #include <filesystem>
 #include <map>
 #include <string>
@@ -103,6 +104,37 @@ static void MenuHeader(const char *title)
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.80f, 0.30f, 1.0f));
     ImGui::SeparatorText(title);
     ImGui::PopStyleColor();
+}
+
+// A menu item with a check mark that flips a setting; hovering explains it
+static void MenuToggle(const char *label, bool *value, const char *help)
+{
+    ImGui::MenuItem(label, NULL, value);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort |
+                             ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextUnformatted(help);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+static void StartDiagnosticsLog()
+{
+    if (xemu_diag_start()) {
+        xemu_queue_notification("Recording a diagnostics log. "
+                                "Press F9 when the game lags.");
+    } else {
+        xemu_queue_error_message("Could not create the diagnostics log file.");
+    }
+}
+
+static void StopDiagnosticsLog()
+{
+    xemu_diag_stop();
+    xemu_queue_notification("Diagnostics log saved in the logs folder");
+    xemu_diag_open_folder();
 }
 
 void ShowMainMenu()
@@ -251,22 +283,13 @@ void ShowMainMenu()
                 char time[16];
                 snprintf(time, sizeof(time), "%d:%02d", secs / 60, secs % 60);
                 if (ImGui::MenuItem("Stop Diagnostics Log", time)) {
-                    xemu_diag_stop();
-                    xemu_queue_notification("Diagnostics log saved in the "
-                                            "logs folder");
-                    xemu_diag_open_folder();
+                    StopDiagnosticsLog();
                 }
                 if (ImGui::MenuItem("Mark Lag Spike", "F9")) {
                     xemu_diag_mark();
                 }
             } else if (ImGui::MenuItem("Record Diagnostics Log")) {
-                if (xemu_diag_start()) {
-                    xemu_queue_notification("Recording a diagnostics log. "
-                                            "Press F9 when the game lags.");
-                } else {
-                    xemu_queue_error_message("Could not create the "
-                                             "diagnostics log file.");
-                }
+                StartDiagnosticsLog();
             }
             if (ImGui::MenuItem("Open Logs Folder")) {
                 xemu_diag_open_folder();
@@ -277,6 +300,94 @@ void ShowMainMenu()
             ImGui::EndMenu();
         } else {
             xbonline_menu_open = false;
+        }
+
+        if (ImGui::BeginMenu("RSO Settings"))
+        {
+            ShaderPrecacheStatus shader_status;
+            nv2a_shader_precache_get_status(&shader_status);
+            bool opengl_running = shader_status.supported;
+
+            MenuHeader("Shaders");
+            if (ImGui::MenuItem("Shader Cache...")) {
+                shader_cache_window.Open();
+            }
+            MenuToggle("Save shaders to disk", &g_config.perf.cache_shaders,
+                       "Keep every shader the game builds, so it never has to "
+                       "build it again on this PC.");
+            ImGui::BeginDisabled(!opengl_running);
+            MenuToggle("Build shaders in the background",
+                       &g_config.perf.shader_async,
+                       "Instead of freezing while a new shader builds, skip "
+                       "that effect for a few frames. Turn off if effects "
+                       "flicker. OpenGL only.");
+            ImGui::EndDisabled();
+            MenuToggle("Offer to precache shaders",
+                       &g_config.perf.shader_precache_offer,
+                       "Open the Shader Cache window once when there are "
+                       "shaders to build, for example after a graphics "
+                       "driver update.");
+            MenuToggle("Precache this PC's own shaders",
+                       &g_config.perf.shader_precache_own,
+                       "Precache Shaders also rebuilds every shader this PC "
+                       "has used before, not only the Black Arrow list.");
+
+            MenuHeader("Graphics");
+            if (ImGui::BeginMenu("Renderer")) {
+                if (ImGui::MenuItem("OpenGL (recommended)", NULL,
+                                    g_config.display.renderer ==
+                                        CONFIG_DISPLAY_RENDERER_OPENGL)) {
+                    g_config.display.renderer = CONFIG_DISPLAY_RENDERER_OPENGL;
+                }
+#ifdef CONFIG_VULKAN
+                if (ImGui::MenuItem("Vulkan", NULL,
+                                    g_config.display.renderer ==
+                                        CONFIG_DISPLAY_RENDERER_VULKAN)) {
+                    g_config.display.renderer = CONFIG_DISPLAY_RENDERER_VULKAN;
+                }
+#endif
+                ImGui::EndMenu();
+            }
+            if (opengl_running != (g_config.display.renderer ==
+                                   CONFIG_DISPLAY_RENDERER_OPENGL)) {
+                ImGui::TextDisabled("  Restart Black Arrow Online to switch "
+                                    "renderer");
+            }
+            int scale = nv2a_get_surface_scale_factor();
+            char scale_label[32];
+            snprintf(scale_label, sizeof(scale_label), "Resolution: %dx", scale);
+            if (ImGui::BeginMenu(scale_label)) {
+                static const char *const scales[] = {
+                    "1x (640x480, fastest)", "2x (1280x960)", "3x (1920x1440)",
+                    "4x (2560x1920, slowest)"
+                };
+                for (int i = 0; i < 4; i++) {
+                    if (ImGui::MenuItem(scales[i], NULL, scale == i + 1)) {
+                        nv2a_set_surface_scale_factor(i + 1);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            MenuToggle("Skip render target copy-back",
+                       &g_config.display.quality.skip_reuse_copyback,
+                       "Faster when the game reuses a screen buffer every "
+                       "frame. Turn off if effects look wrong. OpenGL only.");
+            MenuToggle("Vertical sync", &g_config.display.window.vsync,
+                       "Stops screen tearing. Turning it off can lower input "
+                       "delay but may tear.");
+
+            MenuHeader("Diagnostics");
+            if (xemu_diag_active()) {
+                if (ImGui::MenuItem("Stop Diagnostics Log")) {
+                    StopDiagnosticsLog();
+                }
+            } else if (ImGui::MenuItem("Record Diagnostics Log")) {
+                StartDiagnosticsLog();
+            }
+            if (ImGui::MenuItem("Open Logs Folder")) {
+                xemu_diag_open_folder();
+            }
+            ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("View"))

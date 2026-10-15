@@ -121,6 +121,10 @@ typedef struct ShaderBinding {
     GLuint gl_program;
     GLenum gl_primitive_mode;
 
+    /* Linking in the background; gl_program is not ready until it ends */
+    bool async_pending;
+    unsigned int async_frame;  /* g_nv2a_stats.frame_count when started */
+
     struct {
         PshUniformLocs psh;
         VshUniformLocs vsh;

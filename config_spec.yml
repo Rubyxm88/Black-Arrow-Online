@@ -383,3 +383,12 @@ perf:
   cache_shaders:
     type: bool
     default: true
+  shader_async:
+    type: bool
+    default: true
+  shader_precache_offer:
+    type: bool
+    default: true
+  shader_precache_own:
+    type: bool
+    default: true
