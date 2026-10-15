@@ -53,6 +53,7 @@
 #if defined(_WIN32)
 #include "update.hh"
 #include "xbcheck.hh"
+#include "shader-cache.hh"
 #include "../xemu-xbonline.h"
 #endif
 
@@ -348,6 +349,7 @@ void xemu_hud_update(void)
     update_window.Draw();
 #endif
     if (!first_boot_window.is_open) xbcheck_window.Draw();
+    if (!first_boot_window.is_open) shader_cache_window.Draw();
     g_scene_mgr.Draw();
     if (!first_boot_window.is_open) notification_manager.Draw();
     g_snapshot_mgr.Draw();

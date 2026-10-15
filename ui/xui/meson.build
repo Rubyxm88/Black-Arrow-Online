@@ -12,6 +12,7 @@ xemu_ss.add(files(
   'menubar.cc',
   'monitor.cc',
   'xbcheck.cc',
+  'shader-cache.cc',
   'notifications.cc',
   'popup-menu.cc',
   'reporting.cc',

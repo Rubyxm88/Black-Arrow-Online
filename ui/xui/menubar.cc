@@ -28,6 +28,7 @@
 #include "compat.hh"
 #include "update.hh"
 #include "xbcheck.hh"
+#include "shader-cache.hh"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
@@ -238,6 +239,9 @@ void ShowMainMenu()
             MenuHeader("Help");
             if (ImGui::MenuItem("Connection Check")) {
                 xbcheck_window.Start(true);
+            }
+            if (ImGui::MenuItem("Shader Cache")) {
+                shader_cache_window.Open();
             }
             ImGui::EndMenu();
         } else {

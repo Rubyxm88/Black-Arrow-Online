@@ -26,11 +26,13 @@
 
 GloContext *g_nv2a_context_render;
 GloContext *g_nv2a_context_display;
+GloContext *g_nv2a_context_precache;
 
 static void early_context_init(void)
 {
     g_nv2a_context_render = glo_context_create();
     g_nv2a_context_display = glo_context_create();
+    g_nv2a_context_precache = glo_context_create();
 
     // Note: Due to use of shared contexts, this must happen after some other
     // context is created so the temporary context will not become the thread

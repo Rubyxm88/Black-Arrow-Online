@@ -242,6 +242,7 @@ typedef struct PGRAPHGLState {
 
 extern GloContext *g_nv2a_context_render;
 extern GloContext *g_nv2a_context_display;
+extern GloContext *g_nv2a_context_precache;
 
 unsigned int pgraph_gl_bind_inline_array(NV2AState *d);
 void pgraph_gl_bind_shaders(PGRAPHState *pg);
