@@ -24,6 +24,7 @@
 #include "dsp_dma.h"
 #include "dsp_dma_regs.h"
 #include "interp/dsp_cpu_regs.h"
+#include "ui/xemu-diag.h"
 
 #ifdef DEBUG
 
@@ -285,8 +286,19 @@ static void dsp_dma_run(DSPDMAState *s)
             } else if (buf_id == 0xf) {
                 s->scratch_rw(s->rw_opaque, scratch_buf, scratch_addr, transfer_size, 0);
             } else {
-                fprintf(stderr, "Unhandled DSP DMA buffer: 0x%x\n", buf_id);
-                assert(!"Unhandled dsp dma buffer");
+                /*
+                 * Reading the input FIFOs is not emulated. Rainbow Six 3:
+                 * Black Arrow asks for it when signing in to Xbox Live, so
+                 * give the DSP silence instead of stopping xemu.
+                 */
+                static bool logged;
+                if (!logged && xemu_diag_recording()) {
+                    logged = true;
+                    xemu_diag_event("sound chip read input buffer 0x%x, "
+                                    "which is not emulated; silence used",
+                                    buf_id);
+                }
+                memset(scratch_buf, 0, transfer_size);
             }
 
             for (int i = 0; i < count; i++) {

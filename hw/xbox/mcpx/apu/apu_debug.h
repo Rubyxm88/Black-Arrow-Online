@@ -24,6 +24,12 @@
 #include <stdint.h>
 
 #define MAX_VOICE_WORKERS 16
+/*
+ * Voice workers when the setting is 0 (auto), or fewer on a PC with fewer
+ * cores. More only add waking and waiting: in Black Arrow 16 used twice
+ * the CPU of 4 for the same mixing, with lower frame rates.
+ */
+#define AUTO_VOICE_WORKERS 4
 
 typedef enum McpxApuDebugMonitorPoint {
     MCPX_APU_DEBUG_MON_AC97,

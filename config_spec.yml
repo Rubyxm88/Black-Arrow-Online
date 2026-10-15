@@ -369,7 +369,7 @@ audio:
   vp:
     num_workers:
       type: integer
-      default: 0  # 0 = auto
+      default: 0  # 0 = auto (4, or the number of cores if fewer)
   use_dsp: bool
   use_dsp_jit:
     type: bool

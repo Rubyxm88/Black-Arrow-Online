@@ -35,6 +35,7 @@ xemu_ss.add(files(
   'xemu-xbonline.c',
   'xemu-xbcheck.c',
   'xemu-diag.c',
+  'xemu-diag-threads.c',
 ))
 
 if host_os == 'windows'

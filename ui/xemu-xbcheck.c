@@ -523,6 +523,9 @@ static void check_disc(void)
         item_set(i, XBCHECK_WARN,
                  "Could not read the loaded disc image as an Xbox disc. Use "
                  "a plain .iso of the original Black Arrow disc.");
+    } else if (xbe.title_id == XEMU_XBONLINE_RS3_TITLE_ID) {
+        item_set(i, XBCHECK_OK, "Rainbow Six 3, disc version %u.",
+                 xbe.version);
     } else if (xbe.title_id != XEMU_XBONLINE_TITLE_ID) {
         item_set(i, XBCHECK_INFO, "%s (title %08X) is loaded, not Black Arrow.",
                  xbe.name, xbe.title_id);
@@ -531,12 +534,70 @@ static void check_disc(void)
     }
 }
 
+static void check_rs3_update(int i, const char *hdd, uint32_t disc_version)
+{
+    XbOnlineXbe xbe;
+    int maps;
+    int r = xemu_xbonline_hdd_title_update(hdd, XEMU_XBONLINE_RS3_TITLE_ID,
+                                           &xbe, &maps);
+    uint32_t want = disc_version == 1 ? XEMU_XBONLINE_RS3_UPDATE_RF :
+                    disc_version == 2 ? XEMU_XBONLINE_RS3_UPDATE_GER : 0;
+    const char *want_name = disc_version == 1 ? "Install Update RF" :
+                            "Install Update Ger";
+
+    if (r < 0) {
+        item_set(i, XBCHECK_INFO, "Could not read the hard disk image.");
+    } else if (r == 1 && !want) {
+        item_set(i, XBCHECK_FAIL,
+                 "A title update (version %x) is installed, but this disc "
+                 "(version %u) already has it and the game may not start. "
+                 "Remove the folder E:\\TDATA\\55530013\\$u from the hard "
+                 "disk.",
+                 xbe.version, disc_version);
+    } else if (r == 1 && xbe.version != want) {
+        item_set(i, XBCHECK_FAIL,
+                 "The wrong title update (version %x) is installed for this "
+                 "disc (version %u). Remove the folder E:\\TDATA\\55530013\\$u "
+                 "from the hard disk, then in XB Online > Old Bow - Install "
+                 "Game Updates choose %s.", xbe.version, disc_version,
+                 want_name);
+    } else if (r == 0 && want) {
+        item_set(i, XBCHECK_FAIL,
+                 "Rainbow Six 3 title update is not installed. Menu: XB Online "
+                 "> Old Bow - Install Game Updates > Game Update Menu > %s.",
+                 want_name);
+    } else if (xemu_xbonline_hdd_has_content(
+                   hdd, XEMU_XBONLINE_RS3_TITLE_ID,
+                   XEMU_XBONLINE_RS3_OLD_SCHARINS) == 1) {
+        item_set(i, XBCHECK_WARN,
+                 "%d map pack%s installed, including Old Scharins, which can "
+                 "break multiplayer with players who have Scharins v2.",
+                 maps, maps == 1 ? "" : "s");
+    } else if (r == 1) {
+        item_set(i, XBCHECK_OK, "Title update %x installed, %d map pack%s.",
+                 xbe.version, maps, maps == 1 ? "" : "s");
+    } else {
+        item_set(i, XBCHECK_OK, "This disc (version %u) needs no title update. "
+                 "%d map pack%s installed.", disc_version, maps,
+                 maps == 1 ? "" : "s");
+    }
+}
+
 static void check_title_update(void)
 {
     int i = item_add("Game update");
     const char *hdd = g_config.sys.files.hdd_path;
+    const char *disc = g_config.sys.files.dvd_path;
     XbOnlineXbe xbe;
     int maps, r;
+
+    if (hdd && hdd[0] && disc && disc[0] &&
+        !xemu_xbonline_is_system_disc(disc) &&
+        xemu_xbonline_disc_xbe(disc, &xbe) &&
+        xbe.title_id == XEMU_XBONLINE_RS3_TITLE_ID) {
+        check_rs3_update(i, hdd, xbe.version);
+        return;
+    }
 
     r = hdd && hdd[0] ? xemu_xbonline_hdd_title_update(hdd,
                                                       XEMU_XBONLINE_TITLE_ID,
@@ -548,11 +609,12 @@ static void check_title_update(void)
         item_set(i, XBCHECK_FAIL,
                  "Black Arrow title update is not installed. Without it the "
                  "game wants to download the update, which XB Online does not "
-                 "serve. Menu: XB Online > Install Game Update + Maps.");
+                 "serve. Menu: XB Online > Black Arrow - Install Game "
+                 "Updates.");
     } else if (xbe.version < XEMU_XBONLINE_TITLE_UPDATE_VERSION) {
         item_set(i, XBCHECK_FAIL,
                  "An older title update (version %x) is installed. Menu: XB "
-                 "Online > Install Game Update + Maps.", xbe.version);
+                 "Online > Black Arrow - Install Game Updates.", xbe.version);
     } else {
         item_set(i, XBCHECK_OK, "Title update %x installed, %d map pack%s.",
                  xbe.version, maps, maps == 1 ? "" : "s");

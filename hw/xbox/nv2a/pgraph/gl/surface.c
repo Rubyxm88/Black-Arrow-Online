@@ -21,6 +21,7 @@
 
 #include "hw/xbox/nv2a/pgraph/pgraph.h"
 #include "ui/xemu-settings.h"
+#include "qemu/xemu-perf.h"
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "hw/xbox/nv2a/pgraph/swizzle.h"
 #include "debug.h"
@@ -801,8 +802,10 @@ static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force)
                                  pgraph_gl_download_reason :
                                  NV2A_PROF_SURF_DL_OTHER);
 
+    int64_t perf_start = xemu_perf_start();
     surface_download_to_buffer(d, surface, true, false, true,
                                d->vram_ptr + surface->vram_addr);
+    xemu_perf_end(XEMU_PERF_COPYBACK, perf_start);
 
     memory_region_set_client_dirty(d->vram, surface->vram_addr,
                                    surface->pitch * surface->height,
@@ -918,6 +921,8 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
         return;
     }
 
+    int64_t perf_start = xemu_perf_start();
+
     // FIXME: Don't query GL for texture binding
     GLint last_texture_binding;
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture_binding);
@@ -999,6 +1004,7 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     glBindTexture(GL_TEXTURE_2D, last_texture_binding);
 
     bind_current_surface(d);
+    xemu_perf_end(XEMU_PERF_SURF_UPLOAD, perf_start);
 }
 
 static void compare_surfaces(SurfaceBinding *s1, SurfaceBinding *s2)

@@ -352,6 +352,7 @@ void xemu_hud_update(void)
     update_window.Draw();
 #endif
     PopupStackReset();
+    if (!first_boot_window.is_open) DrawRecordingBadge();
     if (!first_boot_window.is_open) xbcheck_window.Draw();
     if (!first_boot_window.is_open) shader_cache_window.Draw();
     if (!first_boot_window.is_open) DrawFreezeToast();

@@ -20,6 +20,7 @@
  */
 
 #include "hw/xbox/mcpx/apu/apu_int.h"
+#include "qemu/processor.h"
 #include "adpcm.h"
 
 static const struct {
@@ -131,20 +132,33 @@ static void voice_off(MCPXAPUState *d, uint16_t v)
     set_notify_status(d, v, notifier, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 }
 
+/*
+ * The game locks a voice while it changes it. This used to take the APU lock,
+ * which the audio thread holds while it builds a whole frame, so the game's
+ * CPU stalled on every lock while sound was busy (audio_lock_wait in the
+ * diagnostics log). Now the locked bit is set directly and the game waits only
+ * while a worker is mixing this voice. A worker marks the voice busy before it
+ * reads the locked bit and the game sets the locked bit before it reads busy
+ * (both full barriers), so either the game waits for the worker or the worker
+ * sees the lock (voice_process_unlocked).
+ */
 static void voice_lock(MCPXAPUState *d, uint16_t v, bool lock)
 {
     assert(v < MCPX_HW_MAX_VOICES);
-    qemu_mutex_lock(&d->lock);
+    int64_t start = xemu_perf_start();
 
     uint64_t mask = 1LL << (v % 64);
     if (lock) {
-        d->vp.voice_locked[v / 64] |= mask;
+        qatomic_or(&d->vp.voice_locked[v / 64], mask);
+        while (qatomic_read(&d->vp.voice_busy[v / 64]) & mask) {
+            cpu_relax();
+        }
     } else {
-        d->vp.voice_locked[v / 64] &= ~mask;
+        qatomic_and(&d->vp.voice_locked[v / 64], ~mask);
+        qemu_cond_signal(&d->cond);
     }
 
-    qemu_cond_signal(&d->cond);
-    qemu_mutex_unlock(&d->lock);
+    xemu_perf_end(XEMU_PERF_AUDIO_LOCK, start);
 }
 
 static bool is_voice_locked(MCPXAPUState *d, uint16_t v)
@@ -1582,6 +1596,38 @@ static void get_voice_bin_src_dst(MCPXAPUState *d, int v,
     }
 }
 
+/*
+ * Mix a voice on a worker unless the game has locked it since the frame
+ * started (see voice_lock). The game holds a lock for a few register writes;
+ * after 2 ms the voice is mixed anyway, so a game that locks a voice and then
+ * waits for the APU lock cannot stall sound.
+ */
+static void voice_process_unlocked(
+    MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME],
+    float sample_buf[NUM_SAMPLES_PER_FRAME][2], int v, int list)
+{
+    uint64_t mask = 1LL << (v % 64);
+    int64_t give_up = 0;
+
+    for (;;) {
+        qatomic_or(&d->vp.voice_busy[v / 64], mask);
+        if (!is_voice_locked(d, v)) {
+            break;
+        }
+        int64_t now = g_get_monotonic_time();
+        if (!give_up) {
+            give_up = now + 2000;
+        } else if (now >= give_up) {
+            break;
+        }
+        qatomic_and(&d->vp.voice_busy[v / 64], ~mask);
+        g_thread_yield();
+    }
+
+    voice_process(d, mixbins, sample_buf, v, list);
+    qatomic_and(&d->vp.voice_busy[v / 64], ~mask);
+}
+
 static void *voice_worker_thread(void *arg)
 {
     MCPXAPUState *d = arg;
@@ -1607,8 +1653,9 @@ static void *voice_worker_thread(void *arg)
                 memset(self->sample_buf, 0, sizeof(self->sample_buf));
             }
             for (int i = 0; i < self->queue_len; i++) {
-                voice_process(d, self->mixbins, self->sample_buf,
-                              self->queue[i].voice, self->queue[i].list);
+                voice_process_unlocked(d, self->mixbins, self->sample_buf,
+                                       self->queue[i].voice,
+                                       self->queue[i].list);
             }
 
             qemu_mutex_lock(&vwd->lock);
@@ -1768,7 +1815,8 @@ static void voice_work_init(MCPXAPUState *d)
 {
     VoiceWorkDispatch *vwd = &d->vp.voice_work_dispatch;
 
-    int num_workers = g_config.audio.vp.num_workers ?: SDL_GetNumLogicalCPUCores();
+    int num_workers = g_config.audio.vp.num_workers ?:
+                      MIN(AUTO_VOICE_WORKERS, SDL_GetNumLogicalCPUCores());
     vwd->num_workers = MAX(1, MIN(num_workers, MAX_VOICE_WORKERS));
     vwd->workers = g_malloc0_n(vwd->num_workers, sizeof(VoiceWorker));
     vwd->workers_should_exit = false;

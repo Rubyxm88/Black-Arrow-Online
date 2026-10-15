@@ -1,7 +1,7 @@
 /*
  * xemu diagnostics log
  *
- * A text file a player records while playing (XB Online > Diagnostics Log)
+ * A text file a player records while playing (RSO Settings > Diagnostics)
  * and sends in when the game runs badly. It starts with the PC, the package
  * and the settings, then has one line per second (frame rate, the work that
  * can cause a hitch, CPU and memory use), a line for every slow frame with
@@ -39,6 +39,9 @@ typedef enum XemuDiagCause {
     XEMU_DIAG_CAUSE_CODE,      /* translating game code */
     XEMU_DIAG_CAUSE_LOADING,   /* loading screen (almost nothing drawn) */
     XEMU_DIAG_CAUSE_PAUSE,     /* no frame for seconds: paused, menu, drag */
+    XEMU_DIAG_CAUSE_QUERY,     /* waiting for occlusion query results */
+    XEMU_DIAG_CAUSE_AUDIO,     /* the game waiting for the audio thread */
+    XEMU_DIAG_CAUSE_GAME_CPU,  /* the emulated CPU busy the whole frame */
     XEMU_DIAG_CAUSE_OTHER,
     XEMU_DIAG_CAUSE__COUNT
 } XemuDiagCause;

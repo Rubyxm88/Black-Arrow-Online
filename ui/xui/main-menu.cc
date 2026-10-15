@@ -848,10 +848,17 @@ void MainMenuAudioView::Draw()
     Slider("Output volume limit", &g_config.audio.volume_limit, buf);
 
     SectionTitle("Quality");
-    Toggle("Real-time DSP processing", &g_config.audio.use_dsp,
-           "Enable improved audio accuracy (experimental)");
-    Toggle("DSP JIT engine", &g_config.audio.use_dsp_jit,
-           "Use DSP JIT engine");
+    int mode = g_config.audio.use_dsp ? 1 : 0;
+    if (ChevronCombo("Sound", &mode,
+                     "Fast (recommended)\0"
+                     "Accurate\0",
+                     "Accurate runs the Xbox's own sound effects processor "
+                     "and uses several times more CPU")) {
+        g_config.audio.use_dsp = mode == 1;
+        if (g_config.audio.use_dsp) {
+            g_config.audio.use_dsp_jit = true;
+        }
+    }
 
 }
 

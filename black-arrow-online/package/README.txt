@@ -35,8 +35,12 @@ THE XB ONLINE MENU (top of the window)
 GAMES
   Play <game>                   Start a game from the "games" folder.
                                 No games yet: opens the games folder.
+GAME UPDATES
   Black Arrow - Install Game Updates
                                 Black Arrow title update and map packs.
+  Old Bow - Install Game Updates
+                                Rainbow Six 3 title update and map packs
+                                (see RAINBOW SIX 3 below).
 DASHBOARDS
   XBL Dashboard                 Sign in, link or fix your Xbox Live account.
   Original Xbox Dashboard       The standard Xbox dashboard (saves, settings).
@@ -47,11 +51,6 @@ XB LIVE ACCOUNT
   Link Code                     Opens xb.live/link in your browser.
 HELP
   Connection Check              Runs the XB Online check (see below).
-  Record Diagnostics Log        Records a log while you play (see LAG).
-  Mark Lag Spike (F9)           Marks the moment in the log you are recording.
-  Open Last Freeze Report       Opens the newest freeze report (see FREEZES).
-  Open Logs Folder              Opens system\logs.
-  Shader Cache                  See SHADERS below.
 
 On a controller, press the Guide/Home button for the same options.
 
@@ -91,11 +90,18 @@ PERFORMANCE OVERLAY
                                 and distance from it, size, the background
                                 (opacity, 0 leaves just the text; color,
                                 border, corners) and what the style shows.
+AUDIO
+  Sound: Fast (recommended)     Mixes the game's sounds straight to your
+                                speakers. Steadiest frame rate.
+  Sound: Accurate               Runs the Xbox's own sound effects processor.
+                                Uses several times more CPU for sound.
 DIAGNOSTICS
-  Record Diagnostics Log, Open Logs Folder (see LAG).
+  Record Diagnostics Log        Records a log while you play (see LAG).
+  Mark Lag Spike (F9)           Marks the moment in the log you are recording.
   Save a report when the game freezes
                                 On by default (see FREEZES).
-  Open Last Freeze Report       See FREEZES.
+  Open Last Freeze Report       Opens the newest freeze report (see FREEZES).
+  Open Logs Folder              Opens system\logs.
 
 
 SHADERS
@@ -112,7 +118,7 @@ To turn it off: RSO Settings > Precache shaders automatically.
 
 LAG
 ---
-If the game stutters or lags: XB Online > Record Diagnostics Log, play as
+If the game stutters or lags: RSO Settings > Record Diagnostics Log, play as
 usual, and press F9 right after each lag spike. Stop the log from the same
 menu (or just close the emulator). The log is in system\logs (Open Logs
 Folder); send it to whoever shared the package. It holds your PC's
@@ -125,10 +131,23 @@ You don't have to turn anything on. While you play, the emulator keeps the
 last minute of the diagnostics log in memory and writes nothing. If the
 game freezes (no new picture for 10 seconds while the emulator runs), it
 saves a short freeze report in system\logs and shows "The game stopped
-responding" in the top left. Open it with XB Online > Help > Open Last
+responding" in the top left. Open it with RSO Settings > Open Last
 Freeze Report and send it to whoever shared the package. Only the newest 5
 reports are kept. To turn it off: RSO Settings > Save a report when the
 game freezes.
+
+
+RAINBOW SIX 3
+-------------
+Rainbow Six 3 (the game before Black Arrow) has its own updater: XB Online >
+Old Bow - Install Game Updates. It installs the extra maps and the title
+update. The title update must fit your disc, or the game will not start:
+  disc version 1 (all regions)   Game Update Menu > Install Update RF
+  disc version 2 (PAL German)    Game Update Menu > Install Update Ger
+  disc version 3 or 4            no update, it is already on the disc
+With your Rainbow Six 3 disc loaded, XB Online > Connection Check shows the
+disc version and says which one to install. Skip "Old Scharins": it breaks
+multiplayer with players who have Scharins v2.
 
 
 NEW ACCOUNT

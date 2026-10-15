@@ -25,6 +25,7 @@
 #include "exec/page-protection.h"
 #include "exec/mmap-lock.h"
 #include "exec/tb-flush.h"
+#include "qemu/xemu-perf.h"
 #include "exec/target_page.h"
 #include "accel/tcg/cpu-ops.h"
 #include "tb-internal.h"
@@ -795,6 +796,7 @@ void tb_flush__exclusive_or_serial(void)
     tcg_region_reset_all();
     /* XXX: flush processor icache at this point if cache flush is expensive */
     qatomic_inc(&tb_ctx.tb_flush_count);
+    xemu_perf_event(XEMU_PERF_CODE_FLUSH);
     qemu_plugin_flush_cb();
 }
 
@@ -968,6 +970,7 @@ static void do_tb_phys_invalidate(TranslationBlock *tb, bool rm_from_page_list)
 
     qatomic_set(&tb_ctx.tb_phys_invalidate_count,
                 tb_ctx.tb_phys_invalidate_count + 1);
+    xemu_perf_event(XEMU_PERF_CODE_DROPPED);
 }
 
 static void tb_phys_invalidate__locked(TranslationBlock *tb)
@@ -1211,6 +1214,9 @@ void tb_invalidate_phys_range(CPUState *cpu, tb_page_addr_t start,
 
         if (pd == NULL) {
             continue;
+        }
+        if (!cpu) {
+            xemu_perf_event(XEMU_PERF_CODE_DMA);
         }
         assert_page_locked(pd);
         page_start = index << TARGET_PAGE_BITS;

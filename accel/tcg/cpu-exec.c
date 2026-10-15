@@ -996,6 +996,10 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                 tb = tb_gen_code(cpu, s);
                 mmap_unlock();
                 xemu_perf_end(XEMU_PERF_TCG, perf_start);
+                if (perf_start) {
+                    xemu_perf_code_translated(s.pc, tb_page_addr0(tb) >>
+                                                        TARGET_PAGE_BITS);
+                }
 
                 /*
                  * We add the TB in the virtual pc hash table

@@ -178,10 +178,16 @@ static void throttle(MCPXAPUState *d)
     int queued_bytes = -1;
 
     if (d->monitor.stream) {
+        static bool was_empty;
         queued_bytes = SDL_GetAudioStreamQueued(d->monitor.stream);
         if (queued_bytes >= 0) {
             throttle_record_queue(d, queued_bytes);
         }
+        /* The sound card is playing silence: a dropout */
+        if (queued_bytes == 0 && !was_empty) {
+            xemu_perf_event(XEMU_PERF_AUDIO_DROPOUT);
+        }
+        was_empty = queued_bytes == 0;
         while (!d->pause_requested && queued_bytes >= d->monitor.queued_bytes_high) {
             qemu_cond_timedwait(&d->cond, &d->lock, EP_FRAME_US / 1000);
             if (d->pause_requested) {

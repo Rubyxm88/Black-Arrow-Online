@@ -1414,6 +1414,8 @@ int main(int argc, char **argv)
 
     qemu_sem_init(&display_init_sem, 0);
     qemu_sem_init(&display_shutdown_sem, 0);
+    /* Named threads let the diagnostics log tell them apart */
+    qemu_thread_naming(true);
     qemu_thread_create(&thread, "qemu_main", qemu_main,
                        NULL, QEMU_THREAD_JOINABLE);
     qemu_sem_wait(&display_init_sem);

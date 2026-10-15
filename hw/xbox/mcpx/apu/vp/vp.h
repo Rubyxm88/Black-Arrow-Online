@@ -87,6 +87,8 @@ typedef struct {
     uint8_t submix_headroom[NUM_MIXBINS];
     float sample_buf[NUM_SAMPLES_PER_FRAME][2];
     uint64_t voice_locked[4];
+    /* Voices a worker is mixing right now (see voice_lock) */
+    uint64_t voice_busy[4];
 
     struct {
         int current_entry;

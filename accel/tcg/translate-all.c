@@ -37,6 +37,7 @@
 #include "tb-internal.h"
 #include "internal-common.h"
 #include "tcg/perf.h"
+#include "qemu/xemu-perf.h"
 #include "tcg/insn-start-words.h"
 
 #if defined(CONFIG_VTUNE_JITPROFILING)
@@ -263,6 +264,38 @@ static int setjmp_gen_code(CPUArchState *env, TranslationBlock *tb,
 }
 
 /* Called with mmap_lock held for user mode emulation.  */
+/*
+ * xemu: blocks of game code that touch a device in the middle. A device
+ * access is only allowed as the last instruction of a block, so each time
+ * such a block ran, cpu_io_recompile threw away its state, rewound and ran
+ * the access on its own: thousands of times a second in Black Arrow. The
+ * first time it happens the block is now dropped and remembered here (its
+ * RAM address -> instructions up to and including the access), and the next
+ * translation ends there, so the access is last and runs in place. Ending a
+ * block early is always correct, it only costs a jump to the next one.
+ * Only the game CPU thread uses it.
+ */
+static GHashTable *io_insn_cap;
+
+static int io_cap_lookup(tb_page_addr_t phys_pc)
+{
+    return io_insn_cap ? GPOINTER_TO_INT(g_hash_table_lookup(
+                             io_insn_cap, (gpointer)(uintptr_t)phys_pc))
+                       : 0;
+}
+
+static void io_cap_set(tb_page_addr_t phys_pc, int insns)
+{
+    if (!io_insn_cap) {
+        io_insn_cap = g_hash_table_new(g_direct_hash, g_direct_equal);
+    }
+    int old = io_cap_lookup(phys_pc);
+    if (!old || insns < old) {
+        g_hash_table_insert(io_insn_cap, (gpointer)(uintptr_t)phys_pc,
+                            GINT_TO_POINTER(insns));
+    }
+}
+
 TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
 {
     CPUArchState *env = cpu_env(cpu);
@@ -290,7 +323,17 @@ TranslationBlock *tb_gen_code(CPUState *cpu, TCGTBCPUState s)
     }
     QEMU_BUILD_BUG_ON(CF_COUNT_MASK + 1 != TCG_MAX_INSNS);
 
-    tb = inv_tb_htable_lookup(cpu, s);
+    /* A block that touched a device midway ends at that access */
+    int io_cap = 0;
+    if (phys_pc != -1 && !(s.cflags & CF_COUNT_MASK)) {
+        io_cap = io_cap_lookup(phys_pc);
+        if (io_cap) {
+            max_insns = MIN(max_insns, io_cap);
+        }
+    }
+
+    /* A thrown away block is reused if its code is unchanged, not if capped */
+    tb = io_cap ? NULL : inv_tb_htable_lookup(cpu, s);
     if (tb) {
         qemu_spin_lock(&tb->jmp_lock);
         qatomic_set(&tb->cflags, tb->cflags & ~CF_INVALID);
@@ -628,7 +671,23 @@ void cpu_io_recompile(CPUState *cpu, uintptr_t retaddr)
         cpu_abort(cpu, "cpu_io_recompile: could not find TB for pc=%p",
                   (void *)retaddr);
     }
+    /*
+     * xemu: remember where in the block the access is and drop the block,
+     * so it is translated again ending at the access (see io_insn_cap)
+     */
+    uint64_t unwind[INSN_START_WORDS];
+    int insns_left = cpu_unwind_data_from_tb(tb, retaddr, unwind);
+    bool cap = insns_left > 0 && !(tb_cflags(tb) & CF_COUNT_MASK) &&
+               tb_page_addr0(tb) != -1;
+    if (cap) {
+        io_cap_set(tb_page_addr0(tb), tb->icount - insns_left + 1);
+    }
+
     cpu_restore_state_from_tb(cpu, tb, retaddr);
+    xemu_perf_event(XEMU_PERF_IO_RECOMPILE);
+    if (cap) {
+        tb_phys_invalidate(tb, -1);
+    }
 
     /*
      * Some guests must re-execute the branch when re-executing a delay

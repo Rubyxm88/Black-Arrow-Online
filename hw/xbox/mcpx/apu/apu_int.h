@@ -32,6 +32,7 @@
 #include "migration/vmstate.h"
 #include "qemu/main-loop.h"
 #include "qemu/thread.h"
+#include "qemu/xemu-perf.h"
 #include "system/runstate.h"
 #include "ui/xemu-settings.h"
 
@@ -134,5 +135,17 @@ void mcpx_debug_end_frame(void);
 void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp);
 void mcpx_apu_monitor_finalize(MCPXAPUState *d);
 void mcpx_apu_monitor_frame(MCPXAPUState *d);
+
+/*
+ * Take the lock for a register write from the game. The audio thread holds
+ * it while it builds a frame, so the time spent waiting is the game's CPU
+ * stalled on sound; the diagnostics log reports it.
+ */
+static inline void mcpx_apu_lock_from_guest(MCPXAPUState *d)
+{
+    int64_t start = xemu_perf_start();
+    qemu_mutex_lock(&d->lock);
+    xemu_perf_end(XEMU_PERF_AUDIO_LOCK, start);
+}
 
 #endif

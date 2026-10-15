@@ -47,6 +47,7 @@
 #include "hw/boards.h"
 #include "hw/hw.h"
 #include "trace.h"
+#include "qemu/xemu-perf.h"
 
 #ifdef CONFIG_LINUX
 
@@ -575,7 +576,13 @@ void bql_lock_impl(const char *file, int line)
     QemuMutexLockFunc bql_lock_fn = qatomic_read(&bql_mutex_lock_func);
 
     g_assert(!bql_locked());
+    /*
+     * The game CPU takes this lock for every hardware register access, so
+     * the time it waits for another thread to let go is the game stalled
+     */
+    int64_t start = current_cpu ? xemu_perf_start() : 0;
     bql_lock_fn(&bql, file, line);
+    xemu_perf_end(XEMU_PERF_BQL_WAIT, start);
 }
 
 void bql_unlock(void)

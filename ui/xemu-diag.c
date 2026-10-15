@@ -33,6 +33,7 @@
 #endif
 
 #include "xemu-diag.h"
+#include "xemu-diag-threads.h"
 #include "xemu-settings.h"
 #include "xemu-os-utils.h"
 #include "xemu-xbcheck.h"
@@ -40,6 +41,7 @@
 #include "hw/xbox/nv2a/nv2a.h"
 #include "hw/xbox/nv2a/debug.h"
 #include "hw/xbox/nv2a/shader-precache.h"
+#include "hw/xbox/mcpx/apu/apu_debug.h"
 
 #define LOGS_DIR "logs"
 
@@ -76,6 +78,15 @@
 
 /* CPU samples kept while no frames come */
 #define CPU_SAMPLES 32
+
+/*
+ * A slow frame with no other cause, while the emulated CPU's thread was
+ * busy this share of it, is the game's own CPU work
+ */
+#define GAME_CPU_BUSY 0.9
+
+/* Other programs on the PC are looked at this often (seconds) */
+#define PROGRAMS_SECONDS 10
 
 typedef struct WorstFrame {
     double t;
@@ -156,6 +167,9 @@ static const char *const cause_names[XEMU_DIAG_CAUSE__COUNT] = {
     [XEMU_DIAG_CAUSE_CODE] = "code_translate",
     [XEMU_DIAG_CAUSE_LOADING] = "loading_screen",
     [XEMU_DIAG_CAUSE_PAUSE] = "no_frames",
+    [XEMU_DIAG_CAUSE_QUERY] = "query_wait",
+    [XEMU_DIAG_CAUSE_AUDIO] = "audio_wait",
+    [XEMU_DIAG_CAUSE_GAME_CPU] = "game_cpu",
     [XEMU_DIAG_CAUSE_OTHER] = "other",
 };
 
@@ -166,6 +180,9 @@ static const char *const cause_text[XEMU_DIAG_CAUSE__COUNT] = {
     [XEMU_DIAG_CAUSE_LOADING] = "loading screen",
     [XEMU_DIAG_CAUSE_PAUSE] = "no frames for 2 s or more (paused, menu, "
                               "window moved)",
+    [XEMU_DIAG_CAUSE_QUERY] = "waiting for the GPU to count visible pixels",
+    [XEMU_DIAG_CAUSE_AUDIO] = "the game waiting for the sound chip",
+    [XEMU_DIAG_CAUSE_GAME_CPU] = "the emulated Xbox CPU busy the whole frame",
     [XEMU_DIAG_CAUSE_OTHER] = "other",
 };
 
@@ -177,6 +194,17 @@ static const char *const perf_names[XEMU_PERF__COUNT] = {
     [XEMU_PERF_TCG] = "code_translate",
     [XEMU_PERF_SHADER_ASYNC] = "shader_async",
     [XEMU_PERF_DRAW_SKIPPED] = "draw_skipped",
+    [XEMU_PERF_COPYBACK] = "copyback",
+    [XEMU_PERF_SURF_UPLOAD] = "surface_upload",
+    [XEMU_PERF_QUERY_WAIT] = "query_wait",
+    [XEMU_PERF_AUDIO_LOCK] = "audio_lock_wait",
+    [XEMU_PERF_AUDIO_DROPOUT] = "audio_dropouts",
+    [XEMU_PERF_BQL_WAIT] = "main_lock_wait",
+    [XEMU_PERF_CODE_WRITE] = "code_page_write",
+    [XEMU_PERF_CODE_DROPPED] = "code_dropped",
+    [XEMU_PERF_CODE_DMA] = "code_dma_write",
+    [XEMU_PERF_CODE_FLUSH] = "code_flush",
+    [XEMU_PERF_IO_RECOMPILE] = "io_recompile",
 };
 
 const char *xemu_diag_cause_name(XemuDiagCause cause)
@@ -277,14 +305,19 @@ static void write_settings(FILE *f)
     int redirect = g_config.net.dns_redirect;
 
     fprintf(f, "# settings: renderer=%s surface_scale=%d vsync=%d "
-            "skip_reuse_copyback=%d use_dsp=%d hard_fpu=%d "
+            "skip_reuse_copyback=%d use_dsp=%d use_dsp_jit=%d hrtf=%d "
+            "voice_workers=%d hard_fpu=%d "
             "cache_shaders=%d shader_async=%d precache_auto=%d "
             "precache_own=%d\n",
             renderer < 3 ? renderers[renderer] : "?",
             g_config.display.quality.surface_scale,
             g_config.display.window.vsync,
             g_config.display.quality.skip_reuse_copyback,
-            g_config.audio.use_dsp,
+            g_config.audio.use_dsp, g_config.audio.use_dsp_jit,
+            g_config.audio.hrtf,
+            /* 0 in the settings means auto, as vp.c does */
+            g_config.audio.vp.num_workers ?:
+                MIN(AUTO_VOICE_WORKERS, SDL_GetNumLogicalCPUCores()),
             g_config.perf.hard_fpu, g_config.perf.cache_shaders,
             g_config.perf.shader_async, g_config.perf.shader_precache_auto,
             g_config.perf.shader_precache_own);
@@ -313,18 +346,30 @@ static void write_header(FILE *f, const char *title)
 static const char lines_help[] =
     "#   t=SECOND  one per second: frames shown, slow frames, longest gap, "
     "disc and hard disk reads (MB/time spent), cpu (xemu, whole PC), "
-    "memory, work done (count/total ms), GPU counters\n"
-    "#   SLOW      a frame of 50 ms or more, with its likely cause and the "
-    "work done during it\n"
+    "memory, thread_cpu (% of one core per emulator thread: game_cpu is "
+    "the emulated Xbox CPU, gpu the graphics thread, ui the window, audio "
+    "the sound chip, voices its mixing helpers), work done (count/total "
+    "ms), GPU counters\n"
+    "#   SLOW      a frame of 50 ms or more, with its likely cause, how "
+    "busy the emulated CPU was (game_cpu) and the work done during it\n"
     "#   MARK      the player pressed F9\n"
-    "#   EVENT     focus, disc, connection check, shader cache, freeze\n";
+    "#   EVENT     focus, disc, connection check, shader cache, freeze, "
+    "other programs using the PC\n";
 
 /* " name=count/total_ms(max_ms)" for each kind of work that happened */
 static void print_work(GString *s, const int64_t *count, const int64_t *ns,
                        const int64_t *max_ns)
 {
     for (int i = 0; i < XEMU_PERF__COUNT; i++) {
-        if (count[i]) {
+        bool count_only = i == XEMU_PERF_AUDIO_DROPOUT ||
+                          i == XEMU_PERF_CODE_DROPPED ||
+                          i == XEMU_PERF_CODE_DMA ||
+                          i == XEMU_PERF_CODE_FLUSH ||
+                          i == XEMU_PERF_IO_RECOMPILE;
+        if (count[i] && count_only) {
+            g_string_append_printf(s, " %s=%" PRId64, perf_names[i],
+                                   count[i]);
+        } else if (count[i]) {
             g_string_append_printf(s, " %s=%" PRId64 "/%.1fms(max %.1f)",
                                    perf_names[i], count[i], ns[i] / 1e6,
                                    max_ns[i] / 1e6);
@@ -365,8 +410,87 @@ static void add_line(int64_t us, const char *kind, const char *text)
     g_mutex_unlock(&lock);
 }
 
+/*
+ * Game code translated and code pages written while recording, by address,
+ * so the summary can show which code keeps being thrown away. Only the
+ * game CPU thread adds; a full table drops new addresses.
+ */
+#define CODE_SLOTS 4096
+
+typedef struct CodeSlot {
+    uint64_t key, page;
+    uint32_t count;
+} CodeSlot;
+
+static CodeSlot code_translated[CODE_SLOTS], code_written[CODE_SLOTS];
+
+static void code_count(CodeSlot *table, uint64_t key, uint64_t page)
+{
+    uint32_t h = (key * 0x9E3779B97F4A7C15ull) >> 52;
+    for (int i = 0; i < 32; i++) {
+        CodeSlot *slot = &table[(h + i) & (CODE_SLOTS - 1)];
+        if (!slot->count) {
+            slot->key = key;
+            slot->page = page;
+            slot->count = 1;
+            return;
+        }
+        if (slot->key == key) {
+            slot->count++;
+            return;
+        }
+    }
+}
+
+void xemu_perf_code_translated(uint64_t pc, uint64_t ram_page)
+{
+    code_count(code_translated, pc, ram_page);
+}
+
+void xemu_perf_code_written(uint64_t ram_page)
+{
+    code_count(code_written, ram_page, ram_page);
+}
+
+static int code_slot_cmp(const void *a, const void *b)
+{
+    const CodeSlot *x = a, *y = b;
+    return x->count < y->count ? 1 : x->count > y->count ? -1 : 0;
+}
+
+/* The 12 most frequent entries of a table */
+static void print_code_top(FILE *f, const char *title, CodeSlot *table,
+                           bool with_page)
+{
+    CodeSlot *sorted = g_memdup2(table, sizeof(CodeSlot) * CODE_SLOTS);
+    qsort(sorted, CODE_SLOTS, sizeof(CodeSlot), code_slot_cmp);
+    uint64_t total = 0;
+    int used = 0;
+    for (int i = 0; i < CODE_SLOTS; i++) {
+        total += sorted[i].count;
+        used += sorted[i].count > 0;
+    }
+    if (total) {
+        fprintf(f, "SUMMARY %s: %" PRIu64 " at %d addresses, most:", title,
+                total, used);
+        for (int i = 0; i < 12 && sorted[i].count; i++) {
+            if (with_page) {
+                fprintf(f, " 0x%" PRIx64 "(page 0x%" PRIx64 "):%u",
+                        sorted[i].key, sorted[i].page, sorted[i].count);
+            } else {
+                fprintf(f, " page 0x%" PRIx64 ":%u", sorted[i].key,
+                        sorted[i].count);
+            }
+        }
+        fputc('\n', f);
+    }
+    g_free(sorted);
+}
+
 static void reset_summary(void)
 {
+    memset(code_translated, 0, sizeof(code_translated));
+    memset(code_written, 0, sizeof(code_written));
     frame_count = 0;
     memset(slow_count, 0, sizeof(slow_count));
     memset(slow_ms, 0, sizeof(slow_ms));
@@ -398,6 +522,13 @@ static void write_summary(void)
         }
     }
     fprintf(log_file, "SUMMARY markers: %d\n", mark_count);
+    print_code_top(log_file, "code translated", code_translated, true);
+    print_code_top(log_file, "code pages written", code_written, false);
+    GString *usage = g_string_new(NULL);
+    xemu_diag_threads_summary(usage);
+    xemu_diag_programs_summary(usage);
+    fputs(usage->str, log_file);
+    g_string_free(usage, true);
     for (int i = 0; i < worst_count; i++) {
         fprintf(log_file, "SUMMARY worst %d: t=%.2f %.0f ms (%s)\n", i + 1,
                 worst[i].t, worst[i].ms, cause_names[worst[i].cause]);
@@ -440,6 +571,7 @@ bool xemu_diag_start_path(const char *path)
             lines_help);
     fflush(f);
 
+    xemu_diag_threads_reset();
     g_mutex_lock(&lock);
     log_file = f;
     g_free(log_path);
@@ -603,6 +735,12 @@ void xemu_diag_poll(void)
         }
     }
 
+    static bool ui_marked;
+    if (!ui_marked) {
+        ui_marked = true;
+        xemu_diag_threads_mark_ui();
+    }
+
     bool capture = xemu_diag_active() || g_config.perf.freeze_report;
     qatomic_set(&capturing, capture);
     qatomic_set(&xemu_perf_enabled, capture);
@@ -690,6 +828,12 @@ void xemu_diag_frame(int64_t now, int64_t gap_us, bool slow,
         return;
     }
 
+    /* Every frame, so the reading covers just this one */
+    double game_cpu = xemu_diag_active() ? xemu_diag_threads_game_cpu() : -1;
+    if (slow && cause == XEMU_DIAG_CAUSE_OTHER && game_cpu >= GAME_CPU_BUSY) {
+        cause = XEMU_DIAG_CAUSE_GAME_CPU;
+    }
+
     g_mutex_lock(&lock);
     sec.frames++;
     sec.max_gap = MAX(sec.max_gap, gap_us);
@@ -715,6 +859,10 @@ void xemu_diag_frame(int64_t now, int64_t gap_us, bool slow,
         GString *s = g_string_new(NULL);
         g_string_append_printf(s, "frame_ms=%.1f cause=%s", gap_us / 1e3,
                                cause_names[cause]);
+        if (game_cpu >= 0) {
+            g_string_append_printf(s, " game_cpu=%.0f%%",
+                                   MIN(game_cpu, 1.0) * 100);
+        }
         print_work(s, count, ns, max_ns);
         print_gpu(s, frame_gpu);
         add_line(now, "SLOW", s->str);
@@ -1075,6 +1223,13 @@ static void tick(void *opaque)
     GString *system = g_string_new(NULL);
     bool loading = print_io(system) >= FREEZE_LOADING_BYTES;
     print_system(system);
+    if (xemu_diag_active()) {
+        static int programs_seconds;
+        xemu_diag_threads_sample(system);
+        if (programs_seconds++ % PROGRAMS_SECONDS == 0) {
+            xemu_diag_threads_scan();
+        }
+    }
 
     g_mutex_lock(&lock);
     typeof(sec) last = sec;

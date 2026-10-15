@@ -33,6 +33,12 @@ extern "C" {
  */
 #define XEMU_XBONLINE_UPDATE_DISC "Black Arrow Update and Maps.iso"
 
+/*
+ * Optional disc image next to the executable that installs the title update
+ * and downloadable maps of Rainbow Six 3 ("Old Bow" in the menu).
+ */
+#define XEMU_XBONLINE_RS3_UPDATE_DISC "Rainbow Six 3 Update and Maps.iso"
+
 /* XB Online web pages */
 #define XEMU_XBONLINE_URL_DASHBOARD "https://xb.live/dashboard"
 #define XEMU_XBONLINE_URL_CREATE "https://xb.live/xb-online"
@@ -63,6 +69,20 @@ int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
 /* Title update version 2.01, installed by the update disc */
 #define XEMU_XBONLINE_TITLE_UPDATE_VERSION 0x201
 
+/* Title ID of Rainbow Six 3 */
+#define XEMU_XBONLINE_RS3_TITLE_ID 0x55530013
+
+/*
+ * Rainbow Six 3 title updates on its update disc: "RF" for disc version 1
+ * (all regions), "Ger" for disc version 2 (PAL German). Discs of version 3
+ * and later already hold the update and must not get one.
+ */
+#define XEMU_XBONLINE_RS3_UPDATE_RF 0x501
+#define XEMU_XBONLINE_RS3_UPDATE_GER 0x502
+
+/* The first Scharins map pack, which breaks multiplayer with Scharins v2 */
+#define XEMU_XBONLINE_RS3_OLD_SCHARINS "5553001300000006"
+
 typedef struct XbOnlineXbe {
     uint32_t title_id;
     uint32_t version;
@@ -76,6 +96,14 @@ typedef struct XbOnlineXbe {
  */
 int xemu_xbonline_hdd_title_update(const char *hdd_path, uint32_t title_id,
                                    XbOnlineXbe *xbe, int *content_count);
+
+/*
+ * Whether a downloadable content package (its offering ID as 16 hex digits)
+ * of a game is on the hard disk image. Returns 1 if it is, 0 if it is not,
+ * -1 if the image could not be read.
+ */
+int xemu_xbonline_hdd_has_content(const char *hdd_path, uint32_t title_id,
+                                  const char *offering);
 
 /* Read the certificate of default.xbe on an Xbox disc image */
 bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe);

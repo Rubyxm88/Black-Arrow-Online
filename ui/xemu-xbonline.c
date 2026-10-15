@@ -430,6 +430,26 @@ int xemu_xbonline_hdd_title_update(const char *hdd_path, uint32_t title_id,
     return result;
 }
 
+int xemu_xbonline_hdd_has_content(const char *hdd_path, uint32_t title_id,
+                                  const char *offering)
+{
+    HddImage img;
+    Fatx fs;
+    int result = -1;
+    char tid[9];
+
+    snprintf(tid, sizeof(tid), "%08X", title_id);
+    if (hdd_open(&img, hdd_path) && fatx_open(&fs, &img)) {
+        uint32_t tdata = fatx_find(&fs, 1, "TDATA", true);
+        uint32_t title = tdata ? fatx_find(&fs, tdata, tid, true) : 0;
+        uint32_t content = title ? fatx_find(&fs, title, "$c", true) : 0;
+
+        result = content && fatx_find(&fs, content, offering, true) ? 1 : 0;
+    }
+    hdd_close(&img);
+    return result;
+}
+
 bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe)
 {
     static const uint64_t bases[] = { 0, 0x18300000ULL, 0x1040000ULL,
@@ -504,7 +524,8 @@ bool xemu_xbonline_is_system_disc(const char *path)
 {
     return g_str_has_suffix(path, XEMU_XBONLINE_SETUP_DISC) ||
            g_str_has_suffix(path, XEMU_XBONLINE_LOADER_DISC) ||
-           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC);
+           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC) ||
+           g_str_has_suffix(path, XEMU_XBONLINE_RS3_UPDATE_DISC);
 }
 
 char *xemu_xbonline_pick_game(const char *games_dir)

@@ -55,16 +55,27 @@ static XemuDiagCause perf_cause(int64_t gap_us, const int64_t *ns)
     if (counters[NV2A_PROF_BEGIN_ENDS] <= 1) {
         return XEMU_DIAG_CAUSE_LOADING;
     }
-    if (counters[NV2A_PROF_SURF_DOWNLOAD]) {
+    /*
+     * Most frames copy the screen back a few times, so only blame it when
+     * the copies took a good part of the frame
+     */
+    if ((ns[XEMU_PERF_COPYBACK] + ns[XEMU_PERF_SURF_UPLOAD]) * 3 >=
+        gap_us * 1000) {
         return XEMU_DIAG_CAUSE_COPYBACK;
+    }
+    if (ns[XEMU_PERF_QUERY_WAIT] * 3 >= gap_us * 1000) {
+        return XEMU_DIAG_CAUSE_QUERY;
+    }
+    if (ns[XEMU_PERF_AUDIO_LOCK] * 3 >= gap_us * 1000) {
+        return XEMU_DIAG_CAUSE_AUDIO;
     }
     return XEMU_DIAG_CAUSE_OTHER;
 }
 
 /*
  * Reports each frame to the diagnostics log (ui/xemu-diag.h), which keeps
- * the per-second lines for a log being recorded (XB Online > Diagnostics
- * Log, or XEMU_PERF_LOG) and for freeze reports: the gap since the last
+ * the per-second lines for a log being recorded (RSO Settings > Record
+ * Diagnostics Log, or XEMU_PERF_LOG) and for freeze reports: the gap since the last
  * frame, the work done in it and its GPU counters. A frame that took longer
  * than PERF_SLOW_FRAME_US is slow and gets a likely cause.
  */

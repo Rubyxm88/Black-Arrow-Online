@@ -36,6 +36,7 @@
 #include "../xemu-xbcheck.h"
 #include "../xemu-diag.h"
 #include "hw/xbox/nv2a/shader-precache.h"
+#include <cmath>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -108,13 +109,9 @@ static void MenuHeader(const char *title)
     ImGui::PopStyleColor();
 }
 
-// A menu item with a check mark that flips a setting; hovering explains it.
-// The menu stays open, so several settings can be flipped in one go.
-static void MenuToggle(const char *label, bool *value, const char *help)
+// Explains the menu item just drawn when the mouse rests on it
+static void MenuItemHelp(const char *help)
 {
-    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
-    ImGui::MenuItem(label, NULL, value);
-    ImGui::PopItemFlag();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort |
                              ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::BeginTooltip();
@@ -123,6 +120,16 @@ static void MenuToggle(const char *label, bool *value, const char *help)
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
+}
+
+// A menu item with a check mark that flips a setting; hovering explains it.
+// The menu stays open, so several settings can be flipped in one go.
+static void MenuToggle(const char *label, bool *value, const char *help)
+{
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+    ImGui::MenuItem(label, NULL, value);
+    ImGui::PopItemFlag();
+    MenuItemHelp(help);
 }
 
 static void StartDiagnosticsLog()
@@ -148,6 +155,58 @@ static void OpenFreezeReport()
         xemu_queue_notification("No freeze report yet: one is saved by "
                                 "itself when the game freezes");
     }
+}
+
+// At the top of the popup column while a diagnostics log is recording: a red
+// dot, the time so far and a Stop button. It takes no focus, so the game
+// keeps its controls.
+void DrawRecordingBadge()
+{
+    if (!xemu_diag_active()) {
+        return;
+    }
+
+    PopupStackPlace();
+    ImGui::SetNextWindowBgAlpha(0.80f);
+    if (ImGui::Begin("Recording Diagnostics Log", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        // A red dot that fades in and out once a second
+        float size = ImGui::GetTextLineHeight();
+        ImGui::AlignTextToFramePadding();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float y = p.y + ImGui::GetFrameHeight() / 2;
+        float pulse = 0.6f + 0.4f * cosf((float)ImGui::GetTime() * 6.2832f);
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(p.x + size / 2, y), size * 0.32f,
+            IM_COL32(230, 40, 40, (int)(255 * pulse)));
+        ImGui::Dummy(ImVec2(size, ImGui::GetFrameHeight()));
+        ImGui::SameLine();
+
+        int secs = (int)xemu_diag_seconds();
+        ImGui::Text("Recording %d:%02d", secs / 60, secs % 60);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.12f, 0.12f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(0.85f, 0.20f, 0.20f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                              ImVec4(0.55f, 0.08f, 0.08f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        if (ImGui::SmallButton("Stop")) {
+            StopDiagnosticsLog();
+        }
+        ImGui::PopStyleColor(4);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Stop recording and open the logs folder. "
+                              "Press F9 while recording when the game lags.");
+        }
+        PopupStackTake();
+    }
+    ImGui::End();
 }
 
 // How long the notice stays after a freeze report was saved
@@ -187,7 +246,8 @@ void DrawFreezeToast()
         ImGui::BeginGroup();
         ImGui::Text("The game stopped responding");
         ImGui::TextDisabled("A freeze report was saved:");
-        ImGui::TextDisabled("XB Online > Help > Open Last Freeze Report");
+        ImGui::TextDisabled("RSO Settings > Diagnostics > Open Last Freeze "
+                            "Report");
         ImGui::EndGroup();
         PopupStackTake();
     }
@@ -410,9 +470,30 @@ void ShowMainMenu()
                 ImGui::MenuItem("No games yet: Open Games Folder")) {
                 xemu_xbcheck_open_games_folder();
             }
-            if (qemu_access(XEMU_XBONLINE_UPDATE_DISC, F_OK) == 0 &&
-                ImGui::MenuItem("Black Arrow - Install Game Updates")) {
-                ActionPlayDiscFile(XEMU_XBONLINE_UPDATE_DISC);
+
+            bool ba_updates = qemu_access(XEMU_XBONLINE_UPDATE_DISC, F_OK) == 0;
+            bool rs3_updates =
+                qemu_access(XEMU_XBONLINE_RS3_UPDATE_DISC, F_OK) == 0;
+            if (ba_updates || rs3_updates) {
+                MenuHeader("Game Updates");
+            }
+            if (ba_updates) {
+                if (ImGui::MenuItem("Black Arrow - Install Game Updates")) {
+                    ActionPlayDiscFile(XEMU_XBONLINE_UPDATE_DISC);
+                }
+                MenuItemHelp("Installs the Black Arrow title update and map "
+                             "packs on this console. Then play Black Arrow "
+                             "from Games.");
+            }
+            if (rs3_updates) {
+                if (ImGui::MenuItem("Old Bow - Install Game Updates")) {
+                    ActionPlayDiscFile(XEMU_XBONLINE_RS3_UPDATE_DISC);
+                }
+                MenuItemHelp("Installs the Rainbow Six 3 maps and title "
+                             "update. Install only the update that fits your "
+                             "disc (Help > Connection Check says which, with "
+                             "Rainbow Six 3 loaded), and skip Old Scharins: "
+                             "it breaks multiplayer with Scharins v2.");
             }
 
             MenuHeader("Dashboards");
@@ -441,28 +522,9 @@ void ShowMainMenu()
             if (ImGui::MenuItem("Connection Check")) {
                 xbcheck_window.Start(true);
             }
-            if (xemu_diag_active()) {
-                int secs = (int)xemu_diag_seconds();
-                char time[16];
-                snprintf(time, sizeof(time), "%d:%02d", secs / 60, secs % 60);
-                if (ImGui::MenuItem("Stop Diagnostics Log", time)) {
-                    StopDiagnosticsLog();
-                }
-                if (ImGui::MenuItem("Mark Lag Spike", "F9")) {
-                    xemu_diag_mark();
-                }
-            } else if (ImGui::MenuItem("Record Diagnostics Log")) {
-                StartDiagnosticsLog();
-            }
-            if (ImGui::MenuItem("Open Last Freeze Report")) {
-                OpenFreezeReport();
-            }
-            if (ImGui::MenuItem("Open Logs Folder")) {
-                xemu_diag_open_folder();
-            }
-            if (ImGui::MenuItem("Shader Cache")) {
-                shader_cache_window.Open();
-            }
+            MenuItemHelp("Checks the network, XB Online, the PC clock, the "
+                         "game disc, its update and the Xbox Live account. "
+                         "Lag and freeze logs: RSO Settings > Diagnostics.");
             ImGui::EndMenu();
         } else {
             xbonline_menu_open = false;
@@ -555,14 +617,44 @@ void ShowMainMenu()
                 ImGui::EndMenu();
             }
 
+            MenuHeader("Audio");
+            ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+            if (ImGui::MenuItem("Sound: Fast (recommended)", NULL,
+                                !g_config.audio.use_dsp)) {
+                g_config.audio.use_dsp = false;
+            }
+            MenuItemHelp("Mixes the game's sounds straight to your speakers. "
+                         "Lightest on the PC, steadiest frame rate.");
+            if (ImGui::MenuItem("Sound: Accurate", NULL,
+                                g_config.audio.use_dsp)) {
+                g_config.audio.use_dsp = true;
+                g_config.audio.use_dsp_jit = true;
+            }
+            MenuItemHelp("Runs the Xbox's own sound effects processor, like a "
+                         "real console. Uses several times more CPU for sound "
+                         "and lowered the frame rate in our tests.");
+            ImGui::PopItemFlag();
+            if (g_config.audio.use_dsp && !g_config.audio.use_dsp_jit) {
+                ImGui::TextDisabled("  Running without the faster sound "
+                                    "engine: choose Accurate again");
+            }
+
             MenuHeader("Diagnostics");
             if (xemu_diag_active()) {
-                if (ImGui::MenuItem("Stop Diagnostics Log")) {
+                int secs = (int)xemu_diag_seconds();
+                char time[16];
+                snprintf(time, sizeof(time), "%d:%02d", secs / 60, secs % 60);
+                if (ImGui::MenuItem("Stop Diagnostics Log", time)) {
                     StopDiagnosticsLog();
+                }
+                if (ImGui::MenuItem("Mark Lag Spike", "F9")) {
+                    xemu_diag_mark();
                 }
             } else if (ImGui::MenuItem("Record Diagnostics Log")) {
                 StartDiagnosticsLog();
             }
+            MenuItemHelp("Records a line for every second while you play, to "
+                         "find out what causes lag. Press F9 when it lags.");
             MenuToggle("Save a report when the game freezes",
                        &g_config.perf.freeze_report,
                        "When the game shows no new picture for 10 seconds, "
@@ -598,29 +690,6 @@ void ShowMainMenu()
                     g_config.display.ui.auto_scale = false;
                     g_config.display.ui.scale = ui_scale_idx;
                 }
-            }
-
-            ImGui::Combo("Backend", &g_config.display.renderer,
-                 "Null\0"
-                 "OpenGL\0"
-#ifdef CONFIG_VULKAN
-                 "Vulkan\0"
-#endif
-                );
-
-            int rendering_scale = nv2a_get_surface_scale_factor() - 1;
-            if (ImGui::Combo("Int. Resolution Scale", &rendering_scale,
-                             "1x\0"
-                             "2x\0"
-                             "3x\0"
-                             "4x\0"
-                             "5x\0"
-                             "6x\0"
-                             "7x\0"
-                             "8x\0"
-                             "9x\0"
-                             "10x\0")) {
-                nv2a_set_surface_scale_factor(rendering_scale + 1);
             }
 
             ImGui::Combo("Display Mode", &g_config.display.ui.fit,

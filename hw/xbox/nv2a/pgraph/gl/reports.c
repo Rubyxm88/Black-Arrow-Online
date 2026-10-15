@@ -20,6 +20,7 @@
  */
 
 #include <hw/xbox/nv2a/nv2a_int.h>
+#include "qemu/xemu-perf.h"
 #include "renderer.h"
 
 static void process_pending_report(NV2AState *d, QueryReport *report)
@@ -41,7 +42,9 @@ static void process_pending_report(NV2AState *d, QueryReport *report)
     /* FIXME: What about clipping regions etc? */
     for (int i = 0; i < report->query_count; i++) {
         GLuint gl_query_result = 0;
+        int64_t perf_start = xemu_perf_start();
         glGetQueryObjectuiv(report->queries[i], GL_QUERY_RESULT, &gl_query_result);
+        xemu_perf_end(XEMU_PERF_QUERY_WAIT, perf_start);
         gl_query_result /= pg->surface_scale_factor * pg->surface_scale_factor;
         r->zpass_pixel_count_result += gl_query_result;
     }

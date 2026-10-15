@@ -30,6 +30,7 @@
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/cputlb.h"
 #include "exec/tb-flush.h"
+#include "qemu/xemu-perf.h"
 #include "system/ram_addr.h"
 #include "exec/mmu-access-type.h"
 #include "exec/tlb-common.h"
@@ -1345,7 +1346,12 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
     trace_memory_notdirty_write_access(mem_vaddr, ram_addr, size);
 
     if (!physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
+        int64_t perf_start = xemu_perf_start();
         tb_invalidate_phys_range_fast(cpu, ram_addr, size, retaddr);
+        xemu_perf_end(XEMU_PERF_CODE_WRITE, perf_start);
+        if (perf_start) {
+            xemu_perf_code_written(ram_addr >> TARGET_PAGE_BITS);
+        }
     }
 
     /*
