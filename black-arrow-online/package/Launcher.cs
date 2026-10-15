@@ -170,6 +170,9 @@ static class Launcher
         "    { host = 3074, guest = 3074, protocol = 'udp'}\n" +
         "    ]\n" +
         "\n" +
+        "[sys]\n" +
+        "mem_limit = '128'\n" +
+        "\n" +
         "[sys.files]\n" +
         "bootrom_path = '" + BundledMcpx + "'\n" +
         "flashrom_path = '" + BundledBios + "'\n" +

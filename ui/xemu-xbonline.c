@@ -292,7 +292,8 @@ bool xemu_xbonline_is_system_disc(const char *path)
 {
     return g_str_has_suffix(path, XEMU_XBONLINE_SETUP_DISC) ||
            g_str_has_suffix(path, XEMU_XBONLINE_LOADER_DISC) ||
-           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC);
+           g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC) ||
+           g_str_has_suffix(path, XEMU_XBONLINE_INSIGNIA_DISC);
 }
 
 char *xemu_xbonline_pick_game(const char *games_dir)

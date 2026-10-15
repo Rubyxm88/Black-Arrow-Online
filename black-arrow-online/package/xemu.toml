@@ -19,6 +19,9 @@ forward_ports = [
     { host = 3074, guest = 3074, protocol = 'udp'}
     ]
 
+[sys]
+mem_limit = '128'
+
 [sys.files]
 bootrom_path = 'mcpx.bin'
 flashrom_path = 'Complex_4627v1.03.bin'

@@ -364,7 +364,7 @@ sys:
   mem_limit:
     type: enum
     values: ['64', '128']
-    default: '64'
+    default: '128'
   avpack:
     type: enum
     values: [scart, hdtv, vga, rfu, svideo, composite, none]

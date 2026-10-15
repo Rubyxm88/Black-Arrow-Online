@@ -12,7 +12,8 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
 
 - **XB Online menu**: start a game from the games folder, open the XBL
   Dashboard for account setup, open the original Xbox dashboard, run the game
-  update installer.
+  update installer, and Insignia's Setup Assistant for creating a new Xbox
+  Live account when `Insignia-Setup.iso` is in the package.
 - **XB Online DNS redirect**: a network setting that points the console's
   Xbox Live lookups at XB Online.
 - **Hosting**: with NAT networking the console takes the computer's own
@@ -26,6 +27,9 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
 - **Graphics**: a fix for menu textures in Black Arrow and an optional
   speed-up, "Skip render target copy-back", under Settings > Display.
 - **Idle CPU use**: short main-loop waits sleep instead of spinning.
+- **Network card**: packets held while the game's receive buffer was full
+  are delivered as soon as it has room again.
+- **Memory**: the console has 128 MB by default instead of 64 MB.
 
 The source changes are the commits on top of the upstream history.
 
@@ -86,6 +90,7 @@ BlackArrowOnline-content.zip
     system/XBL Dashboard.iso
     system/XBL Dashboard Loader.iso
     system/Black Arrow Update and Maps.iso
+    system/Insignia-Setup.iso
     system/fresh/xbox_hdd.qcow2
 ```
 

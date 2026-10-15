@@ -199,6 +199,16 @@ void ShowMainMenu()
             if (ImGui::MenuItem("Get a Link Code (xb.live)")) {
                 SDL_OpenURL("https://xb.live/link");
             }
+
+            if (qemu_access(XEMU_XBONLINE_INSIGNIA_DISC, F_OK) == 0) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("New Account: Register Xbox (Insignia)")) {
+                    ActionPlayDiscFile(XEMU_XBONLINE_INSIGNIA_DISC);
+                }
+                if (ImGui::MenuItem("New Account: Get a Code (insignia.live)")) {
+                    SDL_OpenURL("https://insignia.live/");
+                }
+            }
             ImGui::EndMenu();
         }
 

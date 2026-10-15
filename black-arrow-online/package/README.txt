@@ -14,6 +14,7 @@ FIRST TIME
                                    BIOS / MCPX     optional, included ones are used
 3. The XBL Dashboard opens. Sign in with your xb.live account.
    Need a code? Menu: XB Online > Get a Link Code.
+   No account yet? See NEW ACCOUNT below first.
 4. In the dashboard: Settings > Network, set the top option to XB Online.
 5. Menu: XB Online > Install Game Update + Maps, and follow the prompts.
    (Skip this if your own hard disk already has them.)
@@ -36,12 +37,37 @@ XBL Dashboard (Account Setup)   Sign in, link or fix your Xbox Live account.
 Original Xbox Dashboard         The standard Xbox dashboard (saves, settings).
 Install Game Update + Maps      Black Arrow title update and map packs.
 Get a Link Code                 Opens xb.live/link in your browser.
+New Account: Register Xbox      Insignia's Setup Assistant (see NEW ACCOUNT).
+New Account: Get a Code         Opens insignia.live in your browser.
 
 On a controller, press the Guide/Home button for the same options.
 
 The XBL Dashboard is installed on the console's hard disk (clean start), so
 it can update itself when it offers an update. If you brought your own hard
 disk it runs from the disc image instead and stays at the bundled version.
+
+
+NEW ACCOUNT
+-----------
+Xbox Live accounts are created on Insignia once. After that you sign in to
+XB Online with it like everyone else.
+1. Menu: XB Online > New Account: Get a Code. On insignia.live enter your
+   email and ask for a subscription code. It arrives by email.
+2. Menu: XB Online > New Account: Register Xbox. In the Setup Assistant
+   press "Register Xbox" and wait for the message that it worked.
+3. Menu: XB Online > Original Xbox Dashboard.
+   Settings > Network Settings: the connection test should pass.
+4. Back on the dashboard home, open Xbox Live > New Account:
+     Real:  gamertag, billing region, the code from your email, and the
+            SAME email you used on insignia.live.
+     Fake:  credit card (number 4111 1111 1111 1111, any name and date)
+            and phone number. Do not enter real card details.
+   Set a pass code when it asks.
+5. Go to step 3 of FIRST TIME: sign in to xb.live with your Insignia login
+   and link the account in the XBL Dashboard.
+If New Account cannot reach Xbox Live, set Machine > Settings > Network >
+"Xbox Live service" to Insignia for steps 3-4, then back to XB Online.
+Help: https://insignia.live/guide/connect
 
 
 UPDATES
@@ -81,6 +107,9 @@ Setup window says "Add content pack" instead of "Start clean": this folder
 Game looks wrong: Machine > Settings > Display, turn off
   "Skip render target copy-back (speed hack)".
 Slow: View > Int. Resolution Scale, choose 1x.
+Stutter on a 144 Hz (or other high refresh) monitor: the game runs at 30
+  frames, which divides evenly into 60, 120 or 240 Hz but not 144 or 165.
+  Set the monitor to 120 Hz (or 60 Hz) in Windows display settings.
 Hosting a game:
   Players on your own network (another Xbox or PC) can join as it is. Allow
   xemu through Windows Firewall when Windows asks.

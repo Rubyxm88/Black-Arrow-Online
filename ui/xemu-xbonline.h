@@ -34,6 +34,13 @@ extern "C" {
 #define XEMU_XBONLINE_UPDATE_DISC "Black Arrow Update and Maps.iso"
 
 /*
+ * Optional disc image of Insignia's Setup Assistant, which registers the
+ * console with Insignia so an Xbox Live account can be created on the
+ * original dashboard.
+ */
+#define XEMU_XBONLINE_INSIGNIA_DISC "Insignia-Setup.iso"
+
+/*
  * Check whether the hard disk image holds an Xbox Live machine account.
  * Returns 1 if it does, 0 if it does not, -1 if the image could not be read.
  */
