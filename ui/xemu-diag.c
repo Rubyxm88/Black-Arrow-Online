@@ -16,7 +16,7 @@
 #include "qemu/atomic.h"
 #include "qemu/timer.h"
 #include "qemu/xemu-perf.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <glib/gstdio.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -116,9 +116,8 @@ static const char *base_name(const char *path)
 /* The lines of the package's version.txt worth knowing */
 static void write_package(FILE *f)
 {
-    char *exe_dir = SDL_GetBasePath();
+    const char *exe_dir = SDL_GetBasePath();
     char *path = g_build_filename(exe_dir ? exe_dir : ".", "version.txt", NULL);
-    SDL_free(exe_dir);
     char *text = NULL;
     if (g_file_get_contents(path, &text, NULL, NULL)) {
         char **lines = g_strsplit(text, "\n", -1);
