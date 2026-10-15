@@ -68,6 +68,8 @@ static bool had_focus;
 static char *last_disc;
 static bool cache_reported;
 
+static void io_start_bh(void *opaque);
+
 static const char *const cause_names[XEMU_DIAG_CAUSE__COUNT] = {
     [XEMU_DIAG_CAUSE_SHADER] = "new_shader",
     [XEMU_DIAG_CAUSE_COPYBACK] = "screen_copyback",
