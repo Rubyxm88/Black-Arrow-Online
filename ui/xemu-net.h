@@ -22,6 +22,9 @@
 #ifndef XEMU_NETWORK_H
 #define XEMU_NETWORK_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
