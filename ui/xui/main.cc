@@ -55,6 +55,7 @@
 #include "xbcheck.hh"
 #include "shader-cache.hh"
 #include "../xemu-xbonline.h"
+#include "../xemu-diag.h"
 #endif
 
 bool g_screenshot_pending;
@@ -340,6 +341,7 @@ void xemu_hud_update(void)
         }
     }
 
+    xemu_diag_poll();
     first_boot_window.Draw();
     monitor_window.Draw();
     apu_window.Draw();

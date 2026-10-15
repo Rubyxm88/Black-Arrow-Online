@@ -27,6 +27,7 @@
 #include "qemu/bswap.h"
 #include "qemu/timer.h"
 #include "hw/xbox/nv2a/shader-precache.h"
+#include "ui/xemu-diag.h"
 
 #include "xemu-version.h"
 #include "ui/xemu-settings.h"
@@ -1169,6 +1170,7 @@ static void *precache_thread(void *arg)
     if (build) {
         bool unsupported = false;
         int64_t start = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+        xemu_diag_event("shader precache started: %d to build", n_missing);
         glo_set_current(g_nv2a_context_precache);
         for (int i = 0; i < n_missing && !qatomic_read(&precache.stop); i++) {
             bool ok = precache_build(&states[missing_index[i]], missing[i],
@@ -1200,11 +1202,14 @@ static void *precache_thread(void *arg)
             snprintf(precache.status.error, sizeof(precache.status.error),
                      "This graphics driver cannot save compiled shaders.");
         }
-        fprintf(stderr,
-                "nv2a: precache built %d shaders (%d failed) in %d ms\n",
-                precache.status.done, precache.status.failed,
-                (int)(qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - start));
+        int done = precache.status.done, failed = precache.status.failed;
         qemu_mutex_unlock(&precache.lock);
+        int ms = qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - start;
+        fprintf(stderr, "nv2a: precache built %d shaders (%d failed) in %d ms\n",
+                done, failed, ms);
+        xemu_diag_event("shader precache finished: %d built, %d failed, "
+                        "%d ms%s", done, failed, ms,
+                        unsupported ? ", driver cannot save shaders" : "");
     }
 
     qemu_mutex_lock(&precache.lock);

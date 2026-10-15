@@ -18,6 +18,7 @@
 #include "qemu/thread.h"
 #include "xemu-settings.h"
 #include "xemu-net.h"
+#include "xemu-diag.h"
 #include "xemu-xbonline.h"
 #include "xemu-xbcheck.h"
 #include <SDL3/SDL.h>
@@ -534,6 +535,7 @@ static void *check_thread(void *opaque)
     qemu_mutex_lock(&lock);
     running = false;
     qemu_mutex_unlock(&lock);
+    xemu_diag_write_check();
     return NULL;
 }
 

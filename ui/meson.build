@@ -34,6 +34,7 @@ xemu_ss.add(files(
   'xemu-widescreen.c',
   'xemu-xbonline.c',
   'xemu-xbcheck.c',
+  'xemu-diag.c',
 ))
 
 if host_os == 'windows'

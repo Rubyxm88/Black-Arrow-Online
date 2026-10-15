@@ -32,6 +32,7 @@
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
+#include "../xemu-diag.h"
 #include <filesystem>
 #include <map>
 #include <string>
@@ -76,6 +77,11 @@ void ProcessKeyboardShortcuts(void)
 
     if (ImGui::IsKeyPressed(ImGuiKey_F12)) {
         ActionScreenshot();
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F9, false) && xemu_diag_active()) {
+        xemu_diag_mark();
+        xemu_queue_notification("Lag spike marked in the diagnostics log");
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
@@ -239,6 +245,31 @@ void ShowMainMenu()
             MenuHeader("Help");
             if (ImGui::MenuItem("Connection Check")) {
                 xbcheck_window.Start(true);
+            }
+            if (xemu_diag_active()) {
+                int secs = (int)xemu_diag_seconds();
+                char time[16];
+                snprintf(time, sizeof(time), "%d:%02d", secs / 60, secs % 60);
+                if (ImGui::MenuItem("Stop Diagnostics Log", time)) {
+                    xemu_diag_stop();
+                    xemu_queue_notification("Diagnostics log saved in the "
+                                            "logs folder");
+                    xemu_diag_open_folder();
+                }
+                if (ImGui::MenuItem("Mark Lag Spike", "F9")) {
+                    xemu_diag_mark();
+                }
+            } else if (ImGui::MenuItem("Record Diagnostics Log")) {
+                if (xemu_diag_start()) {
+                    xemu_queue_notification("Recording a diagnostics log. "
+                                            "Press F9 when the game lags.");
+                } else {
+                    xemu_queue_error_message("Could not create the "
+                                             "diagnostics log file.");
+                }
+            }
+            if (ImGui::MenuItem("Open Logs Folder")) {
+                xemu_diag_open_folder();
             }
             if (ImGui::MenuItem("Shader Cache")) {
                 shader_cache_window.Open();
