@@ -53,6 +53,7 @@
 #if defined(_WIN32)
 #include "update.hh"
 #include "xbcheck.hh"
+#include "../xemu-xbonline.h"
 #endif
 
 bool g_screenshot_pending;
@@ -343,6 +344,9 @@ void xemu_hud_update(void)
     update_window.Draw();
 #endif
     if (!first_boot_window.is_open) xbcheck_window.Draw();
+    if (xemu_xbonline_insignia_take_ready()) {
+        ActionPlayDiscFile(XEMU_XBONLINE_INSIGNIA_DISC);
+    }
     g_scene_mgr.Draw();
     if (!first_boot_window.is_open) notification_manager.Draw();
     g_snapshot_mgr.Draw();

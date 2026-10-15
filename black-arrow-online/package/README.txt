@@ -39,6 +39,8 @@ Install Game Update + Maps      Black Arrow title update and map packs.
 Get a Link Code                 Opens xb.live/link in your browser.
 Check Connection                Runs the XB Online check again (see below).
 New Account: Register Xbox      Insignia's Setup Assistant (see NEW ACCOUNT).
+                                If the disc is missing it is downloaded
+                                from Insignia first and then starts.
 New Account: Get a Code         Opens insignia.live in your browser.
 
 On a controller, press the Guide/Home button for the same options.
@@ -79,7 +81,7 @@ Live sign-in, saves, settings and games are not touched. The previous
 emulator is kept as system\xemu.previous.exe.
 If Insignia's setup disc (system\Insignia-Setup.iso) is missing, an update
 also downloads it from Insignia's own GitHub releases. Without it the "New
-Account" entries of the XB Online menu stay hidden.
+Account: Register Xbox" menu entry downloads it when first chosen.
 To turn the check off, create an empty file system\no-update-check.txt.
 Builds and notes: https://github.com/Rubyxm88/Black-Arrow-Online/releases
 The downloads there are updates for this folder, not the full package.

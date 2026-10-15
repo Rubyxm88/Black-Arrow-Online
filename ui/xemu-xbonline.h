@@ -41,6 +41,14 @@ extern "C" {
 #define XEMU_XBONLINE_INSIGNIA_DISC "Insignia-Setup.iso"
 
 /*
+ * True if the Insignia setup disc is there. If not, start downloading it
+ * from Insignia and return false; xemu_xbonline_insignia_take_ready() then
+ * returns true once, when the download has finished.
+ */
+bool xemu_xbonline_insignia_fetch(void);
+bool xemu_xbonline_insignia_take_ready(void);
+
+/*
  * Check whether the hard disk image holds an Xbox Live machine account.
  * Returns 1 if it does, 0 if it does not, -1 if the image could not be read.
  */

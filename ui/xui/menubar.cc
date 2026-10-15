@@ -204,14 +204,13 @@ void ShowMainMenu()
                 xbcheck_window.Start();
             }
 
-            if (qemu_access(XEMU_XBONLINE_INSIGNIA_DISC, F_OK) == 0) {
-                ImGui::Separator();
-                if (ImGui::MenuItem("New Account: Register Xbox (Insignia)")) {
-                    ActionPlayDiscFile(XEMU_XBONLINE_INSIGNIA_DISC);
-                }
-                if (ImGui::MenuItem("New Account: Get a Code (insignia.live)")) {
-                    SDL_OpenURL("https://insignia.live/");
-                }
+            ImGui::Separator();
+            if (ImGui::MenuItem("New Account: Register Xbox (Insignia)") &&
+                xemu_xbonline_insignia_fetch()) {
+                ActionPlayDiscFile(XEMU_XBONLINE_INSIGNIA_DISC);
+            }
+            if (ImGui::MenuItem("New Account: Get a Code (insignia.live)")) {
+                SDL_OpenURL("https://insignia.live/");
             }
             ImGui::EndMenu();
         }
