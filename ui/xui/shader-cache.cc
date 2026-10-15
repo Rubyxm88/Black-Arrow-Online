@@ -2,9 +2,10 @@
 // xemu User Interface: Shader Cache window
 //
 // Shows what the shader cache holds, builds the shaders of the shipped list
-// ahead of time (Precache Shaders) and empties the cache (Clear Cache). The
-// first time a list has shaders this PC has not built yet, the window opens
-// by itself once to offer the precache.
+// ahead of time (Precache Shaders) and empties the cache (Clear Cache). When
+// there are shaders this PC has not built yet (first run, a driver update, a
+// new resolution scale), they are built in the background by themselves,
+// with a small notice, unless RSO Settings says not to.
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,11 +18,11 @@
 #include "../xemu-settings.h"
 #include "hw/xbox/nv2a/shader-precache.h"
 
-/* Seconds after starting before looking whether to offer a precache */
-#define OFFER_DELAY 12.0
+/* Seconds after starting before looking whether to precache by itself */
+#define AUTO_DELAY 12.0
 
-/* Remembers the driver the precache was offered for, in the base folder */
-#define OFFER_FILE "shader-precache-offered.txt"
+/* How long "Shaders ready" stays up */
+#define TOAST_TIME 4.0
 
 static const ImVec4 xbox_green(0.063f, 0.486f, 0.063f, 1.0f);
 static const ImVec4 xbox_green_hover(0.10f, 0.62f, 0.10f, 1.0f);
@@ -53,18 +54,16 @@ static void PopButtonColors()
     ImGui::PopStyleColor(4);
 }
 
-static char *OfferFilePath()
-{
-    return g_strdup_printf("%s%s", xemu_settings_get_base_path(), OFFER_FILE);
-}
-
 ShaderCacheWindow shader_cache_window;
 
 ShaderCacheWindow::ShaderCacheWindow()
 {
     is_open = false;
-    m_offer_checked = false;
+    m_auto_checked = false;
     m_scan_requested = false;
+    m_auto_running = false;
+    m_toast_end = -1;
+    m_toast_built = 0;
     m_confirm_clear = false;
     m_cleared_time = -1;
 }
@@ -76,17 +75,20 @@ void ShaderCacheWindow::Open()
     is_open = true;
 }
 
-// Open once per graphics driver when the list has shaders to build
-void ShaderCacheWindow::CheckOffer()
+// Once per run: build in the background whatever the list and this PC's own
+// cache have that is not built for this driver and resolution scale yet
+void ShaderCacheWindow::CheckAuto()
 {
-    if (m_offer_checked || !g_config.perf.shader_precache_offer ||
-        ImGui::GetTime() < OFFER_DELAY) {
+    if (m_auto_checked || !g_config.perf.shader_precache_auto ||
+        ImGui::GetTime() < AUTO_DELAY) {
         return;
     }
 
     ShaderPrecacheStatus status;
     nv2a_shader_precache_get_status(&status);
     if (!status.supported) {
+        /* Vulkan: nothing to do */
+        m_auto_checked = true;
         return;
     }
     if (!m_scan_requested) {
@@ -97,36 +99,81 @@ void ShaderCacheWindow::CheckOffer()
     if (!status.scanned || status.running) {
         return;
     }
-    m_offer_checked = true;
-    if (status.list_missing <= 0) {
+    m_auto_checked = true;
+    if (status.list_missing > 0 && nv2a_shader_precache_start()) {
+        m_auto_running = true;
+    }
+}
+
+// Top left, under the XB Online one: progress, then "Shaders ready"
+void ShaderCacheWindow::DrawToast(const ShaderPrecacheStatus &status)
+{
+    double now = ImGui::GetTime();
+    if (m_auto_running && !status.running) {
+        m_auto_running = false;
+        m_toast_built = status.done;
+        m_toast_end = now + TOAST_TIME;
+    }
+    if (!m_auto_running && m_toast_end <= now) {
         return;
     }
 
-    /* Offer again after a driver update or a resolution scale change */
-    char *path = OfferFilePath();
-    char *want = g_strdup_printf("%s, scale %u", status.driver,
-                                 nv2a_get_surface_scale_factor());
-    gchar *offered = NULL;
-    bool same = g_file_get_contents(path, &offered, NULL, NULL) &&
-                !strcmp(offered, want);
-    if (!same) {
-        g_file_set_contents(path, want, -1, NULL);
-        is_open = true;
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    float scale = g_viewport_mgr.m_scale;
+    float pad = 10.0f * scale;
+    float below = pad + ImGui::GetFrameHeightWithSpacing() * 1.6f;
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + pad, vp->WorkPos.y + below));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    if (ImGui::Begin("Shader Precache", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (m_auto_running) {
+            int total = status.list_missing;
+            int finished = status.done + status.failed;
+            ImGui::Text("Building shaders in the background");
+            char label[32];
+            snprintf(label, sizeof(label), "%d / %d", finished, total);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, xbox_green_hover);
+            ImGui::ProgressBar(total ? (float)finished / total : 0.0f,
+                               ImVec2(220.0f * scale, 0), label);
+            ImGui::PopStyleColor();
+        } else if (status.error[0]) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
+                               status.error);
+        } else {
+            // A checkmark in a green circle, like the XB Online toast
+            float size = ImGui::GetTextLineHeight();
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            ImVec2 c(p.x + size / 2, p.y + size / 2);
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            dl->AddCircleFilled(c, size / 2,
+                                ImGui::GetColorU32(xbox_green_hover));
+            ImVec2 tick[3] = { ImVec2(c.x - size * 0.24f, c.y + size * 0.02f),
+                               ImVec2(c.x - size * 0.06f, c.y + size * 0.20f),
+                               ImVec2(c.x + size * 0.26f,
+                                      c.y - size * 0.18f) };
+            dl->AddPolyline(tick, 3, IM_COL32_WHITE, 0, 2.0f * scale);
+            ImGui::Dummy(ImVec2(size, size));
+            ImGui::SameLine();
+            ImGui::Text("Shaders ready (%d built)", m_toast_built);
+        }
     }
-    g_free(offered);
-    g_free(want);
-    g_free(path);
+    ImGui::End();
 }
 
 void ShaderCacheWindow::Draw()
 {
-    CheckOffer();
-    if (!is_open) {
-        return;
-    }
+    CheckAuto();
 
     ShaderPrecacheStatus status;
     nv2a_shader_precache_get_status(&status);
+    DrawToast(status);
+    if (!is_open) {
+        return;
+    }
 
     float scale = g_viewport_mgr.m_scale;
     const ImGuiViewport *vp = ImGui::GetMainViewport();

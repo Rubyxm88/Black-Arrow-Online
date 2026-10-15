@@ -322,11 +322,13 @@ void ShowMainMenu()
                        "that effect for a few frames. Turn off if effects "
                        "flicker. OpenGL only.");
             ImGui::EndDisabled();
-            MenuToggle("Offer to precache shaders",
-                       &g_config.perf.shader_precache_offer,
-                       "Open the Shader Cache window once when there are "
-                       "shaders to build, for example after a graphics "
-                       "driver update.");
+            MenuToggle("Precache shaders automatically",
+                       &g_config.perf.shader_precache_auto,
+                       "Build missing shaders in the background by "
+                       "themselves at start (first run, after a graphics "
+                       "driver update or a resolution change), with a small "
+                       "notice. Turn off to only precache from Shader "
+                       "Cache...");
             MenuToggle("Precache this PC's own shaders",
                        &g_config.perf.shader_precache_own,
                        "Precache Shaders also rebuilds every shader this PC "

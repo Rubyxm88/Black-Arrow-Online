@@ -386,7 +386,7 @@ perf:
   shader_async:
     type: bool
     default: true
-  shader_precache_offer:
+  shader_precache_auto:
     type: bool
     default: true
   shader_precache_own:
