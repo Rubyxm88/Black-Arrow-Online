@@ -1,0 +1,106 @@
+name: Black Arrow Online Mac test build
+
+# Builds a Mac test app for testers. It is not released and the Windows
+# launcher never sees it: the zip is only kept as a download on the run's page
+# (signed in to GitHub, under Artifacts).
+#
+# Runs on pushes to the mac-build branch, or by hand from the Actions tab.
+
+on:
+  push:
+    branches: [mac-build]
+    paths-ignore:
+      - '**.md'
+      - 'black-arrow-online/docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: black-arrow-online-mac-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Package the source
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+    - name: Clone tree
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        fetch-depth: 0
+    - name: Install dependencies
+      run: sudo apt-get install meson
+    - name: Determine version
+      id: version
+      run: |
+        set -euo pipefail
+        git fetch --quiet --tags https://github.com/xemu-project/xemu.git
+        echo "version=$(git describe --tags --match 'v*' | cut -c 2-)" >> "$GITHUB_OUTPUT"
+    - name: Create source package
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        set -euo pipefail
+        pkg_name="xemu-${VERSION}"
+        ./scripts/archive-source.sh "${pkg_name}.tar" "./${pkg_name}/"
+        git rev-parse HEAD | tr -d '\n' > XEMU_COMMIT
+        echo -n "${VERSION}" > XEMU_VERSION
+        tar -r --file "${pkg_name}.tar" --transform "s,^./,./${pkg_name}/," ./XEMU_COMMIT ./XEMU_VERSION
+        zstd "${pkg_name}.tar"
+    - name: Upload source package
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: src
+        path: xemu-${{ steps.version.outputs.version }}.tar.zst
+        compression-level: 0
+
+  # xemu's own Mac build: Apple Silicon and Intel, joined into one app
+  macos:
+    name: Build for Mac
+    needs: source
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      pkg_version: ${{ needs.source.outputs.version }}
+
+  package:
+    name: Package for testers
+    needs: [source, macos]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Clone the setup script and package files
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        sparse-checkout: |
+          black-arrow-online/mac
+          black-arrow-online/package
+    - name: Download the Mac app
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: xemu-macos-universal-release
+        path: app
+    - name: Package
+      run: |
+        set -euo pipefail
+        # One folder, so unzipping on a Mac gives BlackArrowOnline-mac-test/
+        pkg=BlackArrowOnline-mac-test
+        mkdir "$pkg"
+        (cd "$pkg" && unzip -q ../app/*.zip)
+        cp black-arrow-online/mac/README-test.txt "$pkg/README.txt"
+        install -m 755 black-arrow-online/mac/setup-test.sh "$pkg/setup-test.sh"
+        cp black-arrow-online/package/shader-list.bin "$pkg/shader-list.bin"
+        printf 'commit=%s\nxemu=%s\ndate=%s\n' "$GITHUB_SHA" \
+            "${{ needs.source.outputs.version }}" "$(date -u +%Y-%m-%d)" > "$pkg/test-build.txt"
+        ls -la "$pkg"
+        # zip keeps the app's links and executable bits, which the artifact
+        # zip around it would not
+        zip -qry "$pkg.zip" "$pkg"
+    - name: Upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: BlackArrowOnline-mac-test
+        path: BlackArrowOnline-mac-test.zip
+        compression-level: 0

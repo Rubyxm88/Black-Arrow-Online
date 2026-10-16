@@ -1373,6 +1373,18 @@ int main(int argc, char **argv)
     _set_error_mode(_OUT_TO_STDERR);
 #endif
 
+#ifdef __APPLE__
+    if (!isatty(STDERR_FILENO)) {
+        // Started from Finder: keep xemu.log in the console folder, as on
+        // Windows
+        char *log = g_strdup_printf("%sxemu.log", xemu_settings_get_base_path());
+        if (freopen(log, "w", stdout) && freopen(log, "a", stderr)) {
+            setvbuf(stderr, NULL, _IONBF, 0);
+        }
+        g_free(log);
+    }
+#endif
+
     fprintf(stderr, "xemu_version: %s\n", xemu_version);
     fprintf(stderr, "xemu_commit: %s\n", xemu_commit);
     fprintf(stderr, "xemu_date: %s\n", xemu_date);
