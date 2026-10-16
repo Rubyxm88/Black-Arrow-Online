@@ -125,7 +125,8 @@ jobs:
         mkdir -p "$CCACHE_DIR" "$LTO_CACHE_DIR"
     - name: Compile
       run: |
-        set -uo pipefail
+        # Not -e: the errors are reported below before failing
+        set +e -uo pipefail
         ./build.sh -a ${{ matrix.arch }} \
             -Db_lto=true -Db_lto_mode=thin -Db_thinlto_cache=true \
             -Db_thinlto_cache_dir="$LTO_CACHE_DIR" -Dx86_version=3 \
