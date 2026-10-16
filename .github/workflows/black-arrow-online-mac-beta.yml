@@ -79,17 +79,111 @@ jobs:
         path: xemu-${{ steps.version.outputs.version }}.tar.zst
         compression-level: 0
 
-  # xemu's own Mac build: Apple Silicon and Intel, joined into one app
+  # xemu's own Mac build steps (build-macos.yml), release only. Job logs need a
+  # GitHub sign-in to read, so a failed build also reports its errors as
+  # annotations, which anyone can read.
   macos:
-    name: Build for Mac
+    name: Build for Mac (${{ matrix.arch }})
     needs: source
-    uses: ./.github/workflows/build-macos.yml
-    with:
-      pkg_version: ${{ needs.source.outputs.version }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, arm64]
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      CCACHE_DIR: ${{ github.workspace }}/xemu-ccache
+      CCACHE_MAXSIZE: 512M
+      LTO_CACHE_DIR: ${{ github.workspace }}/xemu-lto-cache
+    steps:
+    - name: Download source package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: src
+    - name: Extract source package
+      run: tar -xf xemu-${{ needs.source.outputs.version }}.tar.zst --strip-components=2
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        brew install ccache coreutils dylibbundler
+        pip install pyyaml requests
+    - name: Initialize compiler, library cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4
+      with:
+        path: |
+          macos-pkgs
+          ${{ env.CCACHE_DIR }}
+          ${{ env.LTO_CACHE_DIR }}
+        key: cache-bao-macos-${{ matrix.arch }}-${{ github.sha }}
+        restore-keys: cache-bao-macos-${{ matrix.arch }}-
+    - name: Setup ccache
+      run: |
+        echo "PATH=/opt/homebrew/opt/ccache/libexec:$PATH" >> "$GITHUB_ENV"
+        mkdir -p "$CCACHE_DIR" "$LTO_CACHE_DIR"
+    - name: Compile
+      run: |
+        set -uo pipefail
+        ./build.sh -a ${{ matrix.arch }} \
+            -Db_lto=true -Db_lto_mode=thin -Db_thinlto_cache=true \
+            -Db_thinlto_cache_dir="$LTO_CACHE_DIR" -Dx86_version=3 \
+            2>&1 | tee full-build.log
+        status=${PIPESTATUS[0]}
+        if [ "$status" != 0 ]; then
+          # Errors first, then how the log ends, as one annotation
+          { grep -E -i -B2 -A3 '(error|fatal|undefined symbol|not found)' full-build.log |
+                grep -v -i 'warning' | head -n 60
+            echo "----- last lines -----"
+            tail -n 25 full-build.log
+          } | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' > annotation.txt
+          echo "::error title=Mac build failed (${{ matrix.arch }})::$(cat annotation.txt)"
+        fi
+        exit "$status"
+    - name: Package
+      run: |
+        cd dist
+        zip -qry ../xemu-macos-${{ matrix.arch }}.zip *
+    - name: Upload build
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: xemu-macos-${{ matrix.arch }}
+        path: xemu-macos-${{ matrix.arch }}.zip
+        compression-level: 0
+
+  universal:
+    name: Join into one app
+    needs: macos
+    runs-on: macos-15
+    steps:
+    - name: Download both builds
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        pattern: xemu-macos-*
+        merge-multiple: true
+    - name: Join and sign
+      run: |
+        set -euo pipefail
+        mkdir dist
+        cd dist
+        for arch in x86_64 arm64; do
+          unzip -qo ../xemu-macos-${arch}.zip
+          mv xemu.app/Contents/MacOS/xemu ../xemu_${arch}
+        done
+        lipo -create -output xemu.app/Contents/MacOS/xemu ../xemu_x86_64 ../xemu_arm64
+        codesign --force --deep --preserve-metadata=entitlements,requirements,flags,runtime --sign - xemu.app/Contents/MacOS/xemu
+        zip -qry ../xemu-macos-universal.zip *
+    - name: Upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: xemu-macos-universal-release
+        path: xemu-macos-universal.zip
+        compression-level: 0
 
   package:
     name: Package
-    needs: [source, macos]
+    needs: [source, universal]
     runs-on: ubuntu-latest
     env:
       BETA: ${{ needs.source.outputs.beta }}
