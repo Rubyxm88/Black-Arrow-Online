@@ -1,0 +1,190 @@
+name: Black Arrow Online Mac beta
+
+# Builds the Mac app.
+#
+# - A push to the mac-build branch only builds it, to check that it still
+#   builds. The zip is kept as a download on the run's page (Artifacts).
+# - Pushing a tag mac-beta-0.N (git tag mac-beta-0.1; git push github
+#   mac-beta-0.1) also publishes it as the pre-release "Mac Beta 0.N".
+#
+# The beta zip holds only the app, its setup script and the shader list, like
+# the Windows update zip. The full Mac package with the Xbox BIOS, dashboards
+# and update discs is made from it on the maintainer's PC and shared from
+# there, never here.
+#
+# Windows launchers read releases/latest, which never points at a pre-release,
+# so a Mac beta is never offered to them.
+
+on:
+  push:
+    branches: [mac-build]
+    tags: ['mac-beta-*']
+    paths-ignore:
+      - '**.md'
+      - 'black-arrow-online/docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: black-arrow-online-mac-beta-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Package the source
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      beta: ${{ steps.version.outputs.beta }}
+    steps:
+    - name: Clone tree
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        fetch-depth: 0
+    - name: Install dependencies
+      run: sudo apt-get install meson
+    - name: Determine version
+      id: version
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        beta=""
+        if [ "$GITHUB_REF_TYPE" = tag ]; then
+          beta="${GITHUB_REF_NAME#mac-beta-}"
+          if ! [[ "$beta" =~ ^0\.[0-9]+$ ]]; then
+            echo "::error::Beta tags are mac-beta-0.N, like mac-beta-0.1"
+            exit 1
+          fi
+        fi
+        git fetch --quiet --tags https://github.com/xemu-project/xemu.git
+        echo "version=$(git describe --tags --match 'v*' | cut -c 2-)" >> "$GITHUB_OUTPUT"
+        echo "beta=$beta" >> "$GITHUB_OUTPUT"
+    - name: Create source package
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        set -euo pipefail
+        pkg_name="xemu-${VERSION}"
+        ./scripts/archive-source.sh "${pkg_name}.tar" "./${pkg_name}/"
+        git rev-parse HEAD | tr -d '\n' > XEMU_COMMIT
+        echo -n "${VERSION}" > XEMU_VERSION
+        tar -r --file "${pkg_name}.tar" --transform "s,^./,./${pkg_name}/," ./XEMU_COMMIT ./XEMU_VERSION
+        zstd "${pkg_name}.tar"
+    - name: Upload source package
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: src
+        path: xemu-${{ steps.version.outputs.version }}.tar.zst
+        compression-level: 0
+
+  # xemu's own Mac build: Apple Silicon and Intel, joined into one app
+  macos:
+    name: Build for Mac
+    needs: source
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      pkg_version: ${{ needs.source.outputs.version }}
+
+  package:
+    name: Package
+    needs: [source, macos]
+    runs-on: ubuntu-latest
+    env:
+      BETA: ${{ needs.source.outputs.beta }}
+      VERSION: ${{ needs.source.outputs.version }}
+    outputs:
+      zip: ${{ steps.package.outputs.zip }}
+    steps:
+    - name: Clone the setup script and package files
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        sparse-checkout: |
+          black-arrow-online/mac
+          black-arrow-online/package
+    - name: Download the Mac app
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: xemu-macos-universal-release
+        path: app
+    - name: Package
+      id: package
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        # Same top folder as the Windows package, so the full package made
+        # from this zip unzips to BlackArrowOnline/ with system/ beside the app
+        pkg=BlackArrowOnline
+        mkdir -p unpacked "$pkg"
+        (cd unpacked && unzip -q ../app/*.zip)
+        mv unpacked/xemu.app "$pkg/Black Arrow Online.app"
+        cp black-arrow-online/mac/README.txt "$pkg/README.txt"
+        install -m 755 black-arrow-online/mac/setup.sh "$pkg/setup.sh"
+        cp black-arrow-online/package/shader-list.bin "$pkg/shader-list.bin"
+        printf 'beta=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\n' \
+            "$BETA" "${VERSION%%-*}" "$VERSION" "$(date -u +%Y-%m-%d)" "$GITHUB_SHA" \
+            > "$pkg/version.txt"
+        ls -la "$pkg"
+        if [ -n "$BETA" ]; then
+          zip="BlackArrowOnline-mac-beta-$BETA.zip"
+        else
+          zip="BlackArrowOnline-mac-build-${GITHUB_SHA:0:10}.zip"
+        fi
+        # zip keeps the app's links and executable bits, which the artifact
+        # zip around it would not
+        zip -qry "$zip" "$pkg"
+        echo "zip=$zip" >> "$GITHUB_OUTPUT"
+    - name: Upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: BlackArrowOnline-mac
+        path: ${{ steps.package.outputs.zip }}
+        compression-level: 0
+
+  publish:
+    name: Publish the beta
+    needs: [source, package]
+    if: needs.source.outputs.beta != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Not the upstream remote, which gh would prefer
+      GH_REPO: ${{ github.repository }}
+      BETA: ${{ needs.source.outputs.beta }}
+      VERSION: ${{ needs.source.outputs.version }}
+      ZIP: ${{ needs.package.outputs.zip }}
+    steps:
+    - name: Download the package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: BlackArrowOnline-mac
+    - name: Write release notes
+      run: |
+        set -euo pipefail
+        {
+          echo "Mac Beta $BETA of Black Arrow Online, based on xemu source version $VERSION. For Apple Silicon and Intel Macs."
+          echo
+          echo "**New here?** Get the full Mac package from where Black Arrow Online is shared. This download is only the app: it has no Xbox BIOS, dashboard or game files and cannot set up a new console on its own."
+          echo
+          echo "**Already have a Mac beta?** Unzip \`$ZIP\`, then in Terminal type \`bash \`, drag \`setup.sh\` from the unzipped folder onto the window and press Return. Your console, Xbox Live sign-in, saves, settings and games are not touched."
+          echo
+          echo "Windows players: this is not for you. Your launcher keeps offering the normal builds."
+          echo
+          echo "### Files"
+          echo
+          echo "| File | What it is |"
+          echo "|---|---|"
+          echo "| \`$ZIP\` | The Mac app, its setup script and the shader list |"
+        } > notes.md
+    - name: Publish
+      run: |
+        if ! out=$(gh release create "$GITHUB_REF_NAME" --verify-tag --prerelease \
+            --latest=false --title "Mac Beta $BETA" --notes-file notes.md \
+            "$ZIP" 2>&1); then
+          echo "::error::$(echo "$out" | tr '\n' ' ')"
+          exit 1
+        fi
+        echo "$out"
