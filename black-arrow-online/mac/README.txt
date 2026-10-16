@@ -9,37 +9,42 @@ please report what you find (see REPORTING A PROBLEM).
 FIRST INSTALL
 -------------
 
+The PDF guide that comes with the full package has the same steps with more
+help. In short:
+
 You need:
-- The full Mac package (BlackArrowOnline-mac-beta-*-full.zip), from where
-  Black Arrow Online is shared. It has the app and the Xbox files.
+- A Mac with macOS 11 (Big Sur) or later on Intel, or macOS 14 (Sonoma) or
+  later on Apple Silicon (M1, M2...). Apple menu > About This Mac shows both.
+- The full Mac package (BlackArrowOnline-mac-...-full.zip), from where Black
+  Arrow Online is shared. It has the app and the Xbox files.
 - Your Rainbow Six 3: Black Arrow disc image (.iso).
-- A controller, if you play with one: pair it first in
-  System Settings > Bluetooth.
+- A controller, if you play with one: pair it first (Bluetooth settings).
 
 1. Download the full package. Google Drive says it "can't scan this file for
    viruses" because the file is large: click Download anyway.
 
-2. Unzip it (double-click it in Downloads). Safari often does this for you,
-   so you may already have a BlackArrowOnline folder in Downloads.
+2. Open Downloads in Finder. If you see a BlackArrowOnline folder, go on.
+   If you only see the .zip, double-click it once to unzip it. Leave the
+   folder in Downloads.
 
-3. Open Terminal (Applications > Utilities > Terminal).
+3. Open Terminal: press Cmd+Space, type Terminal, press Return.
 
-4. Type "bash " (with the space), drag setup.sh from the BlackArrowOnline
-   folder onto the Terminal window, and press Return. It looks like:
+4. Copy this line exactly, paste it into Terminal (Cmd+V), press Return:
 
-     bash /Users/you/Downloads/BlackArrowOnline/setup.sh
+     bash "$(ls -td ~/Downloads/BlackArrowOnline*/ | head -n 1)setup.sh"
 
    If macOS asks whether Terminal may access files in your Downloads folder,
-   click Allow (otherwise setup stops with "Operation not permitted").
+   click OK. Wait until it says Done. Nothing else to type.
 
-   Doing it this way means macOS does not block the app or ask you to
-   approve it in System Settings.
+   This installs the app in Applications, sets up the Xbox files and your
+   console, and tells macOS the app is safe to open. You will not need
+   "Open Anyway" in System Settings.
 
-5. A games folder opens. Put your Black Arrow .iso in it.
+5. A games folder opens. Drag your Black Arrow .iso into it.
 
-6. Start Black Arrow Online from Applications. If macOS asks whether the app
-   may accept incoming network connections or find devices on your local
-   network, allow it: XB Online needs both.
+6. Open Black Arrow Online from Applications (or Launchpad). If macOS asks
+   whether the app may accept incoming network connections or find devices
+   on your local network, click Allow: XB Online needs both.
 
 You can delete the downloaded zip and folder afterwards.
 
@@ -110,9 +115,10 @@ UPDATING
 New betas are on the releases page (look for "Mac Beta"):
 https://github.com/Rubyxm88/Black-Arrow-Online/releases
 
-Download BlackArrowOnline-mac-beta-*.zip, unzip it, and run its setup.sh the
-same way as above. Your console, Xbox Live sign-in, saves, settings and games
-are kept. (Updates will come by themselves in a later beta.)
+Download BlackArrowOnline-mac-beta-*.zip into Downloads, unzip it, and paste
+the same Terminal line as in step 4 above. Your console, Xbox Live sign-in,
+saves, settings and games are kept. (Updates will come by themselves in a
+later beta.)
 
 
 WHERE THINGS ARE
@@ -127,9 +133,10 @@ Your games:   ~/Library/Application Support/Black Arrow Online/games
 To open one in Finder: Go > Go to Folder..., paste the path, press Return.
 
 To start over with a new console (your current one, with its Xbox Live
-account and saves, is lost), run in Terminal the same way as setup:
+account and saves, is lost), paste this into Terminal instead of the line
+in step 4:
 
-  bash setup.sh --start-over
+  bash "$(ls -td ~/Downloads/BlackArrowOnline*/ | head -n 1)setup.sh" --start-over
 
 Already have an xemu console (xbox_hdd.qcow2 and eeprom.bin) you want to
 keep? Ask whoever shared the package before copying it in: it is not
@@ -139,11 +146,11 @@ handled by setup yet.
 REPORTING A PROBLEM
 -------------------
 
-The easy way: double-click "Black Arrow Report" on your Desktop (setup puts
-it there). If the game is stuck, do it while the game is still open. It
-makes a BlackArrow-report-....zip on your Desktop with the logs, your Mac's
-details and, if the game is open, what it is doing. Send that zip and a few
-words on what happened to whoever shared the package.
+The easy way: open Applications and double-click "Black Arrow Report" (setup
+puts it next to the app). If the game is stuck, do it while the game is
+still open. It makes a BlackArrow-report-....zip in Downloads with the logs,
+your Mac's details and, if the game is open, what it is doing. Send that
+zip and a few words on what happened to whoever shared the package.
 
 By hand instead, send:
 - Your Mac model, chip (Apple or Intel) and macOS version

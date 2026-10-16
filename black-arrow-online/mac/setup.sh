@@ -76,19 +76,21 @@ hdd_path = 'xbox_hdd.qcow2'
 EOF
 }
 
-# "Black Arrow Report" on the Desktop: double-clicked, it puts what is needed
-# to look into a problem in one zip on the Desktop. While the app is running
-# (or hanging) it also records what each part of the app is doing.
+# "Black Arrow Report" next to the app in Applications: double-clicked, it
+# puts what is needed to look into a problem in one zip in Downloads. While
+# the app is running (or hanging) it also records what each part of the app
+# is doing. Downloads, not the Desktop: Terminal already may use Downloads
+# (setup ran from there), so macOS does not ask again.
 report_tool() {
     cat <<'REPORT'
 #!/bin/bash
 # Black Arrow Online report. Double-click it, best while the problem is
-# happening (with the game still open): it makes a zip on the Desktop to send
+# happening (with the game still open): it makes a zip in Downloads to send
 # to whoever shared the package.
 data="$HOME/Library/Application Support/Black Arrow Online"
 name="Black Arrow Online.app"
 stamp="$(date +%Y-%m-%d_%H%M%S)"
-out="$HOME/Desktop/BlackArrow-report-$stamp"
+out="$HOME/Downloads/BlackArrow-report-$stamp"
 mkdir -p "$out" || exit 1
 echo "Making a Black Arrow Online report. This takes about 15 seconds..."
 
@@ -131,21 +133,20 @@ rmdir "$out/crash-reports" 2>/dev/null
 
 ditto -c -k --keepParent "$out" "$out.zip" && rm -rf "$out"
 echo
-echo "Done: BlackArrow-report-$stamp.zip is on your Desktop."
+echo "Done: BlackArrow-report-$stamp.zip is in your Downloads folder."
 echo "Send it to whoever shared the package. You can close this window."
 open -R "$out.zip"
 REPORT
 }
 
 install_report_tool() {
-    local tool="$HOME/Desktop/Black Arrow Report.command"
+    local tool="$1/Black Arrow Report.command"
     if report_tool > "$tool" 2>/dev/null; then
         chmod 755 "$tool"
         xattr -d com.apple.quarantine "$tool" 2>/dev/null || true
-        echo "Put \"Black Arrow Report\" on your Desktop."
     else
         rm -f "$tool"
-        echo "Could not put \"Black Arrow Report\" on your Desktop (skipped)."
+        echo "Could not add \"Black Arrow Report\" to $1 (skipped)."
     fi
 }
 
@@ -248,13 +249,18 @@ if [ ! -f "$system/xbox_hdd.qcow2" ]; then
     new_console
     first_time=true
 fi
-install_report_tool
+install_report_tool "$(dirname "$app")"
+# Only in the Applications folder the app is in, like the app
+other_tool="$(dirname "$other")/Black Arrow Report.command"
+if [ -f "$other_tool" ] && [ -w "$(dirname "$other")" ]; then
+    rm -f "$other_tool"
+fi
 
 echo
 echo "Done."
-echo "If something goes wrong, double-click \"Black Arrow Report\" on your"
-echo "Desktop (with the game still open if it is stuck) and send the zip it"
-echo "makes there."
+echo "If something goes wrong, open Applications and double-click"
+echo "\"Black Arrow Report\" (with the game still open if it is stuck). Send"
+echo "the BlackArrow-report zip it puts in Downloads."
 if $first_time; then
     echo "Put your Rainbow Six 3: Black Arrow disc image (.iso) in the games"
     echo "folder, which opens now, then start Black Arrow Online from Applications."
