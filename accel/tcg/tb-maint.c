@@ -950,8 +950,14 @@ static void do_tb_phys_invalidate(TranslationBlock *tb, bool rm_from_page_list)
         return;
     }
 
+    /*
+     * xemu: thrown away blocks are kept for reuse. A block that ends early at
+     * a device access is translated afresh each time (see io_insn_cap), so an
+     * identical one can already be kept here; then this one is just not kept.
+     * Loading a new game or dashboard throws away all code at once, which used
+     * to stop xemu on this.
+     */
     qht_insert(&tb_ctx.inv_htable, tb, h, &existing);
-    g_assert(existing == NULL);
 
     /* remove the TB from the page list */
     if (rm_from_page_list) {

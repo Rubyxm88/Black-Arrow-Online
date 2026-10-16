@@ -15,6 +15,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "qemu/atomic.h"
 #include "qemu/bswap.h"
 #include "qemu/timer.h"
@@ -136,6 +137,16 @@ static bool frames_seen;
 #define FREEZE_TEST_SECONDS 20
 static int freeze_test_s;
 static int64_t first_frame_us;
+
+/*
+ * XEMU_DISC_SWAP_TEST=S;disc1;disc2...: every S seconds load the next disc in
+ * the list (round and round), to try out title changes
+ */
+static int disc_swap_s;
+static char **disc_swap_paths;
+static int disc_swap_next;
+static int64_t disc_swap_due_us;
+void xemu_load_disc(const char *path, Error **errp);
 
 static RecentLine recent[RECENT_LINES];
 static int recent_next;
@@ -733,6 +744,33 @@ void xemu_diag_poll(void)
         if (test && atoi(test) > 0) {
             qatomic_set(&freeze_test_s, atoi(test));
         }
+        const char *swap = getenv("XEMU_DISC_SWAP_TEST");
+        if (swap && atoi(swap) > 0) {
+            char **parts = g_strsplit(swap, ";", -1);
+            if (g_strv_length(parts) > 1) {
+                disc_swap_s = atoi(parts[0]);
+                disc_swap_paths = g_strdupv(parts + 1);
+                disc_swap_due_us = g_get_monotonic_time() +
+                                   disc_swap_s * G_USEC_PER_SEC;
+            }
+            g_strfreev(parts);
+        }
+    }
+
+    if (disc_swap_paths && g_get_monotonic_time() >= disc_swap_due_us) {
+        const char *path = disc_swap_paths[disc_swap_next];
+        Error *err = NULL;
+        fprintf(stderr, "disc swap test: %s\n", path);
+        xemu_load_disc(path, &err);
+        if (err) {
+            fprintf(stderr, "disc swap test: %s\n", error_get_pretty(err));
+            error_free(err);
+        }
+        if (!disc_swap_paths[++disc_swap_next]) {
+            disc_swap_next = 0;
+        }
+        disc_swap_due_us = g_get_monotonic_time() +
+                           disc_swap_s * G_USEC_PER_SEC;
     }
 
     static bool ui_marked;
