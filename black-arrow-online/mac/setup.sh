@@ -4,6 +4,9 @@
 #   bash setup.sh                   install or update from this folder
 #   bash setup.sh <content zip>     also install a content pack zip
 #   bash setup.sh --start-over      new console (the old one is lost)
+#   bash setup.sh --update <pid>    what the app's Update now runs: waits
+#                                   for the app to close, updates it from
+#                                   this folder and opens it again
 #
 # Run it with "bash" from Terminal: macOS blocks apps and scripts downloaded
 # in a browser until they are approved in System Settings, and this clears
@@ -24,9 +27,35 @@ games="$data/games"
 name="Black Arrow Online.app"
 NL=$'\n'
 
+# Applications when this account may write there (admin accounts can),
+# otherwise the Applications folder in the home folder
+if [ -w /Applications ]; then
+    app="/Applications/$name"
+    other="$HOME/Applications/$name"
+else
+    app="$HOME/Applications/$name"
+    other="/Applications/$name"
+fi
+
+# The app's process when the app started this to update itself
+update_pid=""
+if [ "${1:-}" = "--update" ]; then
+    update_pid="${2:-}"
+    [ -n "$update_pid" ] || { echo "--update needs the app's process id" >&2; exit 1; }
+    set --
+fi
+
 fail() {
     echo
     echo "Setup stopped: $*" >&2
+    if [ -n "$update_pid" ]; then
+        # The app shows it on its next start; open the app that is there
+        trap - ERR
+        printf '%s\n' "$*" > "$system/update-failed.txt" 2>/dev/null || true
+        if [ -d "$app" ]; then
+            open "$app" || true
+        fi
+    fi
     exit 1
 }
 
@@ -113,7 +142,7 @@ fi
     system_profiler SPDisplaysDataType
 } > "$out/mac.txt" 2>&1
 
-for file in xemu.log version.txt xemu.toml; do
+for file in xemu.log version.txt xemu.toml update.log; do
     if [ -f "$data/system/$file" ]; then
         cp "$data/system/$file" "$out/"
     fi
@@ -201,6 +230,24 @@ if [ "${1:-}" = "--start-over" ]; then
     exit 0
 fi
 
+if [ -n "$update_pid" ]; then
+    # No Terminal window: what happens goes to update.log
+    mkdir -p "$system"
+    if [ -f "$system/update.log" ]; then
+        tail -n 300 "$system/update.log" > "$system/update.log.tmp" &&
+            mv "$system/update.log.tmp" "$system/update.log"
+    fi
+    exec >> "$system/update.log" 2>&1
+    echo "=== $(date): updating from $here"
+    trap 'fail "step at line $LINENO of setup.sh failed (see update.log)."' ERR
+    waited=0
+    while kill -0 "$update_pid" 2>/dev/null; do
+        [ "$waited" -lt 120 ] || fail "Black Arrow Online did not close."
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+fi
+
 [ -d "$here/$name" ] ||
     fail "\"$name\" is not next to setup.sh. Unzip the whole download first."
 running && fail "quit Black Arrow Online first."
@@ -216,21 +263,22 @@ Get the full Mac package from where Black Arrow Online is shared, unzip it and
 run its setup.sh instead."
 fi
 
-# Applications when this account may write there (admin accounts can),
-# otherwise the Applications folder in the home folder
-if [ -w /Applications ]; then
-    app="/Applications/$name"
-    other="$HOME/Applications/$name"
-else
-    app="$HOME/Applications/$name"
-    other="/Applications/$name"
-fi
 echo "Installing the app in $(dirname "$app")..."
 mkdir -p "$(dirname "$app")"
-rm -rf "$app"
-ditto "$here/$name" "$app"
+# Copied next to the old app first, then swapped, so a failed copy leaves the
+# old app working
+rm -rf "$app.new" "$app.old"
+ditto "$here/$name" "$app.new" || fail "could not copy the app to $(dirname "$app")."
 # Downloaded in a browser, so macOS would block it until approved
-xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
+xattr -dr com.apple.quarantine "$app.new" 2>/dev/null || true
+if [ -d "$app" ]; then
+    mv "$app" "$app.old" || fail "could not replace the app in $(dirname "$app")."
+fi
+if ! mv "$app.new" "$app"; then
+    mv "$app.old" "$app" 2>/dev/null || true
+    fail "could not replace the app in $(dirname "$app")."
+fi
+rm -rf "$app.old"
 # An older copy in the other Applications folder would only confuse
 if [ -d "$other" ] && [ -w "$(dirname "$other")" ]; then
     rm -rf "$other"
@@ -254,6 +302,20 @@ install_report_tool "$(dirname "$app")"
 other_tool="$(dirname "$other")/Black Arrow Report.command"
 if [ -f "$other_tool" ] && [ -w "$(dirname "$other")" ]; then
     rm -f "$other_tool"
+fi
+
+if [ -n "$update_pid" ]; then
+    # The app says "Updated to build N" once, then this folder (unpacked by
+    # the app in a temporary folder) goes
+    build="$({ grep -m 1 '^build=' "$here/version.txt" 2>/dev/null || true; } | cut -d= -f2-)"
+    printf '%s\n' "${build:-0}" > "$system/update-done.txt"
+    echo "Done: build ${build:-?} installed. Opening it."
+    trap - ERR
+    open "$app" || echo "Could not open $app"
+    case "$(dirname "$here")" in
+        */BlackArrowOnline-update-*) rm -rf "$(dirname "$here")" ;;
+    esac
+    exit 0
 fi
 
 echo

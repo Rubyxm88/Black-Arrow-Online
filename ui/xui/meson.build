@@ -29,3 +29,7 @@ xemu_ss.add(files(
 if host_os == 'windows'
   xemu_ss.add(files('update.cc', 'win32-dxgi-present.cc'))
 endif
+
+if host_os == 'darwin'
+  xemu_ss.add(files('mac-update.cc'))
+endif

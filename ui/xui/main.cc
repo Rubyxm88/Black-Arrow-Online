@@ -58,6 +58,9 @@
 #if defined(_WIN32)
 #include "update.hh"
 #endif
+#if defined(__APPLE__)
+#include "mac-update.hh"
+#endif
 
 bool g_screenshot_pending;
 const char *g_snapshot_pending_load_name;
@@ -355,6 +358,9 @@ void xemu_hud_update(void)
     if (!first_boot_window.is_open) DrawRecordingBadge();
     if (!first_boot_window.is_open) xbcheck_window.Draw();
     if (!first_boot_window.is_open) shader_cache_window.Draw();
+#if defined(__APPLE__)
+    if (!first_boot_window.is_open) mac_update_window.Draw();
+#endif
     if (!first_boot_window.is_open) DrawFreezeToast();
     if (!first_boot_window.is_open) DrawPerfOverlay();
     g_scene_mgr.Draw();

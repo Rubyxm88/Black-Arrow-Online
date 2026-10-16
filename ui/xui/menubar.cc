@@ -27,6 +27,9 @@
 #include "actions.hh"
 #include "compat.hh"
 #include "update.hh"
+#if defined(__APPLE__)
+#include "mac-update.hh"
+#endif
 #include "xbcheck.hh"
 #include "shader-cache.hh"
 #include "viewport-manager.hh"
@@ -732,6 +735,10 @@ void ShowMainMenu()
                             &compatibility_reporter_window.is_open);
 #if defined(_WIN32)
             ImGui::MenuItem("Check for Updates...", NULL, &update_window.is_open);
+#elif defined(__APPLE__)
+            if (ImGui::MenuItem("Check for Updates...")) {
+                mac_update_window.Open();
+            }
 #endif
 
             ImGui::Separator();

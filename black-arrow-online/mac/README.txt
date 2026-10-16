@@ -1,9 +1,8 @@
-BLACK ARROW ONLINE FOR MAC - BETA
-=================================
+BLACK ARROW ONLINE FOR MAC
+=========================
 
-Rainbow Six 3: Black Arrow on XB Online, on a Mac.
-This is a beta and is still being tested on Macs: expect rough edges, and
-please report what you find (see REPORTING A PROBLEM).
+Rainbow Six 3: Black Arrow on XB Online, on a Mac. The Mac version is newer
+than the Windows one: please report what you find (see REPORTING A PROBLEM).
 
 
 FIRST INSTALL
@@ -112,13 +111,17 @@ renderer is always OpenGL.
 UPDATING
 --------
 
-New betas are on the releases page (look for "Mac Beta"):
-https://github.com/Rubyxm88/Black-Arrow-Online/releases
+Updates come by themselves. When a new build is out, a small panel in the
+top left corner says so a few seconds after the app starts. Click Update
+now: the app downloads it, closes, and opens again on the new build within
+about a minute. Your console, Xbox Live sign-in, saves, settings and games
+are kept. Help > Check for Updates looks right away.
 
-Download BlackArrowOnline-mac-beta-*.zip into Downloads, unzip it, and paste
-the same Terminal line as in step 4 above. Your console, Xbox Live sign-in,
-saves, settings and games are kept. (Updates will come by themselves in a
-later beta.)
+If an update cannot be installed, the app says why the next time it opens.
+To update by hand instead, download BlackArrowOnline-mac-update.zip from the
+newest build on the releases page into Downloads, unzip it, and paste the
+same Terminal line as in step 4 above:
+https://github.com/Rubyxm88/Black-Arrow-Online/releases
 
 
 WHERE THINGS ARE
