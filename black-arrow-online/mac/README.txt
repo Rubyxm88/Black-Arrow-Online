@@ -139,7 +139,13 @@ handled by setup yet.
 REPORTING A PROBLEM
 -------------------
 
-Send to whoever shared the package:
+The easy way: double-click "Black Arrow Report" on your Desktop (setup puts
+it there). If the game is stuck, do it while the game is still open. It
+makes a BlackArrow-report-....zip on your Desktop with the logs, your Mac's
+details and, if the game is open, what it is doing. Send that zip and a few
+words on what happened to whoever shared the package.
+
+By hand instead, send:
 - Your Mac model, chip (Apple or Intel) and macOS version
   (Apple menu > About This Mac).
 - What happened, and what you expected.

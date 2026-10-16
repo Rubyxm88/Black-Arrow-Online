@@ -822,6 +822,19 @@ static void report_stats(void)
 }
 #endif
 
+/*
+ * The first frame writes each step to xemu.log, so a start that hangs before
+ * anything shows on screen can be found from the log.
+ */
+static bool first_frame_done;
+
+static void first_frame_step(const char *step)
+{
+    if (!first_frame_done) {
+        fprintf(stderr, "startup: first frame: %s\n", step);
+    }
+}
+
 /**
  * Renders the main interface. Usually called from the main thread,
  * but may sometimes be called from another thread.
@@ -833,7 +846,9 @@ static void gl_render_frame(struct xemu_console *scon)
         return;
     }
 
+    first_frame_step("start");
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    first_frame_step("window ready");
 
     bool flip_required = false;
     bool release_surface_texture = false;
@@ -848,7 +863,9 @@ static void gl_render_frame(struct xemu_console *scon)
      * the guest code isn't using HW accelerated rendering, but just blitting
      * to the framebuffer, fall back to the VGA path.
      */
+    first_frame_step("getting the console's picture");
     GLuint tex = nv2a_get_framebuffer_surface();
+    first_frame_step(tex ? "got the console's picture" : "no console picture yet");
 
     assert(glGetError() == GL_NO_ERROR);
 
@@ -878,11 +895,13 @@ static void gl_render_frame(struct xemu_console *scon)
      * lock and perform rendering, but release before swap to avoid
      * possible lengthy blocking (for vsync).
      */
+    first_frame_step("menus");
     xemu_main_loop_lock();
     xemu_hud_update();
     xemu_main_loop_unlock();
 
     xemu_hud_render();
+    first_frame_step("waiting for the graphics card");
     glFinish();
 
     if (release_surface_texture) {
@@ -907,9 +926,12 @@ static void gl_render_frame(struct xemu_console *scon)
         SDL_GL_SwapWindow(scon->real_window);
     }
 #else
+    first_frame_step("showing it");
     SDL_GL_SwapWindow(scon->real_window);
 #endif
     assert(glGetError() == GL_NO_ERROR);
+    first_frame_step("shown");
+    first_frame_done = true;
 
     qatomic_set(&rendering, false);
 
@@ -1435,7 +1457,9 @@ int main(int argc, char **argv)
     qemu_sem_init(&display_shutdown_sem, 0);
     qemu_thread_create(&thread, "qemu_main", qemu_main,
                        NULL, QEMU_THREAD_JOINABLE);
+    fprintf(stderr, "startup: waiting for the emulator to set up\n");
     qemu_sem_wait(&display_init_sem);
+    fprintf(stderr, "startup: emulator set up\n");
 
     gui_grab = 0;
     if (gui_fullscreen) {
@@ -1453,6 +1477,7 @@ int main(int argc, char **argv)
     xemu_main_loop_lock();
     xemu_input_init();
     xemu_main_loop_unlock();
+    fprintf(stderr, "startup: controllers ready\n");
 
     struct xemu_console *scon = &scon_list[0];
     while (!qatomic_read(&qemu_exiting)) {

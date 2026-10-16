@@ -76,6 +76,79 @@ hdd_path = 'xbox_hdd.qcow2'
 EOF
 }
 
+# "Black Arrow Report" on the Desktop: double-clicked, it puts what is needed
+# to look into a problem in one zip on the Desktop. While the app is running
+# (or hanging) it also records what each part of the app is doing.
+report_tool() {
+    cat <<'REPORT'
+#!/bin/bash
+# Black Arrow Online report. Double-click it, best while the problem is
+# happening (with the game still open): it makes a zip on the Desktop to send
+# to whoever shared the package.
+data="$HOME/Library/Application Support/Black Arrow Online"
+name="Black Arrow Online.app"
+stamp="$(date +%Y-%m-%d_%H%M%S)"
+out="$HOME/Desktop/BlackArrow-report-$stamp"
+mkdir -p "$out" || exit 1
+echo "Making a Black Arrow Online report. This takes about 15 seconds..."
+
+pid="$(pgrep -f "$name/Contents/MacOS/" | head -n 1)"
+if [ -n "$pid" ]; then
+    echo "Black Arrow Online is open: recording what it is doing (10 seconds)..."
+    /usr/bin/sample "$pid" 10 -file "$out/sample.txt" >/dev/null 2>&1 ||
+        echo "Could not record it." > "$out/sample.txt"
+else
+    echo "Black Arrow Online was not open." > "$out/not-open.txt"
+fi
+
+{
+    sw_vers
+    echo
+    echo "Model: $(sysctl -n hw.model)"
+    echo "CPU: $(sysctl -n machdep.cpu.brand_string)"
+    echo "Memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+    echo
+    system_profiler SPDisplaysDataType
+} > "$out/mac.txt" 2>&1
+
+for file in xemu.log version.txt xemu.toml; do
+    if [ -f "$data/system/$file" ]; then
+        cp "$data/system/$file" "$out/"
+    fi
+done
+if [ -d "$data/system/logs" ]; then
+    mkdir -p "$out/logs"
+    ls -t "$data/system/logs" | head -n 10 | while IFS= read -r file; do
+        cp "$data/system/logs/$file" "$out/logs/" 2>/dev/null
+    done
+fi
+# macOS's own crash and hang reports for the app from the last week
+mkdir -p "$out/crash-reports"
+find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
+    \( -iname 'xemu*' -o -iname 'Black Arrow*' \) -mtime -7 \
+    -exec cp {} "$out/crash-reports/" \; 2>/dev/null
+rmdir "$out/crash-reports" 2>/dev/null
+
+ditto -c -k --keepParent "$out" "$out.zip" && rm -rf "$out"
+echo
+echo "Done: BlackArrow-report-$stamp.zip is on your Desktop."
+echo "Send it to whoever shared the package. You can close this window."
+open -R "$out.zip"
+REPORT
+}
+
+install_report_tool() {
+    local tool="$HOME/Desktop/Black Arrow Report.command"
+    if report_tool > "$tool" 2>/dev/null; then
+        chmod 755 "$tool"
+        xattr -d com.apple.quarantine "$tool" 2>/dev/null || true
+        echo "Put \"Black Arrow Report\" on your Desktop."
+    else
+        rm -f "$tool"
+        echo "Could not put \"Black Arrow Report\" on your Desktop (skipped)."
+    fi
+}
+
 # A newly set up console: clean hard disk, new EEPROM (made on first start),
 # and the first start opens the XBL Dashboard again
 new_console() {
@@ -175,9 +248,13 @@ if [ ! -f "$system/xbox_hdd.qcow2" ]; then
     new_console
     first_time=true
 fi
+install_report_tool
 
 echo
 echo "Done."
+echo "If something goes wrong, double-click \"Black Arrow Report\" on your"
+echo "Desktop (with the game still open if it is stuck) and send the zip it"
+echo "makes there."
 if $first_time; then
     echo "Put your Rainbow Six 3: Black Arrow disc image (.iso) in the games"
     echo "folder, which opens now, then start Black Arrow Online from Applications."
