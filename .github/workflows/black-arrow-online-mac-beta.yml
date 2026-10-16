@@ -133,13 +133,21 @@ jobs:
             2>&1 | tee full-build.log
         status=${PIPESTATUS[0]}
         if [ "$status" != 0 ]; then
-          # Errors first, then how the log ends, as one annotation
-          { grep -E -i -B2 -A3 '(error|fatal|undefined symbol|not found)' full-build.log |
-                grep -v -i 'warning' | head -n 60
+          # Compiler and linker errors with the lines after them, then the
+          # last lines of the log, in annotations of under 4096 characters
+          # (GitHub's limit), at most 8
+          { grep -E -A4 '(^FAILED: | error: |fatal error|^Undefined symbols|^ld: |^ERROR|^make: \*\*\*)' \
+                full-build.log | grep -v ' warning: ' | head -n 120
             echo "----- last lines -----"
-            tail -n 25 full-build.log
-          } | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' > annotation.txt
-          echo "::error title=Mac build failed (${{ matrix.arch }})::$(cat annotation.txt)"
+            tail -n 15 full-build.log
+          } | cut -c 1-300 | sed 's/%/%25/g' | awk '
+              { line = $0 "%0A" }
+              length(chunk) + length(line) > 3900 { print chunk; chunk = "" }
+              { chunk = chunk line }
+              END { if (chunk != "") print chunk }' | head -n 8 |
+          while IFS= read -r chunk; do
+            echo "::error title=Mac build failed (${{ matrix.arch }})::$chunk"
+          done
         fi
         exit "$status"
     - name: Package
