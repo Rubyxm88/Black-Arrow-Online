@@ -841,6 +841,17 @@ static void first_frame_step(const char *step)
  */
 static void gl_render_frame(struct xemu_console *scon)
 {
+    /*
+     * Drawing takes the main loop lock. A thread that already holds it would
+     * wait for itself forever: on macOS 11, SDL's controller search, which
+     * runs under the lock at startup, delivers the window's first events,
+     * and the event watch draws from there. Skip such a frame; the main loop
+     * draws the next one.
+     */
+    if (bql_locked()) {
+        return;
+    }
+
     static bool rendering;
     if (qatomic_xchg(&rendering, true) || qatomic_read(&qemu_exiting)) {
         return;
