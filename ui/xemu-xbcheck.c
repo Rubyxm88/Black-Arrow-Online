@@ -16,6 +16,8 @@
 #include "qemu/bswap.h"
 #include "qemu/sockets.h"
 #include "qemu/thread.h"
+#include "qemu/main-loop.h"
+#include "block/block.h"
 #include "xemu-settings.h"
 #include "xemu-net.h"
 #include "xemu-diag.h"
@@ -673,6 +675,17 @@ void xemu_xbcheck_start(void)
     dns_item = -1;
     dns_detail[0] = '\0';
     qemu_mutex_unlock(&lock);
+
+    /*
+     * The game update and account checks read the hard disk image file.
+     * While the console runs, QEMU keeps part of the image's qcow2 index in
+     * memory, so a game update installed since the start is not reachable in
+     * the file yet. Write it out first. That needs the main loop lock, which
+     * the menus hold when they start the check.
+     */
+    if (bql_locked()) {
+        bdrv_flush_all();
+    }
 
     qemu_thread_create(&thread, "xbcheck", check_thread, NULL,
                        QEMU_THREAD_DETACHED);
