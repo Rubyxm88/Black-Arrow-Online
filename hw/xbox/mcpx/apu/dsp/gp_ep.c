@@ -20,6 +20,51 @@
  */
 
 #include "hw/xbox/mcpx/apu/apu_int.h"
+#include "ui/xemu-diag.h"
+
+/*
+ * xemu: a game can point a sound chip transfer at a buffer that is not set
+ * up. Rainbow Six 3: Black Arrow closed xemu when signing in to Xbox Live
+ * with Accurate sound, just after the DSP first read the voice input, likely
+ * on one of these. Such a transfer is now skipped (reads give silence) and
+ * noted once in xemu.log and the diagnostics log.
+ */
+static void G_GNUC_PRINTF(1, 2) dsp_skip_note(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    char *text = g_strdup_vprintf(fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "sound chip: %s\n", text);
+    xemu_diag_event("sound chip %s", text);
+    g_free(text);
+}
+
+#define DSP_SKIP_NOTE_ONCE(...)         \
+    do {                                \
+        static bool noted_;             \
+        if (!noted_) {                  \
+            noted_ = true;              \
+            dsp_skip_note(__VA_ARGS__); \
+        }                               \
+    } while (0)
+
+/*
+ * xemu: with Accurate sound a DSP runs until its program ends the frame. A
+ * program that never does (waiting on something that is not emulated) used
+ * to freeze xemu; give up on the frame after this many cycles instead.
+ */
+#define DSP_FRAME_MAX_CYCLES 1000000
+
+static bool dsp_frame_too_long(DSPState *dsp, const char *name)
+{
+    if (dsp_get_cycle_count(dsp) < DSP_FRAME_MAX_CYCLES) {
+        return false;
+    }
+    DSP_SKIP_NOTE_ONCE("%s DSP did not end its frame in %u cycles; frame cut "
+                       "short", name, dsp_get_cycle_count(dsp));
+    return true;
+}
 
 static const int16_t ep_silence[256][2] = { 0 };
 
@@ -41,10 +86,25 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
         last_known_dsp_pref = g_config.audio.use_dsp;
     }
 
-    if (last_known_jit_pref != (int)g_config.audio.use_dsp_jit) {
-        dsp_set_engine(d->gp.dsp, g_config.audio.use_dsp_jit);
-        dsp_set_engine(d->ep.dsp, g_config.audio.use_dsp_jit);
-        last_known_jit_pref = g_config.audio.use_dsp_jit;
+    /*
+     * xemu: the DSP JIT runs Rainbow Six 3: Black Arrow's sound program
+     * wrongly: at Xbox Live sign-in it reads the voice input and then gives
+     * the DMA junk, and sign-in fails (the interpreter signs in fine, on Fast
+     * and Accurate). Build 12's Accurate setting turned the JIT on and it
+     * stayed on after going back to Fast, so the saved setting is not used;
+     * XEMU_DSP_JIT=1 turns it on for testing.
+     */
+    static int jit_env = -1;
+    if (jit_env < 0) {
+        const char *env = getenv("XEMU_DSP_JIT");
+        jit_env = env && env[0] == '1';
+    }
+    bool use_jit = jit_env && g_config.audio.use_dsp_jit;
+
+    if (last_known_jit_pref != (int)use_jit) {
+        dsp_set_engine(d->gp.dsp, use_jit);
+        dsp_set_engine(d->ep.dsp, use_jit);
+        last_known_jit_pref = use_jit;
     }
 }
 
@@ -57,7 +117,11 @@ static void scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
     unsigned int bytes_to_copy = TARGET_PAGE_SIZE - offset_in_page;
 
     while (len > 0) {
-        assert(page_entry <= max_sge);
+        if (page_entry > max_sge) {
+            DSP_SKIP_NOTE_ONCE("buffer page %u past its last page %u; "
+                               "transfer skipped", page_entry, max_sge);
+            break;
+        }
 
         uint32_t prd_address = ldl_le_phys(&address_space_memory,
                                            sge_base + page_entry * 8 + 0);
@@ -70,7 +134,11 @@ static void scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
             bytes_to_copy = len;
         }
 
-        assert(paddr + bytes_to_copy < memory_region_size(d->ram));
+        if (paddr + bytes_to_copy >= memory_region_size(d->ram)) {
+            DSP_SKIP_NOTE_ONCE("buffer page at 0x%" HWADDR_PRIx " is outside "
+                               "RAM; transfer skipped", paddr);
+            break;
+        }
 
         if (dir) {
             memcpy(&d->ram_ptr[paddr], ptr, bytes_to_copy);
@@ -86,6 +154,10 @@ static void scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
         page_entry += 1;
         bytes_to_copy = TARGET_PAGE_SIZE;
         offset_in_page = 0;
+    }
+
+    if (len > 0 && !dir) {
+        memset(ptr, 0, len);
     }
 }
 
@@ -123,7 +195,6 @@ static uint32_t circular_scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
                 "length 0x%x / 0x%lx bytes\n",
                 dir ? "write" : "read", base, end, cur, bytes_to_copy, len);
 
-        assert((cur >= base) && ((cur + bytes_to_copy) <= end));
         scatter_gather_rw(d, sge_base, max_sge, ptr, cur, bytes_to_copy, dir);
 
         ptr += bytes_to_copy;
@@ -132,7 +203,6 @@ static uint32_t circular_scatter_gather_rw(MCPXAPUState *d, hwaddr sge_base,
         /* After the first iteration we might have to wrap */
         cur += bytes_to_copy;
         if (cur >= end) {
-            assert(cur == end);
             cur = base;
         }
     }
@@ -169,8 +239,23 @@ static void gp_fifo_rw(void *opaque, uint8_t *ptr, unsigned int index,
     //     dir ? "writing to" : "reading from", index,
     //     base, end, cur, len);
 
+    if (end <= base) {
+        DSP_SKIP_NOTE_ONCE("GP %s buffer %u is not set up (start 0x%x, end "
+                           "0x%x); transfer skipped",
+                           dir ? "output" : "input", index, base, end);
+        if (!dir) {
+            memset(ptr, 0, len);
+        }
+        return;
+    }
+
     /* DSP hangs if current >= end; but forces current >= base */
-    assert(cur < end);
+    if (cur >= end) {
+        DSP_SKIP_NOTE_ONCE("GP %s buffer %u position 0x%x is past its end "
+                           "0x%x; started over",
+                           dir ? "output" : "input", index, cur, end);
+        cur = base;
+    }
     if (cur < base) {
         cur = base;
     }
@@ -231,6 +316,16 @@ static void ep_fifo_rw(void *opaque, uint8_t *ptr, unsigned int index,
             assert(len <= sizeof(ep_silence));
             ptr = (uint8_t*)ep_silence;
         }
+    }
+
+    if (end <= base) {
+        DSP_SKIP_NOTE_ONCE("EP %s buffer %u is not set up (start 0x%x, end "
+                           "0x%x); transfer skipped",
+                           dir ? "output" : "input", index, base, end);
+        if (!dir) {
+            memset(ptr, 0, len);
+        }
+        return;
     }
 
     /* DSP hangs if current >= end; but forces current >= base */
@@ -462,7 +557,8 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
         dsp_set_cycle_count(d->gp.dsp, 0);
         do {
             dsp_run(d->gp.dsp, 1000);
-        } while (!dsp_get_halt_requested(d->gp.dsp) && d->gp.realtime);
+        } while (!dsp_get_halt_requested(d->gp.dsp) && d->gp.realtime &&
+                 !dsp_frame_too_long(d->gp.dsp, "GP"));
         g_dbg.gp.cycles = dsp_get_cycle_count(d->gp.dsp);
 
         if ((d->monitor.point == MCPX_APU_DEBUG_MON_GP) ||
@@ -487,7 +583,8 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
             dsp_set_cycle_count(d->ep.dsp, 0);
             do {
                 dsp_run(d->ep.dsp, 1000);
-            } while (!dsp_get_halt_requested(d->ep.dsp) && d->ep.realtime);
+            } while (!dsp_get_halt_requested(d->ep.dsp) && d->ep.realtime &&
+                     !dsp_frame_too_long(d->ep.dsp, "EP"));
             g_dbg.ep.cycles = dsp_get_cycle_count(d->ep.dsp);
         }
     }

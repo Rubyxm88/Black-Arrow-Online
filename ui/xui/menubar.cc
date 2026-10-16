@@ -637,10 +637,6 @@ void ShowMainMenu()
                          "real console. Uses several times more CPU for sound "
                          "and lowered the frame rate in our tests.");
             ImGui::PopItemFlag();
-            if (g_config.audio.use_dsp && !g_config.audio.use_dsp_jit) {
-                ImGui::TextDisabled("  Running without the faster sound "
-                                    "engine: choose Accurate again");
-            }
 
             MenuHeader("Diagnostics");
             if (xemu_diag_active()) {

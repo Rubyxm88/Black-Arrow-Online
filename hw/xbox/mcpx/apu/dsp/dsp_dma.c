@@ -101,6 +101,44 @@ static void scratch_circular_copy(
     }
 }
 
+/*
+ * xemu: Rainbow Six 3: Black Arrow, with Accurate sound, gives the DMA a
+ * transfer just after it first reads the voice input that this code cannot
+ * do (control 0x8a2801: unknown bit 13 set, DSP offset 0x93377a), and
+ * stopping on it closed xemu. A transfer like that is skipped instead and
+ * the first one of each kind is noted in xemu.log and the diagnostics log.
+ */
+static void G_GNUC_PRINTF(2, 3) dsp_dma_skip_note(uint32_t control,
+                                                  const char *fmt, ...)
+{
+    static const char *noted[8];
+    for (int i = 0; i < ARRAY_SIZE(noted); i++) {
+        if (noted[i] == fmt) {
+            return;
+        }
+        if (!noted[i]) {
+            noted[i] = fmt;
+            break;
+        }
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    char *why = g_strdup_vprintf(fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "sound chip: DMA transfer skipped, %s (control 0x%x)\n",
+            why, control);
+    xemu_diag_event("sound chip DMA transfer skipped, %s (control 0x%x)",
+                    why, control);
+    g_free(why);
+}
+
+#define DMA_SKIP(...)                             \
+    {                                             \
+        dsp_dma_skip_note(control, __VA_ARGS__);  \
+        continue;                                 \
+    }
+
 static void dsp_dma_run(DSPDMAState *s)
 {
     if (!(s->control & DMA_CONTROL_RUNNING)
@@ -108,25 +146,36 @@ static void dsp_dma_run(DSPDMAState *s)
         return;
     }
 
+    unsigned int entries = 0;
+
     while (!(s->next_block & NODE_POINTER_EOL)) {
         uint32_t addr = s->next_block & NODE_POINTER_VAL;
+
+        /* A list this long loops back on itself; end it */
+        if (++entries > 1024) {
+            uint32_t control = 0;
+            s->next_block = NODE_POINTER_EOL;
+            s->eol = true;
+            DMA_SKIP("list loops back at 0x%x", addr);
+        }
         uint32_t block_addr = 0;
         int block_space = DSP_SPACE_X;
 
-        if (addr < 0x1800) {
-            assert(addr+6 < 0x1800);
+        if (addr < 0x1800 && addr+6 < 0x1800) {
             block_space = DSP_SPACE_X;
             block_addr = addr;
-        } else if (addr >= 0x1800 && addr < 0x2000) { //?
-            assert(addr+6 < 0x2000);
+        } else if (addr >= 0x1800 && addr+6 < 0x2000) { //?
             block_space = DSP_SPACE_Y;
             block_addr = addr - 0x1800;
-        } else if (addr >= 0x2800 && addr < 0x3800) { //?
-            assert(addr+6 < 0x3800);
+        } else if (addr >= 0x2800 && addr+6 < 0x3800) { //?
             block_space = DSP_SPACE_P;
             block_addr = addr - 0x2800;
         } else {
-            assert(!"Dsp dma space address out of range");
+            /* The next block can't be read, so the list ends here */
+            uint32_t control = 0;
+            s->next_block = NODE_POINTER_EOL;
+            s->eol = true;
+            DMA_SKIP("list entry at 0x%x is out of range", addr);
         }
 
         uint32_t next_block = s->mem_read(s->mem_opaque, block_space, block_addr);
@@ -155,8 +204,9 @@ static void dsp_dma_run(DSPDMAState *s)
         // uint32_t dsp_step                = (control >> 14) & 0x3FF; // FIXME
 
         /* Check for unhandled control settings */
-        assert(unk2 == 0x0);
-        assert(unk13 == false);
+        if (unk2 != 0x0 || unk13) {
+            DMA_SKIP("unknown control bits");
+        }
 
         /* Decode count for interleaved mode */
         uint32_t channel_count = (count & 0xF) + 1;
@@ -181,30 +231,32 @@ static void dsp_dma_run(DSPDMAState *s)
             item_mask = 0x00ffffff;
             break;
         default:
-            fprintf(stderr, "Unknown dsp dma format: 0x%x\n", format);
-            assert(!"Unknown dsp dma format");
-            break;
+            DMA_SKIP("unknown format 0x%x", format);
         }
 
         size_t scratch_addr = scratch_base + scratch_offset;
         uint32_t mem_address = 0;
         int mem_space = DSP_SPACE_X;
 
-        if (dsp_offset < 0x1800) {
-            assert(dsp_offset+count < 0x1800);
+        if (dsp_offset < 0x1800 && dsp_offset+count < 0x1800) {
             mem_space = DSP_SPACE_X;
             mem_address = dsp_offset;
-        } else if (dsp_offset >= 0x1800 && dsp_offset < 0x2000) { //?
-            assert(dsp_offset+count < 0x2000);
+        } else if (dsp_offset >= 0x1800 && dsp_offset+count < 0x2000) { //?
             mem_space = DSP_SPACE_Y;
             mem_address = dsp_offset - 0x1800;
-        } else if (dsp_offset >= 0x2800 && dsp_offset < 0x3800) { //?
-            assert(dsp_offset+count < 0x3800);
+        } else if (dsp_offset >= 0x2800 && dsp_offset+count < 0x3800) { //?
             mem_space = DSP_SPACE_P;
             mem_address = dsp_offset - 0x2800;
         } else {
-            fprintf(stderr, "Attempt to access %08x\n", dsp_offset);
-            assert(!"Dsp dma offset out of range");
+            DMA_SKIP("DSP offset 0x%x count 0x%x out of range", dsp_offset,
+                     count);
+        }
+
+        if (!direction && dsp_interleave) {
+            DMA_SKIP("interleaved read");
+        }
+        if (direction && buf_id > 0x3 && buf_id < 0xe) {
+            DMA_SKIP("unknown buffer 0x%x", buf_id);
         }
 
         size_t transfer_size = count * item_size;
@@ -245,6 +297,9 @@ static void dsp_dma_run(DSPDMAState *s)
                 for (int i = 0; i < count; i++) {
                     uint32_t v = s->mem_read(s->mem_opaque, mem_space, mem_address+i);
                     switch(item_size) {
+                    case 1:
+                        *(uint8_t*)(scratch_buf + i) = v >> 16;
+                        break;
                     case 2:
                         *(uint16_t*)(scratch_buf + i*2) = v >> 8;
                         break;
@@ -279,8 +334,6 @@ static void dsp_dma_run(DSPDMAState *s)
                 break;
             }
         } else {
-            assert(!dsp_interleave);
-
             if (buf_id == 0xe) {
                 scratch_circular_copy(s, scratch_base, &scratch_offset, scratch_size, transfer_size, scratch_buf, 0);
             } else if (buf_id == 0xf) {
@@ -304,6 +357,9 @@ static void dsp_dma_run(DSPDMAState *s)
             for (int i = 0; i < count; i++) {
                 uint32_t v;
                 switch(item_size) {
+                case 1:
+                    v = *(uint8_t*)(scratch_buf + i) << 16;
+                    break;
                 case 2:
                     v = *(uint16_t*)(scratch_buf + i*2) << 8;
                     break;
