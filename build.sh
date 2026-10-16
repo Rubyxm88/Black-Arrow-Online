@@ -204,7 +204,7 @@ case "$platform" in # Adjust compilation options based on platform
         if [ "$target_arch" == "arm64" ]; then
             macos_min_ver=14.0
         elif [ "$target_arch" == "x86_64" ]; then
-            macos_min_ver=12.7.5
+            macos_min_ver=11.0
         else
             echo "Unsupported arch $target_arch"
             exit 1
