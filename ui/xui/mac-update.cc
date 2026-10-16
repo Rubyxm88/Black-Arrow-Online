@@ -201,6 +201,76 @@ gpointer MacUpdateWindow::CheckThread(gpointer opaque)
     return NULL;
 }
 
+bool MacUpdateWindow::InstallBuild(int build)
+{
+    g_mutex_lock(&m_lock);
+    if (m_state == CHECKING || m_state == DOWNLOADING || m_state == READY) {
+        g_mutex_unlock(&m_lock);
+        return false;
+    }
+    m_state = CHECKING;
+    m_build = build;
+    m_error.clear();
+    g_mutex_unlock(&m_lock);
+    m_quiet = false;
+    m_later = false;
+    is_open = true;
+    g_thread_unref(g_thread_new("mac-update-build", BuildInfoThread, this));
+    return true;
+}
+
+// mac-version.txt of the chosen build, for its SHA-256, then the download
+gpointer MacUpdateWindow::BuildInfoThread(gpointer opaque)
+{
+    MacUpdateWindow *self = (MacUpdateWindow *)opaque;
+    g_mutex_lock(&self->m_lock);
+    int build = self->m_build;
+    g_mutex_unlock(&self->m_lock);
+
+    GByteArray *data = g_byte_array_new();
+    Error *err = NULL;
+    char *url = g_strdup_printf(RELEASES "/download/build-%d/mac-version.txt",
+                                build);
+    int code = http_get(url, data, NULL, &err);
+    g_free(url);
+    std::string text((const char *)data->data, data->len);
+    g_byte_array_free(data, TRUE);
+    std::string sha256 = Field(text, "sha256");
+
+    g_mutex_lock(&self->m_lock);
+    self->m_local_build = LocalBuild();
+    bool ok = false;
+    if (code == 404) {
+        self->m_state = CHECK_FAILED;
+        self->m_error = "Build " + std::to_string(build) +
+                        " has no Mac version.";
+    } else if (code != 200) {
+        self->m_state = CHECK_FAILED;
+        self->m_error = err ? error_get_pretty(err)
+                            : "GitHub answered " + std::to_string(code) + ".";
+    } else if (atoi(Field(text, "build").c_str()) != build ||
+               sha256.size() != 64) {
+        self->m_state = CHECK_FAILED;
+        self->m_error = "Could not read mac-version.txt of build " +
+                        std::to_string(build) + ".";
+    } else {
+        self->m_state = AVAILABLE;
+        self->m_sha256 = sha256;
+        self->m_notes = Field(text, "notes");
+        ok = true;
+    }
+    g_mutex_unlock(&self->m_lock);
+    if (err) {
+        error_free(err);
+    }
+    fprintf(stderr, "update: build %d chosen: %s\n", build,
+            ok ? "downloading" : "not available");
+    if (ok) {
+        self->Download();
+    }
+    return NULL;
+}
+
 void MacUpdateWindow::Download()
 {
     g_mutex_lock(&m_lock);

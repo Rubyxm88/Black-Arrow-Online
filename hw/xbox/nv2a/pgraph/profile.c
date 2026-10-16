@@ -74,7 +74,7 @@ static XemuDiagCause perf_cause(int64_t gap_us, const int64_t *ns)
 
 /*
  * Reports each frame to the diagnostics log (ui/xemu-diag.h), which keeps
- * the per-second lines for a log being recorded (RSO Settings > Record
+ * the per-second lines for a log being recorded (Troubleshoot > Record
  * Diagnostics Log, or XEMU_PERF_LOG) and for freeze reports: the gap since the last
  * frame, the work done in it and its GPU counters. A frame that took longer
  * than PERF_SLOW_FRAME_US is slow and gets a likely cause.

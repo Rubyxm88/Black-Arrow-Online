@@ -10,7 +10,7 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
 
 ## What is changed from xemu
 
-- **XB Online menu**: start a game from the games folder, run the game
+- **Menus**: Play, XB Live, BA Online, Troubleshoot and Help: start a game from the games folder, run the game
   update installer, open the XBL Dashboard for account setup or the original
   Xbox dashboard, show the console's Xbox Live gamertag, and open the xb.live
   pages to create an account or get a link code.

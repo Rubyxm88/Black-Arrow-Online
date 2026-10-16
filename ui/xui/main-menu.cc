@@ -53,11 +53,8 @@ void MainMenuTabView::Draw()
 
 void MainMenuGeneralView::Draw()
 {
-#if defined(_WIN32)
-    SectionTitle("Updates");
-    Toggle("Check for updates", &g_config.general.updates.check,
-           "Check for updates whenever xemu is opened");
-#endif
+    // Updates come from the Black Arrow Online releases page (Help >
+    // Versions & Updates), not from xemu's own
 
 #if defined(__x86_64__)
     SectionTitle("Performance");

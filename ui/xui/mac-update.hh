@@ -53,8 +53,11 @@ private:
 
 public:
     MacUpdateWindow();
-    // Help > Check for Updates
+    // Opened from the update panel
     void Open();
+    // Help > Versions & Updates: download and install this build, newer or
+    // older. False while an update is already on its way.
+    bool InstallBuild(int build);
     void Draw();
 
 private:
@@ -65,6 +68,7 @@ private:
     void DrawContents(State state);
     static gpointer CheckThread(gpointer self);
     static gpointer DownloadThread(gpointer self);
+    static gpointer BuildInfoThread(gpointer self);
     static int Progress(http_progress_cb_info *info);
 };
 

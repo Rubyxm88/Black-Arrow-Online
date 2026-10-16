@@ -48,6 +48,7 @@
 #include "xemu-snapshots.h"
 #include "xemu-version.h"
 #include "xemu-os-utils.h"
+#include "xemu-gamecache.h"
 
 #include "data/xemu_64x64.png.h"
 
@@ -1533,6 +1534,9 @@ void xemu_load_disc(const char *path, Error **errp)
         error_propagate(errp, error);
     } else {
         xemu_settings_set_string(&g_config.sys.files.dvd_path, path);
+        // A changed image of a game must not run with the files the Xbox
+        // copied from the old one
+        xemu_gamecache_check_disc(path);
     }
 
     xbox_smc_update_tray_state();

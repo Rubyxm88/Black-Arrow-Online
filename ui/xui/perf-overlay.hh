@@ -8,5 +8,5 @@
 //
 #pragma once
 
-// Draws the overlay when RSO Settings > Performance Overlay has it on
+// Draws the overlay when View > Performance Overlay has it on
 void DrawPerfOverlay();

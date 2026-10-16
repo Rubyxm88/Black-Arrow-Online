@@ -147,6 +147,7 @@
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-net.h"
 #include "ui/xemu-xbonline.h"
+#include "ui/xemu-gamecache.h"
 #include "ui/xemu-input.h"
 #include "hw/xbox/eeprom_generation.h"
 
@@ -3085,6 +3086,7 @@ void qemu_init(int argc, char **argv)
         dvd_path = g_config.sys.files.dvd_path;
     }
     xemu_xbonline_probe_hdd(g_config.sys.files.hdd_path);
+    xemu_gamecache_init();
     const char *setup_disc = xemu_xbonline_setup_disc();
     if (g_config.net.enable &&
         g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
@@ -3097,10 +3099,10 @@ void qemu_init(int argc, char **argv)
             g_config.general.xb_online_setup_offered = true;
             dvd_path = setup_disc;
             xemu_queue_notification(
-                has_account ? "Check your Xbox Live sign-in here, then choose "
-                              "XB Online > Play" :
+                has_account ? "Check your Xbox Live sign-in here, then pick "
+                              "your game in the Play menu" :
                               "No Xbox Live account yet. Set it up here, then "
-                              "choose XB Online > Play");
+                              "pick your game in the Play menu");
         } else if (!dvd_path[0]) {
             // No game to start: the XBL Dashboard is the home screen
             dvd_path = setup_disc;

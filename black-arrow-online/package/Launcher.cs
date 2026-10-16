@@ -73,6 +73,28 @@ static class Launcher
         bool noLaunch = args.Contains("--nolaunch");
 
         Updater.CleanUp();
+
+        // Help > Versions & Updates in xemu: install the chosen build (newer
+        // or older) once xemu has closed
+        string installBuild = Arg(args, "--install-build");
+        if (installBuild != null) {
+            int build, pid;
+            int.TryParse(installBuild, out build);
+            int.TryParse(Arg(args, "--wait-pid") ?? "", out pid);
+            using (var form = new InstallForm(build, pid)) {
+                Application.Run(form);
+                AllowSetForegroundWindow(ASFW_ANY);
+                // The installed build's own launcher starts xemu; after a
+                // cancel, the build that was there
+                Process.Start(new ProcessStartInfo {
+                    FileName = Application.ExecutablePath,
+                    Arguments = "--noupdate",
+                    UseShellExecute = false
+                });
+            }
+            return 0;
+        }
+
         if (previewUpdate != null) {
             using (var form = new UpdateForm(Updater.Sample(), previewUpdate)) {
                 Application.Run(form);
@@ -448,6 +470,8 @@ class UpdateInfo
 {
     public int Build;
     public string Xemu = "", Date = "", Sha256 = "", Notes = "";
+    // Where its files are; empty for the newest build
+    public string Url = "";
 }
 
 // Looks for, downloads and installs newer builds from the releases page
@@ -520,11 +544,11 @@ static class Updater
                      "notes=Follows xemu 0.8.140.");
     }
 
-    static WebRequest Request(string name, int timeoutMs)
+    static WebRequest Request(string url, int timeoutMs)
     {
         // TLS 1.2, which older .NET versions do not offer by default
         ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
-        WebRequest request = WebRequest.Create(BaseUrl + name);
+        WebRequest request = WebRequest.Create(url);
         request.Timeout = timeoutMs;
         var http = request as HttpWebRequest;
         if (http != null) {
@@ -544,7 +568,7 @@ static class Updater
         UpdateInfo latest = null;
         var thread = new Thread(delegate() {
             try {
-                using (WebResponse response = Request("version.txt", CheckTimeoutMs).GetResponse())
+                using (WebResponse response = Request(BaseUrl + "version.txt", CheckTimeoutMs).GetResponse())
                 using (var reader = new StreamReader(response.GetResponseStream())) {
                     char[] buffer = new char[4096];
                     int n = reader.ReadBlock(buffer, 0, buffer.Length);
@@ -566,6 +590,34 @@ static class Updater
         } catch (IOException) {
         }
         return latest.Build > Installed().Build && latest.Build != skipped ? latest : null;
+    }
+
+    // A build by its number, newer or older than the installed one, as
+    // published on the releases page
+    public static UpdateInfo ForBuild(int build)
+    {
+        string url = ReleasesPage + "/download/build-" + build + "/";
+        UpdateInfo info;
+        try {
+            using (WebResponse response = Request(url + "version.txt", 15000).GetResponse())
+            using (var reader = new StreamReader(response.GetResponseStream())) {
+                info = Parse(reader.ReadToEnd());
+            }
+        } catch (WebException e) {
+            var http = e.Response as HttpWebResponse;
+            if (http != null && http.StatusCode == HttpStatusCode.NotFound) {
+                throw new InvalidOperationException(
+                    "Build " + build + " is not on the releases page.");
+            }
+            throw new InvalidOperationException(
+                "Could not reach the releases page: " + e.Message);
+        }
+        if (info.Build != build || info.Sha256.Length != 64) {
+            throw new InvalidOperationException(
+                "The release of build " + build + " has no usable version.txt.");
+        }
+        info.Url = url;
+        return info;
     }
 
     public static void Skip(UpdateInfo update)
@@ -594,7 +646,8 @@ static class Updater
     {
         string zip = InSystem("update.zip"), folder = InSystem("update");
 
-        using (WebResponse response = Request(PackageName, 30000).GetResponse())
+        string from = update.Url.Length > 0 ? update.Url : BaseUrl;
+        using (WebResponse response = Request(from + PackageName, 30000).GetResponse())
         using (Stream src = response.GetResponseStream())
         using (var dst = new FileStream(zip, FileMode.Create, FileAccess.Write)) {
             long total = Math.Max(response.ContentLength, 1), done = 0;
@@ -824,6 +877,126 @@ class UpdateForm : Form
     }
 }
 
+// Installs the build chosen in xemu (Help > Versions & Updates), once xemu
+// has closed
+class InstallForm : Form
+{
+    public bool Installed;
+
+    readonly int build, waitPid;
+    readonly ProgressBar progress;
+    readonly Label status;
+    readonly Button retryButton, cancelButton;
+
+    public InstallForm(int build, int waitPid)
+    {
+        this.build = build;
+        this.waitPid = waitPid;
+        Text = "Black Arrow Online - Install build " + build;
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(520, 210);
+        StartPosition = FormStartPosition.CenterScreen;
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        BackColor = Theme.Back;
+        ForeColor = Theme.TextColor;
+        Font = new Font("Segoe UI", 10F);
+        Icon = Launcher.AppIcon();
+
+        UpdateInfo installed = Updater.Installed();
+        Theme.AddLabel(this, "Installing build " + build, 24, 16, 472, 38, 18F, true,
+                       Theme.TextColor);
+        Theme.AddLabel(this, (installed.Build > 0 ? "Replacing build " + installed.Build + ". " : "") +
+                             "Your console, Xbox Live sign-in, saves, settings and games " +
+                             "are not touched.",
+                       24, 60, 472, 44, 9F, false, Theme.Dim);
+        status = Theme.AddLabel(this, "Waiting for xemu to close...", 24, 108, 472, 22, 9F,
+                                false, Theme.TextColor);
+        progress = new ProgressBar();
+        progress.SetBounds(24, 136, 472, 8);
+        progress.Style = ProgressBarStyle.Continuous;
+        Controls.Add(progress);
+        retryButton = Theme.AddButton(this, "Try again", 24, 156, 140, 38, true);
+        cancelButton = Theme.AddButton(this, "Cancel", 176, 156, 110, 38, false);
+        retryButton.Visible = cancelButton.Visible = false;
+        retryButton.Click += delegate { Run(); };
+        cancelButton.Click += delegate { Close(); };
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        Run();
+    }
+
+    void Run()
+    {
+        retryButton.Visible = cancelButton.Visible = false;
+        progress.Value = 0;
+        status.Text = "Waiting for xemu to close...";
+
+        var worker = new BackgroundWorker();
+        worker.WorkerReportsProgress = true;
+        worker.DoWork += delegate {
+            WaitForXemu();
+            worker.ReportProgress(0);
+            UpdateInfo update = Updater.ForBuild(build);
+            Updater.Install(update, p => worker.ReportProgress(p));
+        };
+        worker.ProgressChanged += delegate(object s, ProgressChangedEventArgs e) {
+            progress.Value = Math.Min(100, e.ProgressPercentage);
+            status.Text = e.ProgressPercentage < 100 ?
+                "Downloading... " + e.ProgressPercentage + "%" : "Installing...";
+        };
+        worker.RunWorkerCompleted += delegate(object s, RunWorkerCompletedEventArgs e) {
+            if (e.Error == null) {
+                Installed = true;
+                Close();
+                return;
+            }
+            progress.Value = 0;
+            status.Text = e.Error is IOException || e.Error is UnauthorizedAccessException ?
+                "A file could not be replaced: " + e.Error.Message : e.Error.Message;
+            retryButton.Visible = cancelButton.Visible = true;
+        };
+        worker.RunWorkerAsync();
+    }
+
+    // xemu closes itself after starting this; files in use cannot be replaced
+    void WaitForXemu()
+    {
+        if (waitPid > 0) {
+            try {
+                using (Process p = Process.GetProcessById(waitPid)) {
+                    if (!p.WaitForExit(60000)) {
+                        throw new IOException("xemu did not close. Close it and try again.");
+                    }
+                }
+            } catch (ArgumentException) {
+                // Already closed
+            }
+        }
+        string xemu = Path.GetFullPath(Path.Combine(Launcher.systemDir, "xemu.exe"));
+        for (int i = 0; i < 60; i++) {
+            bool running = Process.GetProcessesByName("xemu").Any(p => {
+                try {
+                    return string.Equals(Path.GetFullPath(p.MainModule.FileName), xemu,
+                                         StringComparison.OrdinalIgnoreCase);
+                } catch (Exception) {
+                    return false;
+                }
+            });
+            if (!running) {
+                return;
+            }
+            Thread.Sleep(500);
+        }
+        throw new IOException("xemu is still running. Close it and try again.");
+    }
+}
+
 class SetupForm : Form
 {
     static readonly Color Back = Theme.Back;
@@ -912,17 +1085,18 @@ class SetupForm : Form
         AddLabel(next, "What happens next", 18, 12, 290, 28, 13F, true, TextColor);
         AddStep(next, 50, "1", "The XBL Dashboard opens",
                 "Sign in with your xb.live account. For a link code use the menu " +
-                "XB Online > Get a Link Code.");
+                "XB Live > Link Code.");
         AddStep(next, 138, "2", "Switch the network to XB Online",
                 "In the dashboard: Settings > Network, set the top option to XB Online.");
         AddStep(next, 212, "3", "Install the game update and maps",
-                "Menu XB Online > Install Game Update + Maps. Skip this if your own " +
+                "Menu Play > Black Arrow - Install Game Updates. Skip this if your own " +
                 "hard disk already has them.");
         AddStep(next, 300, "4", "Play",
-                "Menu XB Online > Play Rainbow Six 3 Black Arrow.");
+                "Menu Play > Play Rainbow Six 3 Black Arrow.");
         AddLabel(next, "This window appears only once. From then on, Black Arrow Online " +
                        "goes straight to the game, and everything above stays available " +
-                       "in the XB Online menu.",
+                       "in the Play and XB Live menus. Help > Black Arrow Online Guide " +
+                       "explains the rest.",
                  18, 366, 286, 72, 9F, false, Dim);
 
         gamesLabel = AddLabel(next, "", 18, 448, 286, 40, 9F, true, TextColor);

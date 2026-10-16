@@ -258,7 +258,7 @@ static void generate_shaders(PGRAPHGLState *r, ShaderBinding *binding)
 }
 
 /*
- * Background shader building (RSO Settings > Build shaders in the
+ * Background shader building (BA Online > Build shaders in the
  * background). With the driver's parallel shader compiler, a new shader is
  * compiled and linked on the driver's own threads. Until it is ready, draws
  * that need it use a program that draws nothing, so an effect is missing

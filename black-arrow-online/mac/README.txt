@@ -54,12 +54,12 @@ FIRST START
 The menus are at the top of the emulator window.
 
 1. The XBL Dashboard opens. Sign in with your xb.live account.
-   Need a code? Menu: XB Online > Link Code.
+   Need a code? Menu: XB Live > Link Code.
    No account yet? See NEW ACCOUNT below first.
 2. In the dashboard: Settings > Network, set the top option to XB Online.
-3. Menu: XB Online > Black Arrow - Install Game Updates, and follow the
+3. Menu: Play > Black Arrow - Install Game Updates, and follow the
    prompts.
-4. Menu: XB Online > Play Rainbow Six 3 Black Arrow.
+4. Menu: Play > Play Rainbow Six 3 Black Arrow.
 
 After that, Black Arrow Online goes straight to the game when you start it.
 If the games folder is empty it opens the XBL Dashboard instead.
@@ -69,43 +69,50 @@ NEW ACCOUNT
 -----------
 
 Xbox Live accounts for XB Online are made on xb.live.
-1. Menu: XB Online > Create an Account. It opens xb.live/xb-online in your
+1. Menu: XB Live > Create an Account. It opens xb.live/xb-online in your
    browser; create the account there.
 2. Then go on with step 1 of FIRST START: sign in to the XBL Dashboard and
    link the account (Link Code gives you the code).
-Your gamertag then shows in the XB Online menu under XB LIVE ACCOUNT.
+Your gamertag then shows at the top of the XB Live menu.
 
 
-THE XB ONLINE MENU
-------------------
+THE MENUS
+---------
 
-GAMES
-  Play <game>                   Start a game from the games folder.
-                                No games yet: opens the games folder.
-  Black Arrow - Install Game Updates
-                                Black Arrow title update and map packs.
-DASHBOARDS
-  XBL Dashboard                 Sign in, link or fix your Xbox Live account.
-  Original Xbox Dashboard       The standard Xbox dashboard (saves, settings).
-XB LIVE ACCOUNT
-  Account: <gamertag>           The account on this console.
-  Create an Account             Opens xb.live/xb-online (see NEW ACCOUNT).
-  Link Code                     Opens xb.live/link in your browser.
-HELP
-  Connection Check              Checks the connection to XB Online.
-  Record Diagnostics Log        Records a log while you play (see REPORTING).
-  Mark Lag Spike (F9)           Marks the moment in the log you are recording.
-  Open Last Freeze Report       Opens the newest freeze report.
-  Open Logs Folder              Opens system/logs.
-  Shader Cache                  Shaders built for your Mac.
+Each menu has one job. Help > Black Arrow Online Guide has all of this
+inside the app, with buttons that do what it describes.
+
+MACHINE        Pause, Screenshot, Snapshot, Settings..., Reset, Exit.
+PLAY           Play <game> from the games folder (no games yet: opens the
+               games folder), Load Disc, Eject Disc, Black Arrow - Install
+               Game Updates, XBL Dashboard, Original Xbox Dashboard.
+XB LIVE        Account: <gamertag>, Create an Account (see NEW ACCOUNT),
+               Link Code, Connection Check.
+BA ONLINE      Graphics (resolution, vertical sync), sound (Fast or
+               Accurate) and shaders. Every switch can be turned back off if
+               something looks wrong. On a Mac the renderer is always OpenGL.
+VIEW           Window scaling, fullscreen and the performance overlay.
+TROUBLESHOOT   Connection Check, Record Diagnostics Log, Mark Lag Spike (F9),
+               Open Last Freeze Report, Shader Cache, Empty Game Cache (see
+               GAME CACHE), Open Logs Folder.
+HELP           Black Arrow Online Guide, Versions & Updates, About.
+
+The build you have shows at the right of the menu bar ("BUILD 15"). An amber
+dot on it means a newer build is out; click it for Versions & Updates.
 
 On a controller, press the Guide/Home button for the same options.
 On a Mac laptop keyboard, F9 and the other F keys may need the fn key.
 
-The RSO Settings menu next to it has the graphics settings (resolution,
-shaders, performance overlay) and the diagnostics switches. Every switch
-there can be turned back off if something looks wrong. On a Mac the
-renderer is always OpenGL.
+
+GAME CACHE
+----------
+
+The Xbox keeps a copy of files a game reads from its disc on the console's
+hard disk. When you play a changed disc image of the same game (a newer
+version or a mod), Black Arrow Online empties that copy by itself, so the
+game reads the new disc; the first start after that takes a little longer.
+Saves, accounts and game updates are not touched. Troubleshoot > Empty Game
+Cache... empties it now and restarts the console.
 
 
 UPDATING
@@ -115,7 +122,8 @@ Updates come by themselves. When a new build is out, a small panel in the
 top left corner says so a few seconds after the app starts. Click Update
 now: the app downloads it, closes, and opens again on the new build within
 about a minute. Your console, Xbox Live sign-in, saves, settings and games
-are kept. Help > Check for Updates looks right away.
+are kept. Help > Versions & Updates... looks right away, and can also
+go back to an older build if the newest gives you trouble.
 
 If an update cannot be installed, the app says why the next time it opens.
 To update by hand instead, download BlackArrowOnline-mac-update.zip from the
@@ -160,7 +168,7 @@ By hand instead, send:
   (Apple menu > About This Mac).
 - What happened, and what you expected.
 - system/xemu.log from your console folder above.
-- For stutter: XB Online > Record Diagnostics Log, play, press F9 right after
+- For stutter: Troubleshoot > Record Diagnostics Log, play, press F9 right after
   each lag spike, then Stop Diagnostics Log, and send the newest file in
   system/logs.
-- If the game froze: XB Online > Open Last Freeze Report, and send that file.
+- If the game froze: Troubleshoot > Open Last Freeze Report, and send that file.

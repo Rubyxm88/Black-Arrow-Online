@@ -33,6 +33,7 @@ xemu_ss.add(files(
   'xemu-thumbnail.cc',
   'xemu-widescreen.c',
   'xemu-xbonline.c',
+  'xemu-gamecache.c',
   'xemu-xbcheck.c',
   'xemu-diag.c',
   'xemu-diag-threads.c',

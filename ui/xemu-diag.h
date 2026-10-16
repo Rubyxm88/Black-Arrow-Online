@@ -1,7 +1,7 @@
 /*
  * xemu diagnostics log
  *
- * A text file a player records while playing (RSO Settings > Diagnostics)
+ * A text file a player records while playing (Troubleshoot > Record Diagnostics Log)
  * and sends in when the game runs badly. It starts with the PC, the package
  * and the settings, then has one line per second (frame rate, the work that
  * can cause a hitch, CPU and memory use), a line for every slow frame with
@@ -12,7 +12,7 @@
  * minute, without writing anything. When the game shows no new picture for
  * FREEZE_SECONDS while the emulator runs, a short report with those lines
  * and what the emulated CPU and GPU were doing is written to the logs folder
- * (RSO Settings > Diagnostics > Save a report when the game freezes).
+ * (Troubleshoot > Save a report when the game freezes).
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

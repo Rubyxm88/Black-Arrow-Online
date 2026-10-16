@@ -53,11 +53,11 @@
 #include "compat.hh"
 #include "xbcheck.hh"
 #include "shader-cache.hh"
+#include "guide.hh"
+#include "versions.hh"
+#include "game-cache.hh"
 #include "../xemu-xbonline.h"
 #include "../xemu-diag.h"
-#if defined(_WIN32)
-#include "update.hh"
-#endif
 #if defined(__APPLE__)
 #include "mac-update.hh"
 #endif
@@ -160,11 +160,6 @@ void xemu_hud_init(SDL_Window* window, void* sdl_gl_context)
     ImGui_ImplOpenGL3_Init("#version 150");
     ImPlot::CreateContext();
 
-#if defined(_WIN32)
-    if (!g_config.general.show_welcome && g_config.general.updates.check) {
-        update_window.CheckForUpdates();
-    }
-#endif
     g_last_scale = g_viewport_mgr.m_scale;
     InitializeStyle();
     g_main_menu.SetNextViewIndex(g_config.general.last_viewed_menu_index);
@@ -351,13 +346,13 @@ void xemu_hud_update(void)
     apu_window.Draw();
     video_window.Draw();
     compatibility_reporter_window.Draw();
-#if defined(_WIN32)
-    update_window.Draw();
-#endif
     PopupStackReset();
     if (!first_boot_window.is_open) DrawRecordingBadge();
     if (!first_boot_window.is_open) xbcheck_window.Draw();
     if (!first_boot_window.is_open) shader_cache_window.Draw();
+    guide_window.Draw();
+    versions_window.Draw();
+    game_cache_window.Draw();
 #if defined(__APPLE__)
     if (!first_boot_window.is_open) mac_update_window.Draw();
 #endif

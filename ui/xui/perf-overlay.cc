@@ -5,7 +5,7 @@
 // game's frame rate and 1% lows, the frame time and a graph of the last
 // frames (spikes in orange and red), and how busy the PC is: xemu's CPU use
 // and the whole PC's, the graphics card, xemu's memory and video memory.
-// Turned on and set up in RSO Settings > Performance Overlay.
+// Turned on and set up in View > Performance Overlay.
 //
 // The frame times come from the game's own frames (each flip), not from the
 // window, so they show what the player sees: a hitch in the game is a

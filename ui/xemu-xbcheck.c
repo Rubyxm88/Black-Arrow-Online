@@ -511,16 +511,16 @@ static void check_disc(void)
         games_in_folder() == 0) {
         item_set(i, XBCHECK_INFO,
                  "No game yet. Copy your Black Arrow disc image (.iso) into "
-                 "the \"games\" folder, then choose XB Online > Play and your game.");
+                 "the \"games\" folder, then pick it in the Play menu.");
         qemu_mutex_lock(&lock);
         items[i].action = XBCHECK_ACTION_OPEN_GAMES_FOLDER;
         qemu_mutex_unlock(&lock);
     } else if (!path || !path[0]) {
-        item_set(i, XBCHECK_INFO, "No disc loaded. To play, choose XB Online "
-                 "> Play and your game.");
+        item_set(i, XBCHECK_INFO, "No disc loaded. To play, pick your game in "
+                 "the Play menu.");
     } else if (xemu_xbonline_is_system_disc(path)) {
         item_set(i, XBCHECK_INFO, "A dashboard or setup disc is loaded, not "
-                 "the game. To play, choose XB Online > Play and your game.");
+                 "the game. To play, pick your game in the Play menu.");
     } else if (!xemu_xbonline_disc_xbe(path, &xbe)) {
         item_set(i, XBCHECK_WARN,
                  "Could not read the loaded disc image as an Xbox disc. Use "
@@ -560,7 +560,7 @@ static void check_rs3_update(int i, const char *hdd, uint32_t disc_version)
         item_set(i, XBCHECK_FAIL,
                  "The wrong title update (version %x) is installed for this "
                  "disc (version %u). Remove the folder E:\\TDATA\\55530013\\$u "
-                 "from the hard disk, then in XB Online > Old Bow - Install "
+                 "from the hard disk, then in Play > Old Bow - Install "
                  "Game Updates choose %s.", xbe.version, disc_version,
                  want_name);
     } else if (r == 0 && want) {
@@ -611,7 +611,7 @@ static void check_title_update(void)
         item_set(i, XBCHECK_FAIL,
                  "Black Arrow title update is not installed. Without it the "
                  "game wants to download the update, which XB Online does not "
-                 "serve. Menu: XB Online > Black Arrow - Install Game "
+                 "serve. Menu: Play > Black Arrow - Install Game "
                  "Updates.");
     } else if (xbe.version < XEMU_XBONLINE_TITLE_UPDATE_VERSION) {
         item_set(i, XBCHECK_FAIL,
