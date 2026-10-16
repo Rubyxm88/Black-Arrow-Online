@@ -1,15 +1,25 @@
 name: Black Arrow Online release
 
-# Builds xemu.exe and the launcher and publishes them as a release that the
-# launcher offers to players as an update.
+# Builds xemu.exe and the launcher, and the Mac app, and publishes them as a
+# release that the launcher and the Mac app offer to players as an update.
 #
 # A release is made when the main branch changes and when xemu publishes a
 # new release. A new xemu release is merged at build time only; when it does
 # not merge cleanly an issue is opened and nothing is released.
+#
+# The Windows files are published as soon as they are built. The Mac app
+# takes longer; its files are added to the same release when it is done, and
+# a failed Mac build leaves the release Windows only. Windows files and Mac
+# files never share a name: launchers read version.txt and
+# BlackArrowOnline-update.zip, the Mac app mac-version.txt and
+# BlackArrowOnline-mac-update.zip.
+#
+# A push to mac-build runs everything without publishing: the would-be
+# release files are kept as downloads on the run's page (Artifacts).
 
 on:
   push:
-    branches: [main]
+    branches: [main, mac-build]
     paths-ignore:
       - '**.md'
       - '.github/**'
@@ -28,7 +38,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: black-arrow-online-release
+  group: black-arrow-online-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -37,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.plan.outputs.release }}
+      publish: ${{ steps.plan.outputs.publish }}
       build: ${{ steps.plan.outputs.build }}
       version: ${{ steps.merge.outputs.version }}
       upstream: ${{ steps.merge.outputs.upstream }}
@@ -138,6 +149,12 @@ jobs:
 
         echo "release=true" >> "$GITHUB_OUTPUT"
         echo "build=$(( ${prev_build:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+        # Only main publishes; other branches are test runs
+        if [ "$GITHUB_REF" = refs/heads/main ]; then
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "publish=false" >> "$GITHUB_OUTPUT"
+        fi
     - name: Install dependencies
       if: steps.plan.outputs.release == 'true'
       run: sudo apt-get install meson
@@ -312,7 +329,18 @@ jobs:
           echo "| \`version.txt\` | What the launcher reads to find this build |"
           echo "| \`BlackArrowOnline-source-build-$BUILD.tar.zst\` | The complete source this build was made from |"
         } > notes.md
+    - name: Keep the test build
+      if: needs.prepare.outputs.publish != 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: BlackArrowOnline-windows-test
+        path: |
+          BlackArrowOnline-update.zip
+          version.txt
+          notes.md
+        compression-level: 0
     - name: Publish
+      if: needs.prepare.outputs.publish == 'true'
       shell: bash
       run: |
         if ! out=$(gh release create "build-$BUILD" --target "$COMMIT" --latest \
@@ -323,3 +351,231 @@ jobs:
           exit 1
         fi
         echo "$out"
+
+  # xemu's own Mac build steps (build-macos.yml), release only. Job logs need a
+  # GitHub sign-in to read, so a failed build also reports its errors as
+  # annotations, which anyone can read.
+  mac:
+    name: Build for Mac (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, arm64]
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      CCACHE_DIR: ${{ github.workspace }}/xemu-ccache
+      CCACHE_MAXSIZE: 512M
+      LTO_CACHE_DIR: ${{ github.workspace }}/xemu-lto-cache
+    steps:
+    - name: Download source package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: src
+    - name: Extract source package
+      run: tar -xf xemu-${{ needs.prepare.outputs.version }}.tar.zst --strip-components=2
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        brew install ccache coreutils dylibbundler
+        pip install pyyaml requests
+    - name: Initialize compiler, library cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4
+      with:
+        path: |
+          macos-pkgs
+          ${{ env.CCACHE_DIR }}
+          ${{ env.LTO_CACHE_DIR }}
+        key: cache-bao-macos-${{ matrix.arch }}-${{ github.sha }}
+        restore-keys: cache-bao-macos-${{ matrix.arch }}-
+    - name: Setup ccache
+      run: |
+        echo "PATH=/opt/homebrew/opt/ccache/libexec:$PATH" >> "$GITHUB_ENV"
+        mkdir -p "$CCACHE_DIR" "$LTO_CACHE_DIR"
+    - name: Compile
+      run: |
+        # Not -e: the errors are reported below before failing
+        set +e -uo pipefail
+        # Keep going after a failed file (QEMU's Makefile passes -k0 to
+        # ninja), so one run shows every file that does not build on Mac
+        export MAKEFLAGS=k
+        ./build.sh -a ${{ matrix.arch }} \
+            -Db_lto=true -Db_lto_mode=thin -Db_thinlto_cache=true \
+            -Db_thinlto_cache_dir="$LTO_CACHE_DIR" -Dx86_version=3 \
+            2>&1 | tee full-build.log
+        status=${PIPESTATUS[0]}
+        if [ "$status" != 0 ]; then
+          # Compiler and linker errors with the lines after them, then the
+          # last lines of the log, in annotations of under 4096 characters
+          # (GitHub's limit), at most 8
+          { grep -E -A4 '(^FAILED: | error: |fatal error|^Undefined symbols|^ld: |^ERROR|^make: \*\*\*)' \
+                full-build.log | grep -v ' warning: ' | head -n 120
+            echo "----- last lines -----"
+            tail -n 15 full-build.log
+          } | cut -c 1-300 | sed 's/%/%25/g' | awk '
+              { line = $0 "%0A" }
+              length(chunk) + length(line) > 3900 { print chunk; chunk = "" }
+              { chunk = chunk line }
+              END { if (chunk != "") print chunk }' | head -n 8 |
+          while IFS= read -r chunk; do
+            echo "::error title=Mac build failed (${{ matrix.arch }})::$chunk"
+          done
+        fi
+        exit "$status"
+    - name: Package
+      run: |
+        cd dist
+        zip -qry ../xemu-macos-${{ matrix.arch }}.zip *
+    - name: Upload build
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: xemu-macos-${{ matrix.arch }}
+        path: xemu-macos-${{ matrix.arch }}.zip
+        compression-level: 0
+
+  mac-universal:
+    name: Join the Mac builds into one app
+    needs: mac
+    runs-on: macos-15
+    steps:
+    - name: Download both builds
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        pattern: xemu-macos-*
+        merge-multiple: true
+    - name: Join and sign
+      run: |
+        set -euo pipefail
+        mkdir dist
+        cd dist
+        for arch in x86_64 arm64; do
+          unzip -qo ../xemu-macos-${arch}.zip
+          mv xemu.app/Contents/MacOS/xemu ../xemu_${arch}
+        done
+        lipo -create -output xemu.app/Contents/MacOS/xemu ../xemu_x86_64 ../xemu_arm64
+        codesign --force --deep --preserve-metadata=entitlements,requirements,flags,runtime --sign - xemu.app/Contents/MacOS/xemu
+        zip -qry ../xemu-macos-universal.zip *
+    - name: Upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: xemu-macos-universal-release
+        path: xemu-macos-universal.zip
+        compression-level: 0
+
+  mac-package:
+    name: Package the Mac app
+    needs: [prepare, mac-universal]
+    runs-on: ubuntu-latest
+    env:
+      BUILD: ${{ needs.prepare.outputs.build }}
+      PUBLISH: ${{ needs.prepare.outputs.publish }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      UPSTREAM: ${{ needs.prepare.outputs.upstream }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+    - name: Clone the setup script and package files
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        ref: ${{ needs.prepare.outputs.commit }}
+        sparse-checkout: |
+          black-arrow-online/mac
+          black-arrow-online/package
+    - name: Download the Mac app
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: xemu-macos-universal-release
+        path: app
+    - name: Download release notes
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: meta
+        path: meta
+    - name: Package
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        # Same top folder as the Windows package, so the full package made
+        # from this zip unzips to BlackArrowOnline/ with system/ beside the app
+        pkg=BlackArrowOnline
+        mkdir -p unpacked "$pkg"
+        (cd unpacked && unzip -q ../app/*.zip)
+        mv unpacked/xemu.app "$pkg/Black Arrow Online.app"
+        cp black-arrow-online/mac/README.txt "$pkg/README.txt"
+        install -m 755 black-arrow-online/mac/setup.sh "$pkg/setup.sh"
+        cp black-arrow-online/package/shader-list.bin "$pkg/shader-list.bin"
+        # A test build has no build number, so the app takes any build over it
+        build=""
+        if [ "$PUBLISH" = true ]; then
+          build="$BUILD"
+        fi
+        notes=$(cat meta/notes.txt 2>/dev/null || true)
+        printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
+            "$build" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
+            > "$pkg/version.txt"
+        ls -la "$pkg"
+        # zip keeps the app's links and executable bits, which the artifact
+        # zip around it would not
+        zip -qry BlackArrowOnline-mac-update.zip "$pkg"
+        cp "$pkg/version.txt" mac-version.txt
+        echo "sha256=$(sha256sum BlackArrowOnline-mac-update.zip | cut -d' ' -f1)" >> mac-version.txt
+        cat mac-version.txt
+    - name: Upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: BlackArrowOnline-mac
+        path: |
+          BlackArrowOnline-mac-update.zip
+          mac-version.txt
+        compression-level: 0
+
+  mac-publish:
+    name: Add the Mac app to the release
+    needs: [prepare, release, mac-package]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Not the upstream remote, which gh would prefer
+      GH_REPO: ${{ github.repository }}
+      BUILD: ${{ needs.prepare.outputs.build }}
+    steps:
+    - name: Download the Mac app
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: BlackArrowOnline-mac
+    - name: Add the Mac section to the release notes
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        gh release view "build-$BUILD" --json body --jq .body > notes.md
+        {
+          echo
+          echo "### Mac"
+          echo
+          echo "For Apple Silicon Macs with macOS 14 or newer and Intel Macs with macOS 11 or newer."
+          echo
+          echo "**Already playing on a Mac?** Black Arrow Online offers this build by itself a few seconds after it starts: click **Update now**. It closes, installs the build and opens again. Your console, Xbox Live sign-in, saves, settings and games are not touched."
+          echo
+          echo "To update by hand, download \`BlackArrowOnline-mac-update.zip\`, unzip it in Downloads and paste the Terminal line from its README.txt."
+          echo
+          echo "**New on a Mac?** Get the full Mac package from where Black Arrow Online is shared. This download has no Xbox BIOS, dashboard or game files."
+          echo
+          echo "| File | What it is |"
+          echo "|---|---|"
+          echo "| \`BlackArrowOnline-mac-update.zip\` | The Mac app, its setup script and the shader list |"
+          echo "| \`mac-version.txt\` | What the Mac app reads to find this build |"
+        } >> notes.md
+    - name: Publish
+      run: |
+        if ! out=$(gh release upload "build-$BUILD" BlackArrowOnline-mac-update.zip \
+            mac-version.txt 2>&1); then
+          echo "::error::$(echo "$out" | tr '\n' ' ')"
+          exit 1
+        fi
+        echo "$out"
+        gh release edit "build-$BUILD" --notes-file notes.md
