@@ -88,10 +88,27 @@ const char *xemu_settings_get_base_path(void)
             fprintf(stderr, "%s: could not change directory\n", __func__);
         }
     } else {
+#ifdef __APPLE__
+        // Black Arrow Online keeps the console and its files in the same
+        // layout as the Windows package folder, outside the app bundle,
+        // which must stay unchanged
+        char *system_dir =
+            g_build_filename(g_get_home_dir(), "Library", "Application Support",
+                             "Black Arrow Online", "system", NULL);
+        g_mkdir_with_parents(system_dir, 0755);
+        base_path = g_strdup_printf("%s/", system_dir);
+        g_free(system_dir);
+        // Settings, dashboard discs and games are found relative to it, as
+        // in portable mode
+        if (g_chdir(base_path) != 0) {
+            fprintf(stderr, "%s: could not change directory\n", __func__);
+        }
+#else
         char *base = SDL_GetPrefPath("xemu", "xemu");
         assert(base != NULL);
         base_path = g_strdup(base);
         SDL_free(base);
+#endif
     }
     fprintf(stderr, "%s: base path: %s\n", __func__, base_path);
     return base_path;
