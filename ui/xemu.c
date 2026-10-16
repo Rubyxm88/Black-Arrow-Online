@@ -1377,8 +1377,15 @@ int main(int argc, char **argv)
     if (!isatty(STDERR_FILENO)) {
         // Started from Finder: keep xemu.log in the console folder, as on
         // Windows
+        // Both in append mode, so neither writes over the other, and written
+        // line by line, so nothing is lost when the app is force quit
         char *log = g_strdup_printf("%sxemu.log", xemu_settings_get_base_path());
-        if (freopen(log, "w", stdout) && freopen(log, "a", stderr)) {
+        FILE *empty = fopen(log, "w");
+        if (empty) {
+            fclose(empty);
+        }
+        if (freopen(log, "a", stdout) && freopen(log, "a", stderr)) {
+            setvbuf(stdout, NULL, _IOLBF, 0);
             setvbuf(stderr, NULL, _IONBF, 0);
         }
         g_free(log);
