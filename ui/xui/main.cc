@@ -51,12 +51,12 @@
 #include "menubar.hh"
 #include "perf-overlay.hh"
 #include "compat.hh"
-#if defined(_WIN32)
-#include "update.hh"
 #include "xbcheck.hh"
 #include "shader-cache.hh"
 #include "../xemu-xbonline.h"
 #include "../xemu-diag.h"
+#if defined(_WIN32)
+#include "update.hh"
 #endif
 
 bool g_screenshot_pending;

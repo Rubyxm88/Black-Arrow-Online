@@ -127,6 +127,9 @@ jobs:
       run: |
         # Not -e: the errors are reported below before failing
         set +e -uo pipefail
+        # Keep going after a failed file (QEMU's Makefile passes -k0 to
+        # ninja), so one run shows every file that does not build on Mac
+        export MAKEFLAGS=k
         ./build.sh -a ${{ matrix.arch }} \
             -Db_lto=true -Db_lto_mode=thin -Db_thinlto_cache=true \
             -Db_thinlto_cache_dir="$LTO_CACHE_DIR" -Dx86_version=3 \
