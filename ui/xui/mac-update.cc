@@ -411,6 +411,30 @@ static void Detach(gpointer)
     setsid();
 }
 
+// Runs the update's setup.sh, then makes sure the app opens again. setup.sh
+// opens it itself, but macOS ignores that when it still counts the old copy
+// as closing, and the setup.sh of an older build (rolling back) cannot be
+// fixed, so this part comes from the running build.
+static const char *const relaunch_script = R"SH(
+setup="$1"; pid="$2"
+name="Black Arrow Online.app"
+log="$HOME/Library/Application Support/Black Arrow Online/system/update.log"
+running() { pgrep -qf "$name/Contents/MacOS/" 2>/dev/null; }
+/bin/bash "$setup" --update "$pid"
+if [ -w /Applications ]; then app="/Applications/$name"; else app="$HOME/Applications/$name"; fi
+[ -d "$app" ] || app="/Applications/$name"
+for try in 1 2 3 4; do
+    waited=0
+    while [ "$waited" -lt 8 ]; do
+        running && exit 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "$(date): not open after the update, opening $app again (try $try)" >> "$log" 2>/dev/null
+    if [ "$try" -lt 3 ]; then open "$app"; else open -n "$app"; fi
+done
+)SH";
+
 // Starts the update's setup.sh, which waits for the app to close, and closes
 // the app
 void MacUpdateWindow::Restart()
@@ -418,8 +442,8 @@ void MacUpdateWindow::Restart()
     m_restarting = true;
     char pid[16];
     snprintf(pid, sizeof(pid), "%d", (int)getpid());
-    const gchar *argv[] = { "/bin/bash", m_setup.c_str(), "--update", pid,
-                            NULL };
+    const gchar *argv[] = { "/bin/bash", "-c", relaunch_script,
+                            "bao-update", m_setup.c_str(), pid, NULL };
     GError *gerr = NULL;
     if (!g_spawn_async(NULL, (gchar **)argv, NULL,
                        (GSpawnFlags)(G_SPAWN_STDOUT_TO_DEV_NULL |
