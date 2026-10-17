@@ -22,6 +22,7 @@
 //
 #include "common.hh"
 #include "mac-update.hh"
+#include "versions.hh"
 #include "actions.hh"
 #include "notifications.hh"
 #include "viewport-manager.hh"
@@ -183,7 +184,8 @@ gpointer MacUpdateWindow::CheckThread(gpointer opaque)
     } else if (build <= 0 || sha256.size() != 64) {
         self->m_state = CHECK_FAILED;
         self->m_error = "Could not read mac-version.txt.";
-    } else if (build > local) {
+    } else if (build > local && !(self->m_quiet && build == SkippedBuild())) {
+        // The check at start leaves out a build the player rolled back from
         self->m_state = AVAILABLE;
         self->m_build = build;
         self->m_sha256 = sha256;

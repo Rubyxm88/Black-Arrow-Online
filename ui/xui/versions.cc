@@ -2,7 +2,9 @@
 // xemu User Interface: Versions & Updates window and the build badge
 //
 // Lists the builds on the releases page, newest first, and installs any of
-// them: a newer one to update, an older one to go back to it. Pre-releases
+// them: a newer one to update, an older one to roll back to (the newest is
+// then written to update-skip.txt, so it is not offered at start until a
+// newer build is out). Pre-releases
 // and drafts are left out, so a build is withdrawn by ticking "Set as a
 // pre-release" on GitHub. A release whose notes have a line starting with
 // "Broken:" is shown greyed out with the rest of that line, and cannot be
@@ -130,6 +132,38 @@ static const LocalVersion &Installed()
     return v;
 }
 
+static gchar *SkipFile()
+{
+    return g_build_filename(xemu_settings_get_base_path(), "update-skip.txt",
+                            NULL);
+}
+
+int SkippedBuild()
+{
+    gchar *path = SkipFile();
+    gchar *text = NULL;
+    int build = 0;
+    if (g_file_get_contents(path, &text, NULL, NULL)) {
+        build = atoi(text);
+        g_free(text);
+    }
+    g_free(path);
+    return build;
+}
+
+// After rolling back, the build left behind is not offered at every start;
+// the next newer one is. Every launcher since build 5 reads this file.
+static void SkipBuild(int build)
+{
+    gchar *path = SkipFile();
+    gchar *text = g_strdup_printf("%d", build);
+    if (!g_file_set_contents(path, text, -1, NULL)) {
+        fprintf(stderr, "versions: could not write %s\n", path);
+    }
+    g_free(text);
+    g_free(path);
+}
+
 static bool UpdateChecksOff()
 {
     gchar *path = g_build_filename(xemu_settings_get_base_path(),
@@ -186,20 +220,29 @@ void VersionsWindow::Open()
 
 void VersionsWindow::AutoCheck()
 {
+    // Testing: install a build as if picked in the window, once the list
+    // is in (or could not be had)
+    static bool tested;
+    const char *test = g_getenv("XEMU_TEST_INSTALL_BUILD");
+    if (m_auto_checked && !tested && test && atoi(test) > 0) {
+        g_mutex_lock(&m_lock);
+        bool waiting = m_state == LOADING;
+        g_mutex_unlock(&m_lock);
+        if (!waiting) {
+            tested = true;
+            Install(atoi(test));
+            if (!m_install_error.empty()) {
+                fprintf(stderr, "versions: %s\n", m_install_error.c_str());
+            }
+        }
+    }
+
     if (m_auto_checked || ImGui::GetTime() < AUTO_DELAY) {
         return;
     }
     m_auto_checked = true;
-    if (!UpdateChecksOff()) {
+    if (!UpdateChecksOff() || (test && atoi(test) > 0)) {
         Load("start");
-    }
-    // Testing: install a build as if picked in the window
-    const char *test = g_getenv("XEMU_TEST_INSTALL_BUILD");
-    if (test && atoi(test) > 0) {
-        Install(atoi(test));
-        if (!m_install_error.empty()) {
-            fprintf(stderr, "versions: %s\n", m_install_error.c_str());
-        }
     }
 }
 
@@ -406,6 +449,12 @@ static void ParseNotes(const std::string &body, ReleaseBuild &b)
 
 void VersionsWindow::Install(int build)
 {
+    int local = Installed().build, newest = NewestBuild();
+    if (local > 0 && build < local && newest > build) {
+        SkipBuild(newest);
+        fprintf(stderr, "versions: rolling back to build %d, build %d is not "
+                "offered at start any more\n", build, newest);
+    }
 #if defined(_WIN32)
     // The launcher next to the system folder installs it once xemu closed
     gchar *base = g_strdup(xemu_settings_get_base_path());
@@ -497,8 +546,10 @@ void VersionsWindow::DrawConfirm()
     int local = Installed().build;
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 450.0f * scale);
     ImGui::PushFont(g_font_mgr.m_menu_font_medium);
-    if (local > 0 && build < local) {
-        ImGui::Text("Go back to build %d?", build);
+    bool rollback = local > 0 && build < local;
+    int newest = NewestBuild();
+    if (rollback) {
+        ImGui::Text("Roll back to build %d?", build);
     } else if (local > 0 && build == local) {
         ImGui::Text("Install build %d again?", build);
     } else {
@@ -510,6 +561,13 @@ void VersionsWindow::DrawConfirm()
                        "opens again by itself. Your console, Xbox Live "
                        "sign-in, saves, settings and games are kept.",
                        build);
+    if (rollback && newest > build) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("Build %d is then not offered when you start. You "
+                           "are asked again when a build newer than %d is "
+                           "out, and can update from this window any time.",
+                           newest, newest);
+    }
     if (runstate_is_running() && g_config.sys.files.dvd_path &&
         g_config.sys.files.dvd_path[0]) {
         ImGui::TextColored(problem_color, "A game is running: anything not "
@@ -582,7 +640,12 @@ void VersionsWindow::Draw()
     }
     ImGui::PopFont();
     ImGui::SameLine();
-    if (newest > local.build && local.build > 0) {
+    bool held = newest > local.build && local.build > 0 &&
+                SkippedBuild() == newest;
+    if (held) {
+        ImGui::TextDisabled("  Rolled back: build %d is not offered at start",
+                            newest);
+    } else if (newest > local.build && local.build > 0) {
         ImGui::TextColored(update_color, "  Build %d is out", newest);
     } else if (newest > 0 && newest == local.build) {
         ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "  Up to date");
@@ -601,7 +664,7 @@ void VersionsWindow::Draw()
         ImGui::TextDisabled("%s", details.c_str());
     }
     ImGui::TextWrapped("Install any build from the releases page: a newer "
-                       "one to update, an older one to go back to it if the "
+                       "one to update, or roll back to an older one if the "
                        "newest gives you trouble.");
     if (!m_install_error.empty()) {
         ImGui::TextColored(problem_color, "%s", m_install_error.c_str());
@@ -666,7 +729,7 @@ void VersionsWindow::Draw()
         if (!broken) {
             const char *label = installed                       ? "Reinstall"
                                 : local.build > 0 && b.build < local.build
-                                    ? "Go back"
+                                    ? "Roll back"
                                     : "Update";
             float bw = ImGui::CalcTextSize(label).x +
                        ImGui::GetStyle().FramePadding.x * 2;
@@ -755,7 +818,9 @@ void DrawBuildBadge()
 
     const LocalVersion &local = Installed();
     int newest = versions_window.NewestBuild();
-    bool update = local.build > 0 && newest > local.build;
+    // No pulsing dot for a build the player rolled back from
+    bool skipped = newest > 0 && SkippedBuild() == newest;
+    bool update = local.build > 0 && newest > local.build && !skipped;
     float scale = g_viewport_mgr.m_scale;
     double t = ImGui::GetTime();
     // The menu bar fades out when the mouse rests; fade with it
@@ -869,6 +934,8 @@ void DrawBuildBadge()
         }
         if (update) {
             ImGui::TextColored(update_color, "Build %d is out", newest);
+        } else if (skipped && newest > local.build && local.build > 0) {
+            ImGui::TextDisabled("Rolled back from build %d", newest);
         }
         ImGui::TextDisabled("Click for versions and updates");
         ImGui::EndTooltip();

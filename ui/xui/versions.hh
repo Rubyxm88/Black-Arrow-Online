@@ -66,3 +66,7 @@ extern VersionsWindow versions_window;
 // with a dot when a newer build is out. Clicking it opens the Versions
 // window.
 void DrawBuildBadge();
+
+// The build the player does not want to be offered (update-skip.txt, which
+// the launcher's "Skip this build" also writes), or 0
+int SkippedBuild();
