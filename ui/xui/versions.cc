@@ -68,6 +68,24 @@ using json = nlohmann::json;
 /* The first build with this window; going back further loses it */
 #define FIRST_BUILD_WITH_VERSIONS 15
 
+/*
+ * The first build whose window can install builds on Windows (15 and 16 could
+ * not start the launcher). Rolling back further does not hold the newest
+ * build back: the launcher's offer at start is then the only way forward.
+ */
+#if defined(_WIN32)
+#define FIRST_BUILD_THAT_INSTALLS 17
+#else
+#define FIRST_BUILD_THAT_INSTALLS FIRST_BUILD_WITH_VERSIONS
+#endif
+
+/* Whether rolling back to a build keeps the newest from being offered */
+static bool HoldsNewest(int build, int local, int newest)
+{
+    return local > 0 && build < local && newest > build &&
+           build >= FIRST_BUILD_THAT_INSTALLS;
+}
+
 /* Seconds after starting before looking for a newer build */
 #define AUTO_DELAY 15.0
 
@@ -450,7 +468,7 @@ static void ParseNotes(const std::string &body, ReleaseBuild &b)
 void VersionsWindow::Install(int build)
 {
     int local = Installed().build, newest = NewestBuild();
-    if (local > 0 && build < local && newest > build) {
+    if (HoldsNewest(build, local, newest)) {
         SkipBuild(newest);
         fprintf(stderr, "versions: rolling back to build %d, build %d is not "
                 "offered at start any more\n", build, newest);
@@ -561,12 +579,19 @@ void VersionsWindow::DrawConfirm()
                        "opens again by itself. Your console, Xbox Live "
                        "sign-in, saves, settings and games are kept.",
                        build);
-    if (rollback && newest > build) {
+    if (HoldsNewest(build, local, newest)) {
         ImGui::Spacing();
         ImGui::TextWrapped("Build %d is then not offered when you start. You "
                            "are asked again when a build newer than %d is "
                            "out, and can update from this window any time.",
                            newest, newest);
+    } else if (rollback && newest > build &&
+               build >= FIRST_BUILD_WITH_VERSIONS) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("Build %d cannot install builds from this window. "
+                           "To come back, choose Update now when the "
+                           "launcher offers build %d at the start.",
+                           build, newest);
     }
     if (runstate_is_running() && g_config.sys.files.dvd_path &&
         g_config.sys.files.dvd_path[0]) {
