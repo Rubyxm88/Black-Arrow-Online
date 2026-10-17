@@ -283,7 +283,7 @@ jobs:
       CROSSAR: x86_64-w64-mingw32.static-gcc-ar
     steps:
     - name: Download source package
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: src
     - name: Install curl
@@ -336,17 +336,17 @@ jobs:
           black-arrow-online
           ui/icons
     - name: Download xemu.exe
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: xemu
         path: pkg/system
     - name: Download source package
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: src
         path: src
     - name: Download release notes
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: meta
         path: meta
@@ -479,7 +479,7 @@ jobs:
       LTO_CACHE_DIR: ${{ github.workspace }}/xemu-lto-cache
     steps:
     - name: Download source package
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: src
     - name: Extract source package
@@ -551,7 +551,7 @@ jobs:
     runs-on: macos-15
     steps:
     - name: Download both builds
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         pattern: xemu-macos-*
         merge-multiple: true
@@ -593,12 +593,12 @@ jobs:
           black-arrow-online/mac
           black-arrow-online/package
     - name: Download the Mac app
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: xemu-macos-universal-release
         path: app
     - name: Download release notes
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: meta
         path: meta
@@ -652,7 +652,7 @@ jobs:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
     - name: Download the Mac app
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v4
       with:
         name: BlackArrowOnline-mac
     - name: Add the Mac section to the release notes
