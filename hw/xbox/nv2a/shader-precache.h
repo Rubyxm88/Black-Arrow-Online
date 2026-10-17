@@ -26,6 +26,20 @@ extern "C" {
 /* Shipped list of shaders, in the emulator's base folder */
 #define NV2A_SHADER_LIST_FILE "shader-list.bin"
 
+/*
+ * This PC's own list, same format: every shader the game needed here.
+ * Updates never replace it, and Clear Cache keeps it unless asked.
+ */
+#define NV2A_SHADER_LEARNED_FILE "shader-list-mine.bin"
+
+/*
+ * Crash guard: the shader being precached is written here, and the file is
+ * removed when the run ends. Found at the next start, that shader crashed
+ * the driver, so it goes in the skip file and is never precached again.
+ */
+#define NV2A_SHADER_GUARD_FILE "shader-precache-running.txt"
+#define NV2A_SHADER_SKIP_FILE "shader-skip.txt"
+
 typedef struct ShaderPrecacheStatus {
     bool supported;      /* the OpenGL renderer is running */
     bool running;        /* counting or building in the background */
@@ -37,6 +51,8 @@ typedef struct ShaderPrecacheStatus {
     int failed;          /* could not be built in this run */
     int disk_count;      /* shaders in the cache on disk */
     uint64_t disk_bytes; /* their size */
+    int learned_count;   /* shaders in this PC's own list */
+    int skipped_count;   /* shaders skipped since they crashed a precache */
     char gpu[128];       /* graphics card and maker */
     char driver[128];    /* driver version */
     char error[160];     /* why the last run stopped early, or empty */
@@ -54,10 +70,11 @@ void nv2a_shader_precache_stop(void);
 void nv2a_shader_precache_get_status(ShaderPrecacheStatus *status);
 
 /*
- * Delete the shader cache on disk. Shaders already loaded stay in use until
+ * Delete the compiled shaders on disk, and with forget_learned also this
+ * PC's own list and the skip file. Shaders already loaded stay in use until
  * the emulator restarts. Not possible while building.
  */
-bool nv2a_shader_cache_clear(void);
+bool nv2a_shader_cache_clear(bool forget_learned);
 
 #ifdef __cplusplus
 }

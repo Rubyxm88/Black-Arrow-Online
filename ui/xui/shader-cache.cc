@@ -66,6 +66,7 @@ ShaderCacheWindow::ShaderCacheWindow()
     m_toast_end = -1;
     m_toast_built = 0;
     m_confirm_clear = false;
+    m_forget_learned = false;
     m_cleared_time = -1;
 }
 
@@ -73,6 +74,7 @@ void ShaderCacheWindow::Open()
 {
     nv2a_shader_precache_scan();
     m_confirm_clear = false;
+    m_forget_learned = false;
     is_open = true;
 }
 
@@ -216,6 +218,12 @@ void ShaderCacheWindow::Draw()
                                     "shaders this PC has used." :
                                     "From the Black Arrow list.");
             }
+            ImGui::Text("Shaders this PC has used: %d", status.learned_count);
+            if (status.skipped_count > 0) {
+                ImGui::TextDisabled("%d skipped: they crashed the graphics "
+                                    "driver while precaching.",
+                                    status.skipped_count);
+            }
         } else {
             ImGui::TextDisabled("Counting shaders...");
         }
@@ -247,6 +255,21 @@ void ShaderCacheWindow::Draw()
         ImGui::TextWrapped("Cache cleared. Shaders already in use stay until "
                            "Black Arrow Online is restarted.");
     }
+    if (m_confirm_clear) {
+        ImGui::Separator();
+        ImGui::TextWrapped("Clear Cache deletes the shaders built for this "
+                           "graphics card. The list of shaders this PC has "
+                           "used is kept, so they are built again in the "
+                           "background.");
+        ImGui::Checkbox("Also forget the shaders this PC has used",
+                        &m_forget_learned);
+        if (m_forget_learned) {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                               "Only if shaders keep causing problems: the "
+                               "game stutters on each effect again until it "
+                               "has seen it once.");
+        }
+    }
 
     ImGui::Separator();
     bool can_build = status.supported && status.scanned && !status.running &&
@@ -272,11 +295,12 @@ void ShaderCacheWindow::Draw()
     if (ImGui::Button(m_confirm_clear ? "Click again to clear"
                                       : "Clear Cache")) {
         if (m_confirm_clear) {
-            if (nv2a_shader_cache_clear()) {
+            if (nv2a_shader_cache_clear(m_forget_learned)) {
                 m_cleared_time = ImGui::GetTime();
                 nv2a_shader_precache_scan();
             }
             m_confirm_clear = false;
+            m_forget_learned = false;
         } else {
             m_confirm_clear = true;
         }

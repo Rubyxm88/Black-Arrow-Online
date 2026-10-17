@@ -22,6 +22,7 @@ private:
     double m_toast_end;      // "Shaders ready" shown until then
     int    m_toast_built;
     bool   m_confirm_clear;  // Clear Cache was clicked once
+    bool   m_forget_learned; // ...and this PC's own list goes too
     double m_cleared_time;   // when the cache was cleared, to say so
 
 public:

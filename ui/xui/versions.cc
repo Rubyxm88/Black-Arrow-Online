@@ -193,6 +193,14 @@ void VersionsWindow::AutoCheck()
     if (!UpdateChecksOff()) {
         Load("start");
     }
+    // Testing: install a build as if picked in the window
+    const char *test = g_getenv("XEMU_TEST_INSTALL_BUILD");
+    if (test && atoi(test) > 0) {
+        Install(atoi(test));
+        if (!m_install_error.empty()) {
+            fprintf(stderr, "versions: %s\n", m_install_error.c_str());
+        }
+    }
 }
 
 int VersionsWindow::NewestBuild()
@@ -416,26 +424,44 @@ void VersionsWindow::Install(int build)
         g_free(root);
         return;
     }
-    char build_arg[16], pid_arg[16];
-    snprintf(build_arg, sizeof(build_arg), "%d", build);
-    snprintf(pid_arg, sizeof(pid_arg), "%lu",
-             (unsigned long)GetCurrentProcessId());
-    const gchar *argv[] = { launcher, "--install-build", build_arg,
-                            "--wait-pid", pid_arg, NULL };
-    GError *gerr = NULL;
-    if (!g_spawn_async(root, (gchar **)argv, NULL, G_SPAWN_DEFAULT, NULL,
-                       NULL, NULL, &gerr)) {
-        m_install_error = std::string("Could not start the launcher: ") +
-                          gerr->message;
-        g_clear_error(&gerr);
+    // CreateProcess, not g_spawn_async: on Windows GLib needs
+    // gspawn-win64-helper.exe for that, which the package does not have, so
+    // the launcher never started and going back did nothing
+    gchar *cmd = g_strdup_printf("\"%s\" --install-build %d --wait-pid %lu",
+                                 launcher, build,
+                                 (unsigned long)GetCurrentProcessId());
+    gunichar2 *wcmd = g_utf8_to_utf16(cmd, -1, NULL, NULL, NULL);
+    gunichar2 *wroot = g_utf8_to_utf16(root, -1, NULL, NULL, NULL);
+    STARTUPINFOW si = { 0 };
+    PROCESS_INFORMATION pi = { 0 };
+    si.cb = sizeof(si);
+    // Out of any job xemu is in, so closing xemu cannot end the launcher
+    BOOL started = wcmd && wroot &&
+        CreateProcessW(NULL, (LPWSTR)wcmd, NULL, NULL, FALSE,
+                       CREATE_BREAKAWAY_FROM_JOB, NULL, (LPCWSTR)wroot, &si,
+                       &pi);
+    if (!started && wcmd && wroot) {
+        started = CreateProcessW(NULL, (LPWSTR)wcmd, NULL, NULL, FALSE, 0,
+                                 NULL, (LPCWSTR)wroot, &si, &pi);
+    }
+    DWORD code = started ? 0 : GetLastError();
+    g_free(wcmd);
+    g_free(wroot);
+    g_free(cmd);
+    if (!started) {
+        gchar *msg = g_win32_error_message(code);
+        m_install_error = std::string("Could not start the launcher: ") + msg;
+        g_free(msg);
         g_free(launcher);
         g_free(root);
         return;
     }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
     g_free(launcher);
     g_free(root);
-    fprintf(stderr, "versions: closing for the launcher to install build %d\n",
-            build);
+    fprintf(stderr, "versions: launcher started (pid %lu), closing for it to "
+            "install build %d\n", (unsigned long)pi.dwProcessId, build);
     m_installing = true;
     ActionShutdown();
 #elif defined(__APPLE__)

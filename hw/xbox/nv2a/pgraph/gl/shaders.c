@@ -395,6 +395,7 @@ static ShaderBinding *async_stand_in(const ShaderState *state)
 
 static void precache_attach(PGRAPHState *pg);
 static void precache_detach(void);
+static void learned_add(const ShaderState *state);
 
 static const char *shader_gl_vendor = NULL;
 static const char *shader_gl_version = NULL;
@@ -1031,11 +1032,13 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
             xemu_perf_end(XEMU_PERF_SHADER_LOAD, perf_start);
         } else if (async_supported && g_config.perf.shader_async) {
             nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
+            learned_add(&state);
             async_start(binding);
             stand_in = true;
             xemu_perf_end(XEMU_PERF_SHADER_ASYNC, perf_start);
         } else {
             nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
+            learned_add(&state);
             generate_shaders(r, binding);
             if (g_config.perf.cache_shaders) {
                 pgraph_gl_shader_cache_to_disk(binding);
@@ -1132,11 +1135,10 @@ static struct {
     ShaderPrecacheStatus status;
 } precache;
 
-/* The shaders of the list, or NULL. *count is -1 when there is no list. */
-static ShaderState *shader_list_load(int *count)
+/* The shaders of a list file, or NULL. *count is -1 when there is no file. */
+static ShaderState *shader_list_load(const char *file, int *count)
 {
-    char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
-                                 NV2A_SHADER_LIST_FILE);
+    char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(), file);
     gchar *data = NULL;
     gsize len = 0;
     ShaderState *states = NULL;
@@ -1375,11 +1377,271 @@ static void precache_add_own(GArray *states)
     g_free(root);
 }
 
+/*
+ * This PC's own list (shader-list-mine.bin): every shader the game had to
+ * build here, plus the states in this PC's cache files. It holds no compiled
+ * code, so it works with any driver, and it survives Clear Cache and our
+ * updates. Kept in memory and written in the background a few seconds after
+ * it grew, through a temporary file so a crash cannot damage it.
+ */
+
+#define LEARNED_SAVE_DELAY_MS 5000
+
+static struct {
+    QemuMutex lock;          /* guards everything below but save_lock */
+    QemuMutex save_lock;     /* held while the file is written */
+    bool ready;
+    GArray *states;          /* ShaderState, scale set to 1 */
+    GHashTable *hashes;      /* their hashes */
+    bool dirty;
+    bool saving;             /* a background save is running */
+    int64_t dirty_since;
+} learned;
+
+/* The state as kept in a list: the scale is set again when it is built */
+static uint64_t learned_key(const ShaderState *state, ShaderState *out)
+{
+    *out = *state;
+    out->vsh.surface_scale_factor = 1;
+    return fast_hash((uint8_t *)out, sizeof(*out));
+}
+
+static void learned_insert_locked(const ShaderState *state)
+{
+    ShaderState s;
+    uint64_t hash = learned_key(state, &s);
+    if (g_hash_table_contains(learned.hashes, &hash)) {
+        return;
+    }
+    uint64_t *key = g_new(uint64_t, 1);
+    *key = hash;
+    g_hash_table_add(learned.hashes, key);
+    g_array_append_val(learned.states, s);
+    if (!learned.dirty) {
+        learned.dirty = true;
+        learned.dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    }
+}
+
+static void learned_init(void)
+{
+    if (learned.ready) {
+        return;
+    }
+    qemu_mutex_init(&learned.lock);
+    qemu_mutex_init(&learned.save_lock);
+    learned.states = g_array_new(FALSE, FALSE, sizeof(ShaderState));
+    learned.hashes = g_hash_table_new_full(g_int64_hash, g_int64_equal,
+                                           g_free, NULL);
+
+    int count;
+    ShaderState *states = shader_list_load(NV2A_SHADER_LEARNED_FILE, &count);
+    if (count == 0 && !states) {
+        /* A file that does not match: keep it aside, start a new one */
+        char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
+                                     NV2A_SHADER_LEARNED_FILE);
+        if (g_file_test(path, G_FILE_TEST_EXISTS)) {
+            char *bad = g_strdup_printf("%s.bad", path);
+            g_remove(bad);
+            g_rename(path, bad);
+            xemu_diag_event("shader-list-mine.bin unreadable, set aside");
+            g_free(bad);
+        }
+        g_free(path);
+    }
+    for (int i = 0; i < count; i++) {
+        learned_insert_locked(&states[i]);
+    }
+    g_free(states);
+    learned.dirty = false;
+    learned.ready = true;
+    fprintf(stderr, "nv2a: %d shaders in this PC's own list\n",
+            (int)learned.states->len);
+}
+
+static void learned_add(const ShaderState *state)
+{
+    if (!learned.ready) {
+        return;
+    }
+    qemu_mutex_lock(&learned.lock);
+    learned_insert_locked(state);
+    qemu_mutex_unlock(&learned.lock);
+}
+
+/* Write the list if it grew; waits for a background save still running */
+static void learned_save(void)
+{
+    if (!learned.ready) {
+        return;
+    }
+    qemu_mutex_lock(&learned.save_lock);
+    qemu_mutex_lock(&learned.lock);
+    if (!learned.dirty) {
+        qemu_mutex_unlock(&learned.lock);
+        qemu_mutex_unlock(&learned.save_lock);
+        return;
+    }
+    guint count = learned.states->len;
+    ShaderState *copy = g_memdup2(learned.states->data,
+                                  count * sizeof(ShaderState));
+    learned.dirty = false;
+    qemu_mutex_unlock(&learned.lock);
+
+    char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
+                                 NV2A_SHADER_LEARNED_FILE);
+    char *tmp = g_strdup_printf("%s.tmp", path);
+    FILE *f = qemu_fopen(tmp, "wb");
+    uint8_t header[16];
+    memcpy(header, SHADER_LIST_MAGIC, 8);
+    stl_le_p(header + 8, sizeof(ShaderState));
+    stl_le_p(header + 12, count);
+    bool ok = f && fwrite(header, sizeof(header), 1, f) == 1 &&
+              (count == 0 ||
+               fwrite(copy, sizeof(ShaderState), count, f) == count);
+    if (f) {
+        ok = fclose(f) == 0 && ok;
+    }
+    /* g_rename replaces the old file, on Windows too */
+    ok = ok && g_rename(tmp, path) == 0;
+    if (!ok) {
+        fprintf(stderr, "nv2a: could not save %s\n", path);
+        g_remove(tmp);
+        qemu_mutex_lock(&learned.lock);
+        learned.dirty = true;
+        learned.dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+        qemu_mutex_unlock(&learned.lock);
+    }
+    g_free(tmp);
+    g_free(path);
+    g_free(copy);
+    qemu_mutex_unlock(&learned.save_lock);
+}
+
+static void *learned_save_thread(void *arg)
+{
+    learned_save();
+    qemu_mutex_lock(&learned.lock);
+    learned.saving = false;
+    qemu_mutex_unlock(&learned.lock);
+    return NULL;
+}
+
+/* Called often (each UI frame): save in the background once it settled */
+static void learned_tick(void)
+{
+    if (!learned.ready) {
+        return;
+    }
+    qemu_mutex_lock(&learned.lock);
+    bool go = learned.dirty && !learned.saving &&
+              qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - learned.dirty_since >=
+                  LEARNED_SAVE_DELAY_MS;
+    if (go) {
+        learned.saving = true;
+    }
+    qemu_mutex_unlock(&learned.lock);
+    if (go) {
+        QemuThread thread;
+        qemu_thread_create(&thread, "nv2a.learned", learned_save_thread, NULL,
+                           QEMU_THREAD_DETACHED);
+    }
+}
+
+static int learned_count(void)
+{
+    if (!learned.ready) {
+        return 0;
+    }
+    qemu_mutex_lock(&learned.lock);
+    int n = learned.states->len;
+    qemu_mutex_unlock(&learned.lock);
+    return n;
+}
+
+/*
+ * Crash guard. Before each shader is precached its hash is written to the
+ * guard file, which is removed when the run ends. If the guard file is there
+ * at the next start, that shader took the emulator down (a driver crash), so
+ * it goes in the skip file and is never precached again.
+ */
+
+static GHashTable *precache_skip;  /* hashes never to precache */
+
+static char *base_file(const char *name)
+{
+    return g_strdup_printf("%s%s", xemu_settings_get_base_path(), name);
+}
+
+static void guard_check(void)
+{
+    if (precache_skip) {
+        return;
+    }
+    precache_skip = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free,
+                                          NULL);
+
+    char *guard = base_file(NV2A_SHADER_GUARD_FILE);
+    char *skip = base_file(NV2A_SHADER_SKIP_FILE);
+    gchar *text = NULL;
+    if (g_file_get_contents(guard, &text, NULL, NULL)) {
+        uint64_t hash = g_ascii_strtoull(text, NULL, 16);
+        if (hash) {
+            FILE *f = qemu_fopen(skip, "a");
+            if (f) {
+                fprintf(f, "%016" PRIx64 "\n", hash);
+                fclose(f);
+            }
+            fprintf(stderr, "nv2a: the last precache stopped on shader "
+                    "%016" PRIx64 "; it will be skipped\n", hash);
+            xemu_diag_event("shader precache crashed on %016" PRIx64
+                            ", skipped from now on", hash);
+        }
+        g_free(text);
+        g_remove(guard);
+    }
+
+    text = NULL;
+    if (g_file_get_contents(skip, &text, NULL, NULL)) {
+        gchar **lines = g_strsplit(text, "\n", -1);
+        for (int i = 0; lines[i]; i++) {
+            uint64_t hash = g_ascii_strtoull(g_strstrip(lines[i]), NULL, 16);
+            if (hash) {
+                uint64_t *key = g_new(uint64_t, 1);
+                *key = hash;
+                g_hash_table_add(precache_skip, key);
+            }
+        }
+        g_strfreev(lines);
+        g_free(text);
+    }
+    g_free(guard);
+    g_free(skip);
+}
+
+static void guard_set(uint64_t hash)
+{
+    char *guard = base_file(NV2A_SHADER_GUARD_FILE);
+    FILE *f = qemu_fopen(guard, "wb");
+    if (f) {
+        fprintf(f, "%016" PRIx64 "\n", hash);
+        fclose(f);
+    }
+    g_free(guard);
+}
+
+static void guard_clear(void)
+{
+    char *guard = base_file(NV2A_SHADER_GUARD_FILE);
+    g_remove(guard);
+    g_free(guard);
+}
+
 static void *precache_thread(void *arg)
 {
     PGRAPHState *pg = arg;
     int list_count;
-    ShaderState *list = shader_list_load(&list_count);
+    ShaderState *list = shader_list_load(NV2A_SHADER_LIST_FILE, &list_count);
     GArray *all = g_array_new(FALSE, FALSE, sizeof(ShaderState));
 
     if (list) {
@@ -1387,7 +1649,15 @@ static void *precache_thread(void *arg)
     }
     g_free(list);
     if (g_config.perf.shader_precache_own) {
+        /* The cache files' states join this PC's own list too */
+        guint from = all->len;
         precache_add_own(all);
+        qemu_mutex_lock(&learned.lock);
+        for (guint i = from; i < all->len; i++) {
+            learned_insert_locked(&g_array_index(all, ShaderState, i));
+        }
+        g_array_append_vals(all, learned.states->data, learned.states->len);
+        qemu_mutex_unlock(&learned.lock);
     }
 
     /*
@@ -1418,7 +1688,12 @@ static void *precache_thread(void *arg)
     int *missing_index = g_new(int, MAX(count, 1));
     int n_missing = 0;
 
+    int skipped = 0;
     for (int i = 0; i < count; i++) {
+        if (g_hash_table_contains(precache_skip, &hashes[i])) {
+            skipped++;
+            continue;
+        }
         if (!shader_on_disk(hashes[i])) {
             missing[n_missing] = hashes[i];
             missing_index[n_missing++] = i;
@@ -1435,6 +1710,7 @@ static void *precache_thread(void *arg)
     precache.status.list_missing = n_missing;
     precache.status.disk_count = disk_count;
     precache.status.disk_bytes = disk_bytes;
+    precache.status.skipped_count = skipped;
     precache.status.scanned = true;
     bool build = precache.build && n_missing > 0;
     qemu_mutex_unlock(&precache.lock);
@@ -1445,6 +1721,7 @@ static void *precache_thread(void *arg)
         xemu_diag_event("shader precache started: %d to build", n_missing);
         glo_set_current(g_nv2a_context_precache);
         for (int i = 0; i < n_missing && !qatomic_read(&precache.stop); i++) {
+            guard_set(missing[i]);
             bool ok = precache_build(&states[missing_index[i]], missing[i],
                                      &unsupported);
             if (ok) {
@@ -1464,6 +1741,7 @@ static void *precache_thread(void *arg)
         }
         glFinish();
         glo_set_current(NULL);
+        guard_clear();
 
         shader_disk_usage(&disk_count, &disk_bytes);
         qemu_mutex_lock(&precache.lock);
@@ -1529,6 +1807,8 @@ static void precache_attach(PGRAPHState *pg)
         qemu_mutex_init(&precache.lock);
         lock_ready = true;
     }
+    learned_init();
+    guard_check();
     qemu_mutex_lock(&precache.lock);
     precache.pg = pg;
     qemu_mutex_unlock(&precache.lock);
@@ -1545,6 +1825,7 @@ static void precache_detach(void)
     precache.pg = NULL;
     precache.status.running = false;
     qemu_mutex_unlock(&precache.lock);
+    learned_save();
 }
 
 void nv2a_shader_precache_scan(void)
@@ -1568,8 +1849,11 @@ void nv2a_shader_precache_get_status(ShaderPrecacheStatus *status)
     if (!precache.pg) {
         return;
     }
+    learned_tick();
+    int learned_n = learned_count();
     qemu_mutex_lock(&precache.lock);
     *status = precache.status;
+    status->learned_count = learned_n;
     status->supported = precache.pg != NULL;
     snprintf(status->gpu, sizeof(status->gpu), "%s (%s)",
              shader_gl_renderer ? shader_gl_renderer : "?",
@@ -1579,7 +1863,7 @@ void nv2a_shader_precache_get_status(ShaderPrecacheStatus *status)
     qemu_mutex_unlock(&precache.lock);
 }
 
-bool nv2a_shader_cache_clear(void)
+bool nv2a_shader_cache_clear(bool forget_learned)
 {
     if (!precache.pg) {
         return false;
@@ -1588,6 +1872,18 @@ bool nv2a_shader_cache_clear(void)
     if (precache.status.running) {
         qemu_mutex_unlock(&precache.lock);
         return false;
+    }
+
+    if (!forget_learned) {
+        /* The cache files' states move into the own list before they go */
+        GArray *own = g_array_new(FALSE, FALSE, sizeof(ShaderState));
+        precache_add_own(own);
+        qemu_mutex_lock(&learned.lock);
+        for (guint i = 0; i < own->len; i++) {
+            learned_insert_locked(&g_array_index(own, ShaderState, i));
+        }
+        qemu_mutex_unlock(&learned.lock);
+        g_array_free(own, TRUE);
     }
 
     char *root = g_strdup_printf("%sshaders", xemu_settings_get_base_path());
@@ -1616,6 +1912,28 @@ bool nv2a_shader_cache_clear(void)
     char *list = shader_get_lru_cache_path();
     g_remove(list);
     g_free(list);
+
+    if (forget_learned) {
+        /* A save still running would write the list back */
+        qemu_mutex_lock(&learned.save_lock);
+        qemu_mutex_lock(&learned.lock);
+        g_array_set_size(learned.states, 0);
+        g_hash_table_remove_all(learned.hashes);
+        learned.dirty = false;
+        qemu_mutex_unlock(&learned.lock);
+        char *path = base_file(NV2A_SHADER_LEARNED_FILE);
+        g_remove(path);
+        g_free(path);
+        qemu_mutex_unlock(&learned.save_lock);
+
+        path = base_file(NV2A_SHADER_SKIP_FILE);
+        g_remove(path);
+        g_free(path);
+        g_hash_table_remove_all(precache_skip);
+    } else {
+        /* Kept: what the list learned this run is written now */
+        learned_save();
+    }
 
     precache.status.disk_count = 0;
     precache.status.disk_bytes = 0;
