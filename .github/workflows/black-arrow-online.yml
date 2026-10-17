@@ -12,6 +12,9 @@ name: Black Arrow Online release
 # is built. Taking the xemu release into a real build is a merge done by hand
 # and pushed to main.
 #
+# A push whose shader state headers no longer match .github/shader-state.txt
+# releases nothing (see that file): the shader lists would stop loading.
+#
 # The Windows files are published as soon as they are built. The Mac app
 # takes longer; its files are added to the same release when it is done, and
 # a failed Mac build leaves the release Windows only. Windows files and Mac
@@ -163,6 +166,21 @@ jobs:
         echo "commit=$commit" >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "image=ghcr.io/xemu-project/$image" >> "$GITHUB_OUTPUT"
+    # Drafts are allowed through: their notes warn about this instead
+    - name: Check the shader list format
+      if: steps.merge.outputs.mode == 'release'
+      run: |
+        set -euo pipefail
+        files="hw/xbox/nv2a/pgraph/glsl/shaders.h hw/xbox/nv2a/pgraph/glsl/vsh.h
+               hw/xbox/nv2a/pgraph/glsl/geom.h hw/xbox/nv2a/pgraph/glsl/psh.h
+               hw/xbox/nv2a/pgraph/vsh_regs.h hw/xbox/nv2a/pgraph/psh_regs.h"
+        want=$(grep -v -e '^#' -e '^[[:space:]]*$' .github/shader-state.txt | head -n 1 | tr -d '[:space:]')
+        got=$(for f in $files; do git show "HEAD:$f"; done | sha256sum | cut -d' ' -f1)
+        if [ "$want" != "$got" ]; then
+          echo "::error title=Shader state changed, nothing released::The ShaderState headers changed, so xemu would reject shader-list.bin and players' learned shader lists and precache would turn off. Ship a converter for both lists in this build if the layout changed, then put this line in .github/shader-state.txt: $got"
+          exit 1
+        fi
+        echo "Shader state headers unchanged ($got)."
     - name: Compare with the latest release
       id: plan
       env:

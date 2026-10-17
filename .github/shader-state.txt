@@ -1,0 +1,14 @@
+# Fingerprint of the headers that make up ShaderState, the format of
+# shader-list.bin and shader-list-mine.bin. The release workflow checks it on
+# every push to main and releases nothing when it does not match: a different
+# ShaderState makes xemu reject the shipped and learned shader lists, which
+# quietly turns shader precache off for every player.
+#
+# When it fails:
+#   - the layout really changed (fields added, removed or resized): ship a
+#     converter for both lists in the same build, then update the line below;
+#   - only comments or code changed in those headers: just update the line.
+# The new line is printed in the failed run's error. Files, in this order:
+#   hw/xbox/nv2a/pgraph/glsl/shaders.h vsh.h geom.h psh.h
+#   hw/xbox/nv2a/pgraph/vsh_regs.h psh_regs.h
+953de0c57d1eb9a6fba8659e2f9a765dd1d64cc9b7ee71d4da45e9c702022ea5
