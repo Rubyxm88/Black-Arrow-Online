@@ -41,6 +41,7 @@
 typedef struct SurfaceBinding {
     QTAILQ_ENTRY(SurfaceBinding) entry;
     MemAccessCallback *access_cb;
+    bool watch_paused; /* CPU access watch off until the GPU touches it */
 
     hwaddr vram_addr;
 

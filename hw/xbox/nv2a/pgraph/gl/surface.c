@@ -33,6 +33,35 @@ static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
                                        uint8_t *pixels);
 static void surface_get_dimensions(PGRAPHState *pg, unsigned int *width, unsigned int *height);
 
+static void register_cpu_access_callback(NV2AState *d, SurfaceBinding *surface);
+
+/*
+ * Every game CPU access to a watched render target goes through
+ * surface_access_callback, which is slow (a menu that rewrites a 640x480
+ * target from the CPU calls it ~300,000 times a frame). Once the target has
+ * nothing to copy back and is already marked for upload, further accesses
+ * change nothing, so the watch is switched off until the GPU draws into the
+ * target or uploads it again. XEMU_SURF_WATCH_PAUSE=0 turns this off (test).
+ */
+static bool surf_watch_pause_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *e = getenv("XEMU_SURF_WATCH_PAUSE");
+        enabled = !(e && e[0] == '0');
+    }
+    return enabled;
+}
+
+static void surface_watch_resume(NV2AState *d, SurfaceBinding *surface)
+{
+    if (surface->watch_paused) {
+        surface->watch_paused = false;
+        register_cpu_access_callback(d, surface);
+    }
+}
+
+
 void pgraph_gl_set_surface_scale_factor(NV2AState *d, unsigned int scale)
 {
     PGRAPHState *pg = &d->pgraph;
@@ -103,6 +132,15 @@ void pgraph_gl_set_surface_dirty(PGRAPHState *pg, bool color, bool zeta)
     zeta = zeta && pgraph_zeta_write_enabled(pg);
     pg->surface_color.draw_dirty |= color;
     pg->surface_zeta.draw_dirty |= zeta;
+
+    if (color && r->color_binding) {
+        surface_watch_resume(container_of(pg, NV2AState, pgraph),
+                             r->color_binding);
+    }
+    if (zeta && r->zeta_binding) {
+        surface_watch_resume(container_of(pg, NV2AState, pgraph),
+                             r->zeta_binding);
+    }
 
     if (r->color_binding) {
         r->color_binding->draw_dirty |= color;
@@ -452,6 +490,14 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
 
         if (write) {
             surface->upload_pending = true;
+        }
+
+        if (surf_watch_pause_enabled() && surface->access_cb &&
+            !surface->draw_dirty && surface->upload_pending) {
+            mem_access_callback_remove_by_ref(qemu_get_cpu(0),
+                                              surface->access_cb);
+            surface->access_cb = NULL;
+            surface->watch_paused = true;
         }
     }
 
@@ -916,6 +962,7 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
 
     surface->upload_pending = false;
     surface->draw_time = pg->draw_time;
+    surface_watch_resume(d, surface);
 
     if (!surface->width || !surface->height) {
         return;
