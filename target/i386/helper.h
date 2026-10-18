@@ -223,6 +223,7 @@ DEF_HELPER_FLAGS_2(pext, TCG_CALL_NO_RWG_SE, tl, tl, tl)
 DEF_HELPER_2(ldmxcsr, void, env, i32)
 DEF_HELPER_1(update_mxcsr, void, env)
 DEF_HELPER_1(enter_mmx, void, env)
+DEF_HELPER_1(xbl_yuv_hle, void, env)
 DEF_HELPER_1(emms, void, env)
 
 #define SHIFT 0

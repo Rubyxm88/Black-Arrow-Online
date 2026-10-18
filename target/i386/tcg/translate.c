@@ -4328,6 +4328,18 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     }
 #endif
 
+    /* Black Arrow's menu video colour conversion, done natively (test only) */
+    if (xbl_yuv_hle_match(cpu_env(cpu), dc->base.pc_next)) {
+        gen_update_cc_op(dc);
+        gen_update_eip_cur(dc);
+        gen_helper_xbl_yuv_hle(tcg_env);
+        set_cc_op(dc, CC_OP_DYNAMIC);
+        dc->pc_save = -1;
+        dc->base.pc_next += 1;
+        dc->base.is_jmp = DISAS_JUMP;
+        return;
+    }
+
     switch (sigsetjmp(dc->jmpbuf, 0)) {
     case 0:
         disas_insn(dc, cpu);

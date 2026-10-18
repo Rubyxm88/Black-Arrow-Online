@@ -128,4 +128,8 @@ static inline void do_end_instruction(CPUX86State *env)
     env->hflags &= ~HF_INHIBIT_IRQ_MASK;
     env->eflags &= ~HF_RF_MASK;
 }
+/* xbl_hle.c (test only): native versions of hot Black Arrow routines */
+bool xbl_yuv_hle_enabled(void);
+bool xbl_yuv_hle_match(CPUX86State *env, target_ulong pc);
+
 #endif /* I386_HELPER_TCG_H */
