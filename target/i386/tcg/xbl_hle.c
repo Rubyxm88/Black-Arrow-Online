@@ -1,12 +1,14 @@
 /*
- * Black Arrow: native versions of hot game routines (test only)
+ * Black Arrow: native versions of hot game routines
  *
  * Rainbow Six 3: Black Arrow (title update 201) converts its menu background
  * video from YUV to RGB with an MMX loop at 0x4bd0e0. Under TCG that loop is
  * about half of the game CPU's time on every menu. When the translator meets
  * exactly those code bytes it calls helper_xbl_yuv_hle instead, which does the
  * same work in C: the same memory reads and writes, the same registers, flags
- * and MMX registers on return. XEMU_YUV_HLE=0 turns it off.
+ * and MMX registers on return. XEMU_YUV_HLE=0 turns it off, =1 forces it on.
+ * It is on by default only where the SSE2 loop is built: the plain C path
+ * (e.g. on arm64 Macs) is slower than the JIT.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -49,7 +51,11 @@ bool xbl_yuv_hle_enabled(void)
 {
     if (yuv_enabled < 0) {
         const char *e = getenv("XEMU_YUV_HLE");
+#if defined(__SSE2__)
         yuv_enabled = !(e && e[0] == '0');
+#else
+        yuv_enabled = e && e[0] == '1';
+#endif
     }
     return yuv_enabled;
 }
