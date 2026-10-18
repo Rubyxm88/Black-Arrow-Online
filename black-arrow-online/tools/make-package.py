@@ -102,11 +102,13 @@ def main():
     if missing:
         sys.exit('missing content discs:\n  ' + '\n  '.join(missing))
 
+    # The xemu release is the start of the version, as in 0.8.137-91-g...
+    xemu = a.version.lstrip('v').split('-')[0]
     with open(os.path.join(pkg, 'system', 'version.txt'), 'w',
               newline='\n') as f:
-        f.write('build=%s\nxemu=0.8.136\nversion=%s\ndate=%s\ncommit=%s\n'
-                'upstream=v0.8.136\nnotes=%s\n' %
-                (a.build, a.version, a.date, a.commit, a.notes))
+        f.write('build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\n'
+                'upstream=v%s\nnotes=%s\n' %
+                (a.build, xemu, a.version, a.date, a.commit, xemu, a.notes))
 
     os.makedirs(a.out, exist_ok=True)
     full = []
