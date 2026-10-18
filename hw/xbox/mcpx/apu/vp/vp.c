@@ -1469,12 +1469,14 @@ static void voice_process(MCPXAPUState *d,
         }
     }
 
+    bool hrtf_applied = false;
     if (v < MCPX_HW_MAX_3D_VOICES && g_config.audio.hrtf) {
         uint16_t hrtf_handle =
             voice_get_mask(d, v, NV_PAVS_VOICE_CFG_HRTF_TARGET,
                            NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE);
         if (hrtf_handle != HRTF_NULL_HANDLE) {
             hrtf_filter_process(&d->vp.filters[v].hrtf, samples, samples);
+            hrtf_applied = true;
         }
     }
 
@@ -1490,8 +1492,15 @@ static void voice_process(MCPXAPUState *d,
             hr = 1 << d->vp.submix_headroom[bin[b]];
         }
         g *= attenuate(vol[b])/hr;
+        /* After HRTF the voice is stereo (left, right ear) even when the
+         * source is mono. DirectSound sets the HRTF submixes to front left,
+         * back left, front right, back right (RS3: bins 6, 8, 7, 9), so
+         * submixes 0-1 take the left ear and 2-3 the right. Using
+         * b % channels sent the left ear to all four, so with the DSP on
+         * every 3D sound lost its direction. */
+        int src_ch = (hrtf_applied && b < 4) ? (b >> 1) : (b % channels);
         for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-            mixbins[bin[b]][i] += g*samples[i][b % channels];
+            mixbins[bin[b]][i] += g*samples[i][src_ch];
         }
     }
 

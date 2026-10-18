@@ -62,20 +62,25 @@ hrtf_filter_set_target_params(HrtfFilter *f, float hrir_coeff[2][HRTF_NUM_TAPS],
     f->itd_tar =
         fmaxf(-HRTF_MAX_DELAY_SAMPLES, fminf(itd, HRTF_MAX_DELAY_SAMPLES));
 
+    // Normalize for unity gain on the louder ear. Both ears share the
+    // factor: the game puts the level difference between the ears into the
+    // coefficients (about 8 dB to the side in Rainbow Six 3), and scaling
+    // each ear on its own threw that away.
+    float s[2] = { 0.0f, 0.0f };
     for (int ch = 0; ch < 2; ch++) {
-        float *coeff = f->ch[ch].hrir_coeff_tar;
-        memcpy(coeff, hrir_coeff[ch], sizeof(f->ch[ch].hrir_coeff_tar));
-
-        // Normalize coefficients for unity filter gain
-        float s = 0.0f;
+        memcpy(f->ch[ch].hrir_coeff_tar, hrir_coeff[ch],
+               sizeof(f->ch[ch].hrir_coeff_tar));
         for (int k = 0; k < HRTF_NUM_TAPS; k++) {
-            s += fabsf(coeff[k]);
+            s[ch] += fabsf(hrir_coeff[ch][k]);
         }
-        if (s == 0.0f || s == 1.0f) {
-            break;
-        }
+    }
+    float m = fmaxf(s[0], s[1]);
+    if (m == 0.0f || m == 1.0f) {
+        return;
+    }
+    for (int ch = 0; ch < 2; ch++) {
         for (int k = 0; k < HRTF_NUM_TAPS; k++) {
-            coeff[k] /= s;
+            f->ch[ch].hrir_coeff_tar[k] /= m;
         }
     }
 }
