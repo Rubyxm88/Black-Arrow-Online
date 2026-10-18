@@ -23,6 +23,8 @@
 #include "qemu/processor.h"
 #include "adpcm.h"
 
+static void sound_mix_voice_on(MCPXAPUState *d, int v);
+
 static const struct {
     hwaddr top, current, next;
 } voice_list_regs[] = {
@@ -232,6 +234,8 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
                        NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
         d->vp.ssl[selected_handle].ssl_seg = 0; // FIXME: verify this
         d->vp.ssl[selected_handle].ssl_index = 0; // FIXME: verify this
+
+        sound_mix_voice_on(d, selected_handle);
 
         unsigned int ea_start = GET_MASK(argument, NV1BA0_PIO_VOICE_ON_ENVA);
         voice_set_mask(d, selected_handle, NV_PAVS_VOICE_PAR_STATE,
@@ -688,6 +692,71 @@ static hwaddr get_data_ptr(hwaddr sge_base, unsigned int max_sge, uint32_t addr)
     //     ldl_le_phys(&address_space_memory, sge_base + entry * 4 * 2 + 4);
     DPRINTF("Addr: 0x%08X, control: 0x%08X\n", prd_address, prd_control);
     return prd_address + addr % TARGET_PAGE_SIZE;
+}
+
+/*
+ * Louder movement: footsteps and the rattle of a moving player's gear and
+ * clothes, made louder so nearby players are easier to hear. xemu sees no
+ * sound names, so a voice's kind is found from its samples: the md5 of the
+ * first SOUND_PRINT_BYTES bytes at voice on is looked up in a table made
+ * from the Rainbow Six 3 sound banks.
+ */
+#define SOUND_PRINT_BYTES 72
+#define LOUDER_MOVEMENT_GAIN 1.8f
+
+enum {
+    SOUND_MIX_OTHER,
+    SOUND_MIX_FOOTSTEPS,
+    SOUND_MIX_GEAR,
+    SOUND_MIX_COUNT
+};
+
+typedef struct {
+    uint8_t md5[16];
+    uint8_t group;
+} SoundPrint;
+
+#include "sound-prints.h"
+
+static uint8_t sound_mix_voice_group[MCPX_HW_MAX_VOICES];
+static float sound_mix_gain[SOUND_MIX_COUNT] = { 1, 1, 1 };
+
+static int sound_print_cmp(const void *key, const void *entry)
+{
+    return memcmp(key, ((const SoundPrint *)entry)->md5, 16);
+}
+
+static void sound_mix_voice_on(MCPXAPUState *d, int v)
+{
+    if (voice_get_mask(d, v, NV_PAVS_VOICE_CFG_FMT,
+                       NV_PAVS_VOICE_CFG_FMT_DATA_TYPE)) {
+        sound_mix_voice_group[v] = SOUND_MIX_OTHER; /* streamed */
+        return;
+    }
+    uint32_t ba = voice_get_mask(d, v, NV_PAVS_VOICE_CUR_PSL_START,
+                                 NV_PAVS_VOICE_CUR_PSL_START_BA);
+    uint8_t buf[SOUND_PRINT_BYTES];
+    for (int i = 0; i < SOUND_PRINT_BYTES; i++) {
+        hwaddr a = get_data_ptr(d->regs[NV_PAPU_VPSGEADDR], 0xFFFFFFFF, ba + i);
+        buf[i] = ldub_phys(&address_space_memory, a);
+    }
+    uint8_t md5[16];
+    gsize len = sizeof(md5);
+    GChecksum *c = g_checksum_new(G_CHECKSUM_MD5);
+    g_checksum_update(c, buf, sizeof(buf));
+    g_checksum_get_digest(c, md5, &len);
+    g_checksum_free(c);
+    const SoundPrint *p =
+        bsearch(md5, sound_prints, ARRAY_SIZE(sound_prints),
+                sizeof(sound_prints[0]), sound_print_cmp);
+    sound_mix_voice_group[v] = p ? p->group : SOUND_MIX_OTHER;
+}
+
+static void sound_mix_update(void)
+{
+    float g = g_config.audio.louder_movement ? LOUDER_MOVEMENT_GAIN : 1.0f;
+    sound_mix_gain[SOUND_MIX_FOOTSTEPS] = g;
+    sound_mix_gain[SOUND_MIX_GEAR] = g;
 }
 
 static float voice_step_envelope(MCPXAPUState *d, uint16_t v, uint32_t reg_0,
@@ -1341,6 +1410,7 @@ static void voice_process(MCPXAPUState *d,
         NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
     assert(ea_value >= 0.0f);
     assert(ea_value <= 1.0f);
+    ea_value *= sound_mix_gain[sound_mix_voice_group[v]];
 
     float samples[NUM_SAMPLES_PER_FRAME][2] = { 0 };
 
@@ -1865,6 +1935,7 @@ static void voice_work_finalize(MCPXAPUState *d)
 
 void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
 {
+    sound_mix_update();
     memset(d->vp.sample_buf, 0, sizeof(d->vp.sample_buf));
 
     /* Process all voices, mixing each into the affected MIXBINs */

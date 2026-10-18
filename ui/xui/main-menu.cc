@@ -856,6 +856,9 @@ void MainMenuAudioView::Draw()
             g_config.audio.use_dsp_jit = true;
         }
     }
+    Toggle("Louder movement", &g_config.audio.louder_movement,
+           "Footsteps and the rattle of gear and clothes at 180%, so "
+           "nearby players are easier to hear (Black Arrow)");
 
 }
 
