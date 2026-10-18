@@ -237,9 +237,11 @@ jobs:
           echo "- Updated to xemu release $UPSTREAM" >> meta/changes.md
         fi
         if [ -n "$prev_commit" ] && git cat-file -e "$prev_commit^{commit}" 2>/dev/null; then
-          # Changes to the build setup are of no interest to players
+          # Only player-facing lines: subjects that start with a lowercase
+          # code area ("ci:", "nv2a:", "i386/tcg:", "make-package.py:") are
+          # for developers. "Mac:" lines stay.
           git log --no-merges --first-parent --format='- %s' "$prev_commit..$COMMIT" |
-              { grep -v '^- ci:' || true; } | head -n 20 >> meta/changes.md
+              { grep -Ev '^- [a-z0-9][A-Za-z0-9/._-]*: ' || true; } | head -n 20 >> meta/changes.md
         fi
         head -n 1 meta/changes.md | cut -c 3- > meta/notes.txt
 
