@@ -298,6 +298,29 @@ static uint32_t yuv_row(Yuv *y, const Span *dst, const Span *ys,
     return edx;
 }
 
+#include "xbl_hle_yuv_fast.inc"
+
+static bool ranges_overlap32(uint32_t a, uint32_t alen, uint32_t b,
+                             uint32_t blen)
+{
+    return a < b + blen && b < a + alen;
+}
+
+/* A row: the fast loop for all but the last group, then the exact one */
+static uint32_t yuv_row_any(Yuv *y, bool fast, const Span *dst,
+                            const Span *ys, const Span *us, const Span *vs,
+                            uint32_t edi, uint32_t end, uint32_t k,
+                            uint32_t edx, uint32_t *ebp, uint32_t *ebx,
+                            uint32_t *final_edi)
+{
+#ifdef HAVE_YUV_ROW_FAST
+    if (fast && k > 1) {
+        yuv_row_fast(y, dst, ys, us, vs, &edi, k - 1, &edx, ebp, ebx);
+    }
+#endif
+    return yuv_row(y, dst, ys, us, vs, edi, end, edx, ebp, ebx, final_edi);
+}
+
 /* Called instead of the routine at YUV_PC: does it and returns to the caller */
 void helper_xbl_yuv_hle(CPUX86State *env)
 {
@@ -354,16 +377,29 @@ void helper_xbl_yuv_hle(CPUX86State *env)
 
     uint32_t ebp = u, ebx = v, edi;
 
+    /* The SSE2 loop reads a group before writing it: only when no overlap */
+    bool quick = true;
+    uint32_t src_at[] = { y0, y1, u, v, T_START, K_START };
+    uint32_t src_len[] = { k * 4, k * 4, k * 2, k * 2, T_LEN, K_LEN };
+    for (unsigned i = 0; i < ARRAY_SIZE(src_at); i++) {
+        if (ranges_overlap32(dst0, k * 16, src_at[i], src_len[i]) ||
+            ranges_overlap32(dst1, k * 16, src_at[i], src_len[i])) {
+            quick = false;
+        }
+    }
+
     /* Row 0: the end pointer is stored first, as the game does */
     cpu_stl_data_ra(env, G_DST0, end0, ra);
-    y0 = yuv_row(&y, &sd0, &sy0, &su, &sv, dst0, end0, y0, &ebp, &ebx, &edi);
+    y0 = yuv_row_any(&y, quick, &sd0, &sy0, &su, &sv, dst0, end0, k, y0, &ebp,
+                     &ebx, &edi);
     cpu_stl_data_ra(env, G_Y0, y0, ra);
 
     /* Row 1 reuses the same U and V */
     ebp = u;
     ebx = v;
     cpu_stl_data_ra(env, G_DST1, end1, ra);
-    y1 = yuv_row(&y, &sd1, &sy1, &su, &sv, dst1, end1, y1, &ebp, &ebx, &edi);
+    y1 = yuv_row_any(&y, quick, &sd1, &sy1, &su, &sv, dst1, end1, k, y1, &ebp,
+                     &ebx, &edi);
     cpu_stl_data_ra(env, G_Y1, y1, ra);
     cpu_stl_data_ra(env, G_U, ebp, ra);
     cpu_stl_data_ra(env, G_V, ebx, ra);
