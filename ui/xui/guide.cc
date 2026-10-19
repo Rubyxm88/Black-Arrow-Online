@@ -97,7 +97,8 @@ static const char *const menus_text[] = {
     "Your Xbox Live account (opens xb.live), Create an Account, Link Code and "
     "the Connection Check.",
     "# Sound",
-    "Sound quality (Fast or Accurate) and Louder movement.",
+    "Sound quality (Fast Enhanced or Accurate), 5.1 surround and Louder "
+    "movement.",
     "# Graphics",
     "Resolution, Enhanced graphics, fullscreen (F11), window scaling, "
     "shaders and the performance overlay.",
@@ -157,7 +158,10 @@ static const char *const settings_text[] = {
     "- Improve render handling: speeds up screen effects. Turn it off if "
     "effects look wrong.",
     "# Sound",
-    "- Fast (recommended): mixes the game's sounds straight to your speakers.",
+    "- Fast Enhanced (recommended): mixes the game's sounds straight to "
+    "your speakers, with 3D direction fixes. Light on the PC.",
+    "- Channels: Stereo, or 5.1 Surround (beta) for front, center, sub and "
+    "rear speakers (Fast Enhanced only).",
     "- Accurate: runs the Xbox's own sound effects processor, about a quarter "
     "of a CPU core more.",
     "- Louder movement: makes footsteps and the rattle of gear and clothes "

@@ -847,7 +847,7 @@ void MainMenuAudioView::Draw()
     SectionTitle("Quality");
     int mode = g_config.audio.use_dsp ? 1 : 0;
     if (ChevronCombo("Sound", &mode,
-                     "Fast (recommended)\0"
+                     "Fast Enhanced (recommended)\0"
                      "Accurate\0",
                      "Accurate runs the Xbox's own sound effects processor "
                      "and uses several times more CPU")) {
@@ -862,10 +862,10 @@ void MainMenuAudioView::Draw()
 
     SectionTitle("Speakers");
     ChevronCombo("Channels", &g_config.audio.channels,
-                 "Stereo "
-                 "5.1 Surround (beta) ",
+                 "Stereo\0"
+                 "5.1 Surround (beta)\0",
                  "5.1 sends the game's speaker mix to front, center, sub "
-                 "and rear speakers. Works with Fast sound; Accurate stays "
+                 "and rear speakers. Works with Fast Enhanced sound; Accurate stays "
                  "on the front pair");
 
 }

@@ -522,7 +522,8 @@ static void SoundMenu()
 {
     MenuHeader("Quality");
     ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
-    if (ImGui::MenuItem("Fast (recommended)", NULL, !g_config.audio.use_dsp)) {
+    if (ImGui::MenuItem("Fast Enhanced (recommended)", NULL,
+                        !g_config.audio.use_dsp)) {
         g_config.audio.use_dsp = false;
     }
     MenuItemHelp("Mixes the game's sounds straight to your speakers. Lightest "
@@ -549,8 +550,8 @@ static void SoundMenu()
         g_config.audio.channels = CONFIG_AUDIO_CHANNELS_SURROUND;
     }
     MenuItemHelp("Front, center, sub and rear speakers, from the game's own "
-                 "speaker mix. Works with Fast sound; Accurate stays on the "
-                 "front pair.");
+                 "speaker mix. Works with Fast Enhanced sound; Accurate stays "
+                 "on the front pair.");
     ImGui::PopItemFlag();
 
     MenuHeader("Gameplay");
