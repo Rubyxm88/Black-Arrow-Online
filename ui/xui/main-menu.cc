@@ -760,10 +760,10 @@ void MainMenuDisplayView::Draw()
                      "Increase surface scaling factor for higher quality")) {
         nv2a_set_surface_scale_factor(rendering_scale+1);
     }
-    Toggle("Skip render target copy-back (speed hack)",
+    Toggle("Improve render handling",
            &g_config.display.quality.skip_reuse_copyback,
-           "Faster when a game reuses render target memory every frame "
-           "(OpenGL only). Turn off if effects look wrong");
+           "Improves frame rate and reduces stutter when rendering screen "
+           "effects (OpenGL only). Turn off if effects look wrong");
 
     SectionTitle("Window");
     bool fs = xemu_is_fullscreen();
@@ -857,8 +857,8 @@ void MainMenuAudioView::Draw()
         }
     }
     Toggle("Louder movement", &g_config.audio.louder_movement,
-           "Footsteps and the rattle of gear and clothes at 180%, so "
-           "nearby players are easier to hear (Black Arrow)");
+           "Makes footsteps and the rattle of gear and clothes easier "
+           "to hear nearby");
 
 }
 

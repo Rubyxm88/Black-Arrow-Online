@@ -96,11 +96,11 @@ static const char *const menus_text[] = {
     "# XB Live",
     "Your Xbox Live account (opens xb.live), Create an Account, Link Code and "
     "the Connection Check.",
-    "# BA Online",
-    "Choices you make once: graphics (renderer, resolution, vertical sync), "
-    "sound (Fast or Accurate) and shaders.",
-    "# View",
-    "Window size and scaling, fullscreen (F11) and the performance overlay.",
+    "# Sound",
+    "Sound quality (Fast or Accurate) and Louder movement.",
+    "# Graphics",
+    "Resolution, Enhanced graphics, fullscreen (F11), window scaling, "
+    "shaders and the performance overlay.",
     "# Troubleshoot",
     "Everything for when something goes wrong: Connection Check, diagnostics "
     "log, freeze reports, the shader and game caches, the logs folder.",
@@ -145,19 +145,23 @@ static const char *const updates_text[] = {
 
 static const char *const settings_text[] = {
     "# Graphics",
+    "- Resolution: 1x (fastest) to 4x. 2x is the default.",
+    "- Enhanced graphics: sharpens textures, distant floors and menu text, "
+    "and smooths jagged edges.",
 #if defined(__APPLE__)
     "- Renderer: always OpenGL on a Mac.",
 #else
     "- Renderer: OpenGL (recommended) or Vulkan. Needs a restart. Shader "
     "caching works with OpenGL only.",
 #endif
-    "- Resolution: 1x (fastest) to 4x. 2x is the default.",
-    "- Skip render target copy-back: a speed hack. Turn it off if the game "
-    "looks wrong.",
+    "- Improve render handling: speeds up screen effects. Turn it off if "
+    "effects look wrong.",
     "# Sound",
     "- Fast (recommended): mixes the game's sounds straight to your speakers.",
     "- Accurate: runs the Xbox's own sound effects processor, about a quarter "
     "of a CPU core more.",
+    "- Louder movement: makes footsteps and the rattle of gear and clothes "
+    "easier to hear nearby.",
     "# Shaders",
     "The first time an effect appears (a map, night vision, a menu) your "
     "graphics card builds a shader for it, which used to make the game hitch. "
@@ -165,9 +169,8 @@ static const char *const settings_text[] = {
     "missing ones in the background a few seconds after starting. It happens "
     "again only after a graphics driver update or a resolution change.",
     "# Performance overlay",
-    "View > Show performance overlay: frame rate, 1% lows, frame times, CPU, "
-    "GPU and memory over the game. View > Customize changes its style, "
-    "corner, size and what it shows.",
+    "Graphics > Performance Overlay > Show performance overlay: frame rate, "
+    "1% lows, frame times, CPU, GPU and memory over the game.",
     NULL
 };
 
@@ -196,13 +199,13 @@ static const char *const trouble_text[] = {
     "- Still failing: send system\\xemu.log to whoever shared the package.",
 #endif
     "# Game looks wrong",
-    "BA Online: turn off Skip render target copy-back. Effects missing or "
-    "flickering: turn off Build shaders in the background.",
+    "Graphics: turn off Improve render handling. Effects missing or "
+    "flickering: turn off Build shaders in the background in Graphics.",
     "# Slow or stuttering",
 #if defined(__APPLE__)
-    "BA Online > Resolution: 1x.",
+    "Graphics > Resolution: 1x.",
 #else
-    "BA Online > Resolution: 1x. On a 144 Hz or 165 Hz monitor, set it to "
+    "Graphics > Resolution: 1x. On a 144 Hz or 165 Hz monitor, set it to "
     "120 Hz or 60 Hz: the game runs at 30 frames.",
 #endif
     "# Lag",

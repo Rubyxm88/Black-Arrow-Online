@@ -24,6 +24,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/pgraph/s3tc.h"
 #include "hw/xbox/nv2a/pgraph/swizzle.h"
 #include "qemu/fast-hash.h"
@@ -1094,6 +1095,14 @@ static void create_texture(PGRAPHState *pg, int texture_idx)
     uint32_t max_anisotropy =
         1 << (GET_MASK(pgraph_reg_r(pg, NV_PGRAPH_TEXCTL0_0 + texture_idx*4),
                        NV_PGRAPH_TEXCTL0_0_MAX_ANISOTROPY));
+    if (g_config.display.quality.enhanced && !f_basic.linear && state.levels > 1) {
+        max_anisotropy = MAX(max_anisotropy, 8u);
+        if (GET_MASK(filter, NV_PGRAPH_TEXFILTER0_MIN) ==
+            NV_PGRAPH_TEXFILTER0_MIN_TENT_NEARESTLOD) {
+            SET_MASK(filter, NV_PGRAPH_TEXFILTER0_MIN,
+                     NV_PGRAPH_TEXFILTER0_MIN_TENT_TENT_LOD);
+        }
+    }
 
     TextureKey key;
     memset(&key, 0, sizeof(key));

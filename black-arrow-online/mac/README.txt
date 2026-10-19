@@ -88,10 +88,11 @@ PLAY           Play <game> from the games folder (no games yet: opens the
                Game Updates, XBL Dashboard, Original Xbox Dashboard.
 XB LIVE        Account: <gamertag>, Create an Account (see NEW ACCOUNT),
                Link Code, Connection Check.
-BA ONLINE      Graphics (resolution, vertical sync), sound (Fast or
-               Accurate) and shaders. Every switch can be turned back off if
-               something looks wrong. On a Mac the renderer is always OpenGL.
-VIEW           Window scaling, fullscreen and the performance overlay.
+SOUND          Sound quality (Fast or Accurate) and Louder movement.
+GRAPHICS       Resolution, Enhanced graphics, fullscreen, window scaling,
+               shaders, Improve render handling, performance overlay and
+               renderer. Every switch can be turned back off if something
+               looks wrong. On a Mac the renderer is always OpenGL.
 TROUBLESHOOT   Connection Check, Record Diagnostics Log, Mark Lag Spike (F9),
                Open Last Freeze Report, Shader Cache, Empty Game Cache (see
                GAME CACHE), Open Logs Folder.

@@ -239,6 +239,9 @@ display:
       type: integer
       default: 1
     skip_reuse_copyback: bool
+    enhanced:
+      type: bool
+      default: true
   filtering:
     type: enum
     values: [linear, nearest]

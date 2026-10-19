@@ -5,7 +5,7 @@
 // ahead of time (Precache Shaders) and empties the cache (Clear Cache). When
 // there are shaders this PC has not built yet (first run, a driver update, a
 // new resolution scale), they are built in the background by themselves,
-// with a small notice, unless BA Online says not to.
+// with a small notice, unless Graphics > Precache says not to.
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -200,7 +200,7 @@ void ShaderCacheWindow::Draw()
     if (!status.supported) {
         ImGui::TextWrapped("Not available with Vulkan. Shader precaching "
                            "works with the OpenGL renderer: choose it under "
-                           "BA Online > Renderer and restart.");
+                           "Graphics > Renderer and restart.");
     } else {
         ImGui::Text("Graphics card: %s", status.gpu);
         ImGui::Text("Driver: %s", status.driver);

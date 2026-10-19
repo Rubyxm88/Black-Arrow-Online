@@ -79,7 +79,17 @@ static void pgraph_gl_init(NV2AState *d, Error **errp)
     pg->swizzle_attrs = 0;
 
     r->supported_extensions.texture_filter_anisotropic =
-        glo_check_extension("GL_EXT_texture_filter_anisotropic");
+        glo_check_extension("GL_EXT_texture_filter_anisotropic") ||
+        glo_check_extension("GL_ARB_texture_filter_anisotropic");
+    r->supported_extensions.max_anisotropy = 1.0f;
+    if (r->supported_extensions.texture_filter_anisotropic) {
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT,
+                    &r->supported_extensions.max_anisotropy);
+        if (glGetError() != GL_NO_ERROR ||
+            r->supported_extensions.max_anisotropy < 1.0f) {
+            r->supported_extensions.max_anisotropy = 1.0f;
+        }
+    }
 }
 
 static void pgraph_gl_finalize(NV2AState *d)

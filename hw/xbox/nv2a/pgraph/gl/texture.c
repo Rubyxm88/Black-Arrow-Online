@@ -20,6 +20,7 @@
  */
 
 #include "qemu/fast-hash.h"
+#include "ui/xemu-settings.h"
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "hw/xbox/nv2a/pgraph/swizzle.h"
 #include "hw/xbox/nv2a/pgraph/s3tc.h"
@@ -140,6 +141,11 @@ static void apply_texture_parameters(PGRAPHGLState *r,
         }
     }
 
+    if (!f->linear && g_config.display.quality.enhanced &&
+        min_filter == NV_PGRAPH_TEXFILTER0_MIN_TENT_NEARESTLOD) {
+        min_filter = NV_PGRAPH_TEXFILTER0_MIN_TENT_TENT_LOD;
+    }
+
     if (min_filter != binding->min_filter) {
         glTexParameteri(binding->gl_target, GL_TEXTURE_MIN_FILTER,
                         pgraph_texture_min_filter_gl_map[min_filter]);
@@ -184,8 +190,22 @@ static void apply_texture_parameters(PGRAPHGLState *r,
     }
 
     if (r->supported_extensions.texture_filter_anisotropic) {
-        glTexParameterf(binding->gl_target, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                        max_anisotropy);
+        bool mipmapped = !f->linear &&
+            (min_filter == NV_PGRAPH_TEXFILTER0_MIN_BOX_NEARESTLOD ||
+             min_filter == NV_PGRAPH_TEXFILTER0_MIN_TENT_NEARESTLOD ||
+             min_filter == NV_PGRAPH_TEXFILTER0_MIN_BOX_TENT_LOD ||
+             min_filter == NV_PGRAPH_TEXFILTER0_MIN_TENT_TENT_LOD);
+        uint32_t user_aniso = g_config.display.quality.enhanced ? 8u : 1u;
+        uint32_t effective_aniso = mipmapped ? MAX(max_anisotropy, user_aniso) : 1u;
+        uint32_t hw_max = (uint32_t)r->supported_extensions.max_anisotropy;
+        if (hw_max >= 1 && effective_aniso > hw_max) {
+            effective_aniso = hw_max;
+        }
+        if (effective_aniso != binding->max_anisotropy) {
+            glTexParameterf(binding->gl_target, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                            (GLfloat)effective_aniso);
+            binding->max_anisotropy = effective_aniso;
+        }
     }
 
     if (!is_bordered && needs_border_color) {
@@ -802,6 +822,7 @@ static TextureBinding* generate_texture(const TextureShape s,
     ret->addrv = 0xFFFFFFFF;
     ret->addrp = 0xFFFFFFFF;
     ret->border_color_set = false;
+    ret->max_anisotropy = 0xFFFFFFFF;
     return ret;
 }
 

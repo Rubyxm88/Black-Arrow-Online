@@ -80,6 +80,7 @@ typedef struct TextureBinding {
     unsigned int addrp;
     uint32_t border_color;
     bool border_color_set;
+    uint32_t max_anisotropy;
     GLenum gl_target;
     GLuint gl_texture;
 } TextureBinding;
@@ -242,6 +243,7 @@ typedef struct PGRAPHGLState {
 
     struct supported_extensions {
         GLboolean texture_filter_anisotropic;
+        GLfloat max_anisotropy;
     } supported_extensions;
 } PGRAPHGLState;
 

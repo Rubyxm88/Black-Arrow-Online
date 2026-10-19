@@ -10,7 +10,7 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
 
 ## What is changed from xemu
 
-- **Menus**: Play, XB Live, BA Online, Troubleshoot and Help: start a game from the games folder, run the game
+- **Menus**: Play, XB Live, Sound, Graphics, Troubleshoot and Help: start a game from the games folder, run the game
   update installer, open the XBL Dashboard for account setup or the original
   Xbox dashboard, show the console's Xbox Live gamertag, and open the xb.live
   pages to create an account or get a link code.
@@ -24,8 +24,9 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
   hard disk when it is installed there and from its disc image otherwise.
 - **Portable folder**: settings, BIOS and disk paths are relative to the
   folder of the executable.
-- **Graphics**: a fix for menu textures in Black Arrow and an optional
-  speed-up, "Skip render target copy-back", under Settings > Display.
+- **Graphics**: enhanced graphics (antialiasing, sharpening, trilinear and
+  anisotropic filtering), a fix for menu textures in Black Arrow, and an
+  optional speed-up, "Improve render handling", under Graphics and Settings > Display.
 - **Idle CPU use**: short main-loop waits sleep instead of spinning.
 - **Network card**: packets held while the game's receive buffer was full
   are delivered as soon as it has room again.

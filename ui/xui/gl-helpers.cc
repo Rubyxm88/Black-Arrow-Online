@@ -59,6 +59,16 @@ typedef struct DecalShader_
     GLint time_loc;
     GLint scale_loc;
     GLint palette_loc[256];
+    GLint filter_mode_loc;
+    GLint fxaa_loc;
+    GLint fxaa_preserve_text_loc;
+    GLint cas_enable_loc;
+    GLint cas_sharpness_loc;
+    GLint text_sharpen_loc;
+    GLint surface_scale_loc;
+    GLint viewport_size_loc;
+    uint8_t last_raw_palette[256 * 3];
+    bool palette_uploaded;
 } DecalShader;
 
 static DecalShader *g_decal_shader,
@@ -173,27 +183,35 @@ static GLuint LoadTextureFromMemory(const unsigned char *buf, unsigned int size,
     return tex;
 }
 
-static GLuint Shader(GLenum type, const char *src)
+static GLuint TryShader(GLenum type, const char *src)
 {
     char err_buf[512];
     GLuint shader = glCreateShader(type);
-    assert(shader && "Failed to create shader");
+    if (!shader) {
+        return 0;
+    }
 
     glShaderSource(shader, 1, &src, NULL);
     glCompileShader(shader);
 
-    GLint status;
+    GLint status = GL_FALSE;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
     if (status != GL_TRUE) {
         glGetShaderInfoLog(shader, sizeof(err_buf), NULL, err_buf);
         fprintf(stderr,
-                "Shader compilation failed: %s\n\n"
-                "[Shader Source]\n"
-                "%s\n",
-                err_buf, src);
-        assert(0);
+                "Shader compilation warning (using fallback if available): %s\n",
+                err_buf);
+        glDeleteShader(shader);
+        return 0;
     }
 
+    return shader;
+}
+
+static GLuint Shader(GLenum type, const char *src)
+{
+    GLuint shader = TryShader(type, src);
+    assert(shader != 0);
     return shader;
 }
 
@@ -238,19 +256,334 @@ void main() {
 #version 400 core
 uniform sampler2D tex;
 uniform uint palette[256];
+uniform int in_FilterMode;
+uniform bool in_Fxaa;
+uniform bool in_FxaaPreserveText;
+uniform bool in_CasEnable;
+uniform float in_CasSharpness;
+uniform bool in_TextSharpen;
+uniform float in_SurfaceScale;
+uniform vec2 in_ViewportSize;
+
 float gamma_ch(int ch, float col)
 {
-    return float(bitfieldExtract(palette[uint(col * 255.0)], ch*8, 8)) / 255.0;
+    uint idx = clamp(uint(col * 255.0 + 0.5), 0u, 255u);
+    return float(bitfieldExtract(palette[idx], ch*8, 8)) / 255.0;
 }
 
 vec4 gamma(vec4 col)
 {
     return vec4(gamma_ch(0, col.r), gamma_ch(1, col.g), gamma_ch(2, col.b), col.a);
 }
+
+float luma(vec3 rgb)
+{
+    return dot(rgb, vec3(0.299, 0.587, 0.114));
+}
+
+vec4 sample_filtered_raw(vec2 uv, vec2 texSize, vec2 invTexSize)
+{
+    if (in_FilterMode == 2) {
+        // Sharp Bilinear: pre-scales UV to nearest texel center with anti-aliased 1-screen-pixel transition
+        vec2 texel = uv * texSize - 0.5;
+        vec2 fl = floor(texel);
+        vec2 fr = fract(texel);
+        vec2 scale = max(in_ViewportSize * invTexSize, vec2(1.0));
+        vec2 region = 0.5 - 0.5 / scale;
+        vec2 dist = fr - 0.5;
+        vec2 f = (dist - clamp(dist, -region, region)) * scale + 0.5;
+        return texture(tex, (fl + f + 0.5) * invTexSize);
+    } else if (in_FilterMode == 3) {
+        // 4-tap Fast Catmull-Rom Bicubic
+        vec2 pos = uv * texSize - 0.5;
+        vec2 f = fract(pos);
+        vec2 c = pos - f;
+        vec2 f2 = f * f;
+        vec2 f3 = f2 * f;
+        vec2 w0 = -0.5 * f3 + f2 - 0.5 * f;
+        vec2 w1 =  1.5 * f3 - 2.5 * f2 + 1.0;
+        vec2 w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+        vec2 w3 =  0.5 * f3 - 0.5 * f2;
+        vec2 w12 = w1 + w2;
+        vec2 tc0 = (c - 0.5) * invTexSize;
+        vec2 tc3 = (c + 2.5) * invTexSize;
+        vec2 tc12 = (c + 0.5 + w2 / w12) * invTexSize;
+        vec4 s =
+            texture(tex, vec2(tc12.x, tc0.y))  * (w12.x * w0.y) +
+            texture(tex, vec2(tc0.x,  tc12.y)) * (w0.x  * w12.y) +
+            texture(tex, vec2(tc12.x, tc12.y)) * (w12.x * w12.y) +
+            texture(tex, vec2(tc3.x,  tc12.y)) * (w3.x  * w12.y) +
+            texture(tex, vec2(tc12.x, tc3.y))  * (w12.x * w3.y);
+        float total_w = (w12.x * w0.y) + (w0.x * w12.y) + (w12.x * w12.y) + (w3.x * w12.y) + (w12.x * w3.y);
+        return clamp(s / total_w, 0.0, 1.0);
+    }
+    return texture(tex, uv);
+}
+
+// Official 9-tap AMD FidelityFX Contrast Adaptive Sharpening (CAS)
+// Includes full 9-tap soft min/max in [0, 2] so white text/highlights are protected by (2.0 - mxRGB)
+vec3 compute_cas_9tap(
+    vec3 a, vec3 b, vec3 c,
+    vec3 d, vec3 e, vec3 f,
+    vec3 g, vec3 h, vec3 i,
+    float sharpness)
+{
+    vec3 mnRGB  = min(min(min(d, e), min(f, b)), h);
+    vec3 mnRGB2 = min(mnRGB, min(min(a, c), min(g, i)));
+    mnRGB += mnRGB2;
+
+    vec3 mxRGB  = max(max(max(d, e), max(f, b)), h);
+    vec3 mxRGB2 = max(mxRGB, max(max(a, c), max(g, i)));
+    mxRGB += mxRGB2;
+
+    vec3 ampRGB = clamp(min(mnRGB, 2.0 - mxRGB) / max(mxRGB, vec3(1e-5)), 0.0, 1.0);
+    ampRGB = sqrt(ampRGB);
+
+    float peak = -1.0 / mix(8.0, 5.0, clamp(sharpness, 0.0, 1.0));
+    vec3 wRGB = ampRGB * peak;
+    vec3 rcpWeightRGB = 1.0 / (1.0 + 4.0 * wRGB);
+
+    vec3 window = b + d + f + h;
+    return clamp((window * wRGB + e) * rcpWeightRGB, 0.0, 1.0);
+}
+
+// FXAA 3.11 edge-walk anti-aliasing with Text/Ridge & Corner protection.
+// Returns vec4(antiAliasedRgb, blendWeight) where blendWeight in [0,1] indicates how much AA was applied.
+vec4 apply_fxaa_311(
+    vec2 uv, vec2 texSize, vec2 invTexSize,
+    vec3 cNW, vec3 cN, vec3 cNE,
+    vec3 cW,  vec3 cM, vec3 cE,
+    vec3 cSW, vec3 cS, vec3 cSE)
+{
+    float lM  = luma(cM);
+    float lN  = luma(cN);
+    float lS  = luma(cS);
+    float lW  = luma(cW);
+    float lE  = luma(cE);
+
+    // 5-tap cross range check (ignores diagonal-only corner touches so corners don't shoot streaks)
+    float lMin = min(lM, min(min(lN, lS), min(lW, lE)));
+    float lMax = max(lM, max(max(lN, lS), max(lW, lE)));
+    float lRange = lMax - lMin;
+    if (lRange < max(0.0625, lMax * 0.166)) {
+        return vec4(cM, 0.0);
+    }
+
+    float lNW = luma(cNW);
+    float lNE = luma(cNE);
+    float lSW = luma(cSW);
+    float lSE = luma(cSE);
+
+    float edgeHorz =
+        abs(-2.0 * lW + lNW + lSW) +
+        abs(-2.0 * lM + lN  + lS ) * 2.0 +
+        abs(-2.0 * lE + lNE + lSE);
+    float edgeVert =
+        abs(-2.0 * lN + lNW + lNE) +
+        abs(-2.0 * lM + lW  + lE ) * 2.0 +
+        abs(-2.0 * lS + lSW + lSE);
+
+    if (in_FxaaPreserveText) {
+        // 1) Thin bright-stroke protection: if M is a 1px bright peak between N&S or W&E,
+        //    it's a bright font stroke or UI line on a darker background, not a 3D step edge.
+        //    (Dark troughs are NOT excluded so dark grooves on corrugated roofs/grates are
+        //    smoothly anti-aliased instead of flickering black when moving.)
+        bool ridgeNS = (lM > lN && lM > lS) &&
+                       (min(lM - lN, lM - lS) > 0.20 * lRange);
+        bool ridgeWE = (lM > lW && lM > lE) &&
+                       (min(lM - lW, lM - lE) > 0.20 * lRange);
+        if (ridgeNS || ridgeWE) {
+            return vec4(cM, 0.0);
+        }
+
+        // 2) Sharp 2D corner protection: when both horizontal and vertical curvature are
+        //    simultaneously high (e.g. 90-degree corners/serifs of R, E, D, N, T, W),
+        //    do not round off or streak the corner.
+        if (min(edgeHorz, edgeVert) > 0.60 * max(edgeHorz, edgeVert)) {
+            return vec4(cM, 0.0);
+        }
+    }
+
+    bool isHorz = (edgeHorz >= edgeVert);
+    float l1 = isHorz ? lN : lW;
+    float l2 = isHorz ? lS : lE;
+    float grad1 = abs(l1 - lM);
+    float grad2 = abs(l2 - lM);
+    bool is1Steepest = (grad1 >= grad2);
+    float gradScaled = 0.25 * max(grad1, grad2);
+
+    float stepLen = isHorz ? invTexSize.y : invTexSize.x;
+    if (is1Steepest) {
+        stepLen = -stepLen;
+    }
+    float lLocalAvg = 0.5 * ((is1Steepest ? l1 : l2) + lM);
+
+    vec2 curUv = uv;
+    if (isHorz) {
+        curUv.y += stepLen * 0.5;
+    } else {
+        curUv.x += stepLen * 0.5;
+    }
+
+    vec2 offset = isHorz ? vec2(invTexSize.x, 0.0) : vec2(0.0, invTexSize.y);
+    vec2 uv1 = curUv - offset;
+    vec2 uv2 = curUv + offset;
+
+    float lEnd1 = luma(sample_filtered_raw(uv1, texSize, invTexSize).rgb) - lLocalAvg;
+    float lEnd2 = luma(sample_filtered_raw(uv2, texSize, invTexSize).rgb) - lLocalAvg;
+    bool reached1 = (abs(lEnd1) >= gradScaled);
+    bool reached2 = (abs(lEnd2) >= gradScaled);
+    bool reachedBoth = reached1 && reached2;
+
+    if (!reached1) uv1 -= offset;
+    if (!reached2) uv2 += offset;
+
+    if (!reachedBoth) {
+        const float QUALITY[5] = float[5](1.0, 1.0, 1.5, 2.0, 2.0);
+        for (int i = 0; i < 5; i++) {
+            if (!reached1) {
+                lEnd1 = luma(sample_filtered_raw(uv1, texSize, invTexSize).rgb) - lLocalAvg;
+            }
+            if (!reached2) {
+                lEnd2 = luma(sample_filtered_raw(uv2, texSize, invTexSize).rgb) - lLocalAvg;
+            }
+            reached1 = (abs(lEnd1) >= gradScaled);
+            reached2 = (abs(lEnd2) >= gradScaled);
+            reachedBoth = reached1 && reached2;
+            if (!reached1) uv1 -= offset * QUALITY[i];
+            if (!reached2) uv2 += offset * QUALITY[i];
+            if (reachedBoth) break;
+        }
+    }
+
+    float dist1 = isHorz ? (uv.x - uv1.x) : (uv.y - uv1.y);
+    float dist2 = isHorz ? (uv2.x - uv.x) : (uv2.y - uv.y);
+    bool isDir1 = (dist1 < dist2);
+    float distFinal = min(dist1, dist2);
+    float edgeLen = dist1 + dist2;
+    float pixelOffset = -distFinal / max(edgeLen, 1e-5) + 0.5;
+
+    bool isLumaMSmaller = (lM < lLocalAvg);
+    bool correctVariation = (((isDir1 ? lEnd1 : lEnd2) < 0.0) != isLumaMSmaller);
+    float finalOffset = correctVariation ? pixelOffset : 0.0;
+
+    if (in_FxaaPreserveText) {
+        // 3) True staircase polarity check: on a tilted 3D edge staircase, one end of the span
+        //    steps into foreground (+) and the other end steps into background (-).
+        //    On a finite horizontal/vertical font bar or cap, both ends terminate with the SAME
+        //    polarity (both into background or both into stems). Reject non-staircase bars!
+        if (reached1 && reached2 && ((lEnd1 < 0.0) == (lEnd2 < 0.0))) {
+            finalOffset = 0.0;
+        }
+    } else {
+        // Standard subpixel AA when text preservation is turned off
+        float lAvg = (1.0 / 12.0) * (2.0 * (lN + lS + lW + lE) + lNW + lNE + lSW + lSE);
+        float subpix = clamp(abs(lAvg - lM) / max(lRange, 1e-5), 0.0, 1.0);
+        float subpixB = (-2.0 * subpix + 3.0) * subpix * subpix;
+        float subpixC = subpixB * subpixB * 0.5;
+        finalOffset = max(finalOffset, subpixC);
+    }
+
+    if (finalOffset <= 0.001) {
+        return vec4(cM, 0.0);
+    }
+
+    vec2 finalUv = uv;
+    if (isHorz) {
+        finalUv.y += finalOffset * stepLen;
+    } else {
+        finalUv.x += finalOffset * stepLen;
+    }
+
+    vec3 aaRgb = sample_filtered_raw(finalUv, texSize, invTexSize).rgb;
+    float blendWeight = clamp(finalOffset * 2.0, 0.0, 1.0);
+    return vec4(aaRgb, blendWeight);
+}
+
 in  vec2 Texcoord;
 out vec4 out_Color;
 void main() {
-    out_Color.rgba = gamma(texture(tex, Texcoord));
+    vec2 texSize = vec2(textureSize(tex, 0));
+    vec2 invTexSize = 1.0 / max(texSize, vec2(1.0));
+
+    vec4 colM = sample_filtered_raw(Texcoord, texSize, invTexSize);
+    vec3 cM = colM.rgb;
+
+    if (!in_Fxaa && (!in_CasEnable || in_CasSharpness <= 0.0) && !in_TextSharpen) {
+        out_Color = gamma(colM);
+        return;
+    }
+
+    // Shared 9-tap neighborhood at render-target pixel stride
+    vec3 cNW = texture(tex, Texcoord + vec2(-1.0, -1.0) * invTexSize).rgb;
+    vec3 cN  = texture(tex, Texcoord + vec2( 0.0, -1.0) * invTexSize).rgb;
+    vec3 cNE = texture(tex, Texcoord + vec2( 1.0, -1.0) * invTexSize).rgb;
+    vec3 cW  = texture(tex, Texcoord + vec2(-1.0,  0.0) * invTexSize).rgb;
+    vec3 cE  = texture(tex, Texcoord + vec2( 1.0,  0.0) * invTexSize).rgb;
+    vec3 cSW = texture(tex, Texcoord + vec2(-1.0,  1.0) * invTexSize).rgb;
+    vec3 cS  = texture(tex, Texcoord + vec2( 0.0,  1.0) * invTexSize).rgb;
+    vec3 cSE = texture(tex, Texcoord + vec2( 1.0,  1.0) * invTexSize).rgb;
+
+    vec4 fxaaRes = vec4(cM, 0.0);
+    if (in_Fxaa) {
+        fxaaRes = apply_fxaa_311(
+            Texcoord, texSize, invTexSize,
+            cNW, cN, cNE,
+            cW,  cM, cE,
+            cSW, cS, cSE);
+    }
+
+    // Compute CAS sharpening delta strictly from the consistent pre-FXAA neighborhood
+    // so center and neighbors never mismatch or invert font strokes.
+    vec3 casDelta = vec3(0.0);
+    if (in_CasEnable && in_CasSharpness > 0.0) {
+        vec3 casFine = compute_cas_9tap(
+            cNW, cN, cNE,
+            cW,  cM, cE,
+            cSW, cS, cSE,
+            in_CasSharpness);
+        casDelta += (casFine - cM);
+    }
+
+    if (in_TextSharpen) {
+        // Xbox 2D menu fonts & HUD textures are 640x480 bitmaps magnified with GL_LINEAR.
+        // At >1x surface scale, their bilinear ramp spans in_SurfaceScale texels; at 1x scale on
+        // a high-res monitor, a 0.65-texel stride tightens the bilinear ramp across screen pixels.
+        float uiStride = (in_SurfaceScale > 1.0) ? (in_SurfaceScale * 0.75) : 0.65;
+        vec2 uiStep = invTexSize * uiStride;
+        vec3 uNW = texture(tex, Texcoord + vec2(-1.0, -1.0) * uiStep).rgb;
+        vec3 uN  = texture(tex, Texcoord + vec2( 0.0, -1.0) * uiStep).rgb;
+        vec3 uNE = texture(tex, Texcoord + vec2( 1.0, -1.0) * uiStep).rgb;
+        vec3 uW  = texture(tex, Texcoord + vec2(-1.0,  0.0) * uiStep).rgb;
+        vec3 uE  = texture(tex, Texcoord + vec2( 1.0,  0.0) * uiStep).rgb;
+        vec3 uSW = texture(tex, Texcoord + vec2(-1.0,  1.0) * uiStep).rgb;
+        vec3 uS  = texture(tex, Texcoord + vec2( 0.0,  1.0) * uiStep).rgb;
+        vec3 uSE = texture(tex, Texcoord + vec2( 1.0,  1.0) * uiStep).rgb;
+
+        float uiSharp = in_CasEnable ? max(in_CasSharpness, 0.65) : 0.65;
+        vec3 casUi = compute_cas_9tap(
+            uNW, uN, uNE,
+            uW,  cM, uE,
+            uSW, uS, uSE,
+            uiSharp);
+        // Cap negative darkening from UI sharpener so dark grooves on 3D roofs aren't crushed
+        vec3 uiDelta = (casUi - cM) * 0.85;
+        casDelta += max(uiDelta, vec3(-0.015));
+    }
+
+    // Damping negative (darkening) overshoot prevents dark grooves on corrugated roofs
+    // from strobing black when moving while keeping bright text and highlights crisp.
+    casDelta = mix(casDelta, max(casDelta, vec3(0.0)), 0.55);
+
+    // Avoid over-sharpening monochrome green Night Vision static grain while
+    // keeping 100% of native texture detail (zero blur).
+    float rbMax = max(cM.r, cM.b);
+    float nvgGreen = clamp((cM.g - rbMax * 2.0 - 0.04) * 8.0, 0.0, 1.0);
+    casDelta *= (1.0 - nvgGreen * 0.75);
+
+    // Apply sharpening where FXAA did not smooth a 3D staircase edge
+    vec3 finalRgb = clamp(fxaaRes.rgb + casDelta * (1.0 - fxaaRes.a), 0.0, 1.0);
+    out_Color = gamma(vec4(finalRgb, colM.a));
 }
 )";
 
@@ -276,6 +609,26 @@ void main() {
 }
 )";
 
+    const char *image_gamma_fallback_frag_src = R"(
+#version 400 core
+uniform sampler2D tex;
+uniform uint palette[256];
+float gamma_ch(int ch, float col)
+{
+    uint idx = clamp(uint(col * 255.0 + 0.5), 0u, 255u);
+    return float(bitfieldExtract(palette[idx], ch*8, 8)) / 255.0;
+}
+vec4 gamma(vec4 col)
+{
+    return vec4(gamma_ch(0, col.r), gamma_ch(1, col.g), gamma_ch(2, col.b), col.a);
+}
+in  vec2 Texcoord;
+out vec4 out_Color;
+void main() {
+    out_Color.rgba = gamma(texture(tex, Texcoord));
+}
+)";
+
     const char *frag_src = NULL;
     switch (type) {
     case ShaderType::Mask: frag_src = mask_frag_src; break;
@@ -284,7 +637,12 @@ void main() {
     case ShaderType::Logo: frag_src = xemu_logo_frag_src; break;
     default: assert(0);
     }
-    GLuint frag = Shader(GL_FRAGMENT_SHADER, frag_src);
+    GLuint frag = (type == ShaderType::BlitGamma)
+                      ? TryShader(GL_FRAGMENT_SHADER, frag_src)
+                      : Shader(GL_FRAGMENT_SHADER, frag_src);
+    if (frag == 0 && type == ShaderType::BlitGamma) {
+        frag = Shader(GL_FRAGMENT_SHADER, image_gamma_fallback_frag_src);
+    }
     assert(frag != 0);
 
     // Link vertex and fragment shaders
@@ -293,6 +651,16 @@ void main() {
     glAttachShader(s->prog, frag);
     glBindFragDataLocation(s->prog, 0, "out_Color");
     glLinkProgram(s->prog);
+
+    GLint linked = GL_FALSE;
+    glGetProgramiv(s->prog, GL_LINK_STATUS, &linked);
+    if (linked != GL_TRUE && type == ShaderType::BlitGamma) {
+        glDetachShader(s->prog, frag);
+        glDeleteShader(frag);
+        frag = Shader(GL_FRAGMENT_SHADER, image_gamma_fallback_frag_src);
+        glAttachShader(s->prog, frag);
+        glLinkProgram(s->prog);
+    }
     glUseProgram(s->prog);
 
     // Flag shaders for deletion when program is deleted
@@ -309,6 +677,16 @@ void main() {
     s->color_fill_loc = glGetUniformLocation(s->prog, "in_ColorFill");
     s->time_loc = glGetUniformLocation(s->prog, "iTime");
     s->scale_loc = glGetUniformLocation(s->prog, "scale");
+    s->filter_mode_loc = glGetUniformLocation(s->prog, "in_FilterMode");
+    s->fxaa_loc = glGetUniformLocation(s->prog, "in_Fxaa");
+    s->fxaa_preserve_text_loc = glGetUniformLocation(s->prog, "in_FxaaPreserveText");
+    s->cas_enable_loc = glGetUniformLocation(s->prog, "in_CasEnable");
+    s->cas_sharpness_loc = glGetUniformLocation(s->prog, "in_CasSharpness");
+    s->text_sharpen_loc = glGetUniformLocation(s->prog, "in_TextSharpen");
+    s->surface_scale_loc = glGetUniformLocation(s->prog, "in_SurfaceScale");
+    s->viewport_size_loc = glGetUniformLocation(s->prog, "in_ViewportSize");
+    s->palette_uploaded = false;
+    memset(s->last_raw_palette, 0, sizeof(s->last_raw_palette));
     for (int i = 0; i < 256; i++) {
         char name[64];
         snprintf(name, sizeof(name), "palette[%d]", i);
@@ -890,15 +1268,21 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip, float scale[
     glBindTexture(GL_TEXTURE_2D, tex);
     
     switch (g_config.display.filtering) {
-    case CONFIG_DISPLAY_FILTERING_LINEAR:
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    break;
     case CONFIG_DISPLAY_FILTERING_NEAREST:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    break;
+        break;
+    case CONFIG_DISPLAY_FILTERING_LINEAR:
+    default:
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        break;
     }
+
+    bool enhanced = g_config.display.quality.enhanced;
+    int filter_mode = (g_config.display.filtering == CONFIG_DISPLAY_FILTERING_NEAREST)
+                          ? 1
+                          : (enhanced ? 3 : 0);
 
     DecalShader *s = g_framebuffer_shader;
     s->flip = flip;
@@ -909,12 +1293,48 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip, float scale[
     glUniform4f(s->scale_offset_loc, scale[0], scale[1], 0, 0);
     glUniform4f(s->tex_scale_offset_loc, 1.0, 1.0, 0, 0);
     glUniform1i(s->tex_loc, 0);
+    if (s->filter_mode_loc >= 0) {
+        glUniform1i(s->filter_mode_loc, filter_mode);
+    }
+    if (s->fxaa_loc >= 0) {
+        glUniform1i(s->fxaa_loc, enhanced ? 1 : 0);
+    }
+    if (s->fxaa_preserve_text_loc >= 0) {
+        glUniform1i(s->fxaa_preserve_text_loc, 1);
+    }
+    if (s->cas_enable_loc >= 0) {
+        glUniform1i(s->cas_enable_loc, enhanced ? 1 : 0);
+    }
+    if (s->cas_sharpness_loc >= 0) {
+        glUniform1f(s->cas_sharpness_loc, 0.50f);
+    }
+    if (s->text_sharpen_loc >= 0) {
+        glUniform1i(s->text_sharpen_loc, enhanced ? 1 : 0);
+    }
+    if (s->surface_scale_loc >= 0) {
+        int surf_scale = nv2a_get_surface_scale_factor();
+        if (surf_scale < 1) surf_scale = 1;
+        glUniform1f(s->surface_scale_loc, (float)surf_scale);
+    }
+    if (s->viewport_size_loc >= 0) {
+        glUniform2f(s->viewport_size_loc,
+                    (float)width * fabsf(scale[0]),
+                    (float)height * fabsf(scale[1]));
+    }
 
     const uint8_t *palette = nv2a_get_dac_palette();
-    for (int i = 0; i < 256; i++) {
-        uint32_t e = (palette[i * 3 + 2] << 16) | (palette[i * 3 + 1] << 8) |
-                     palette[i * 3];
-        glUniform1ui(s->palette_loc[i], e);
+    if (!s->palette_uploaded ||
+        memcmp(palette, s->last_raw_palette, sizeof(s->last_raw_palette)) != 0) {
+        for (int i = 0; i < 256; i++) {
+            if (s->palette_loc[i] >= 0) {
+                uint32_t val = (palette[i * 3 + 2] << 16) |
+                               (palette[i * 3 + 1] << 8) |
+                               palette[i * 3];
+                glUniform1ui(s->palette_loc[i], val);
+            }
+        }
+        memcpy(s->last_raw_palette, palette, sizeof(s->last_raw_palette));
+        s->palette_uploaded = true;
     }
 
     glClearColor(0, 0, 0, 0);

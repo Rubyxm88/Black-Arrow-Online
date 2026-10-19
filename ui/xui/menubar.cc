@@ -518,33 +518,36 @@ static void XbOnlineMenu(bool just_opened)
                  "its update and the Xbox Live account.");
 }
 
-// BA Online: choices made once, for how the game looks and sounds
-static void SettingsMenu()
+static void SoundMenu()
+{
+    MenuHeader("Quality");
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+    if (ImGui::MenuItem("Fast (recommended)", NULL, !g_config.audio.use_dsp)) {
+        g_config.audio.use_dsp = false;
+    }
+    MenuItemHelp("Mixes the game's sounds straight to your speakers. Lightest "
+                 "on the PC, steadiest frame rate.");
+    if (ImGui::MenuItem("Accurate", NULL, g_config.audio.use_dsp)) {
+        g_config.audio.use_dsp = true;
+        g_config.audio.use_dsp_jit = true;
+    }
+    MenuItemHelp("Runs the Xbox's own sound effects processor, like a real "
+                 "console. Uses about a quarter of a CPU core more.");
+    ImGui::PopItemFlag();
+
+    MenuHeader("Gameplay");
+    MenuToggle("Louder movement", &g_config.audio.louder_movement,
+               "Makes footsteps and the rattle of gear and clothes easier to "
+               "hear nearby.");
+}
+
+static void GraphicsMenu()
 {
     ShaderPrecacheStatus shader_status;
     nv2a_shader_precache_get_status(&shader_status);
     bool opengl_running = shader_status.supported;
 
-    MenuHeader("Graphics");
-    if (ImGui::BeginMenu("Renderer")) {
-        if (ImGui::MenuItem("OpenGL (recommended)", NULL,
-                            g_config.display.renderer ==
-                                CONFIG_DISPLAY_RENDERER_OPENGL)) {
-            g_config.display.renderer = CONFIG_DISPLAY_RENDERER_OPENGL;
-        }
-#ifdef CONFIG_VULKAN
-        if (ImGui::MenuItem("Vulkan", NULL,
-                            g_config.display.renderer ==
-                                CONFIG_DISPLAY_RENDERER_VULKAN)) {
-            g_config.display.renderer = CONFIG_DISPLAY_RENDERER_VULKAN;
-        }
-#endif
-        ImGui::EndMenu();
-    }
-    if (opengl_running !=
-        (g_config.display.renderer == CONFIG_DISPLAY_RENDERER_OPENGL)) {
-        ImGui::TextDisabled("  Restart Black Arrow Online to switch renderer");
-    }
+    MenuHeader("Quality");
     int scale = nv2a_get_surface_scale_factor();
     char scale_label[32];
     snprintf(scale_label, sizeof(scale_label), "Resolution: %dx", scale);
@@ -560,27 +563,75 @@ static void SettingsMenu()
         }
         ImGui::EndMenu();
     }
+    MenuToggle("Enhanced graphics", &g_config.display.quality.enhanced,
+               "Sharpens textures, distant floors and menu text, and smooths "
+               "jagged edges.");
+
+    MenuHeader("Display");
+    if (ImGui::MenuItem("Fullscreen", "F11", xemu_is_fullscreen(), true)) {
+        xemu_toggle_fullscreen();
+    }
     MenuToggle("Vertical sync", &g_config.display.window.vsync,
                "Stops screen tearing. Turning it off can lower input delay "
                "but may tear.");
-    MenuToggle("Skip render target copy-back",
-               &g_config.display.quality.skip_reuse_copyback,
-               "Faster when the game reuses a screen buffer every frame. Turn "
-               "off if effects look wrong. OpenGL only.");
-
-    MenuHeader("Sound");
-    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
-    if (ImGui::MenuItem("Fast (recommended)", NULL, !g_config.audio.use_dsp)) {
-        g_config.audio.use_dsp = false;
+    if (ImGui::BeginMenu("Window & Scaling")) {
+        ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+        if (ImGui::BeginMenu("Aspect Ratio")) {
+            static const char *const ratios[] = {
+                "Native", "Auto", "4:3", "16:9"
+            };
+            for (int i = 0; i < 4; i++) {
+                if (ImGui::MenuItem(ratios[i], NULL,
+                                    g_config.display.ui.aspect_ratio == i)) {
+                    g_config.display.ui.aspect_ratio = i;
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Display Mode")) {
+            static const char *const fits[] = {
+                "Center", "Scale", "Stretch"
+            };
+            for (int i = 0; i < 3; i++) {
+                if (ImGui::MenuItem(fits[i], NULL,
+                                    g_config.display.ui.fit == i)) {
+                    g_config.display.ui.fit = i;
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("UI Scale")) {
+            if (ImGui::MenuItem("Auto", NULL, g_config.display.ui.auto_scale)) {
+                g_config.display.ui.auto_scale = true;
+            }
+            if (ImGui::MenuItem("1x", NULL,
+                                !g_config.display.ui.auto_scale &&
+                                    g_config.display.ui.scale == 1)) {
+                g_config.display.ui.auto_scale = false;
+                g_config.display.ui.scale = 1;
+            }
+            if (ImGui::MenuItem("2x", NULL,
+                                !g_config.display.ui.auto_scale &&
+                                    g_config.display.ui.scale == 2)) {
+                g_config.display.ui.auto_scale = false;
+                g_config.display.ui.scale = 2;
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Filter Method")) {
+            if (ImGui::MenuItem("Linear", NULL,
+                                g_config.display.filtering == 0)) {
+                g_config.display.filtering = 0;
+            }
+            if (ImGui::MenuItem("Nearest", NULL,
+                                g_config.display.filtering == 1)) {
+                g_config.display.filtering = 1;
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::PopItemFlag();
+        ImGui::EndMenu();
     }
-    MenuItemHelp("Mixes the game's sounds straight to your speakers. Lightest "
-                 "on the PC, steadiest frame rate.");
-    if (ImGui::MenuItem("Accurate", NULL, g_config.audio.use_dsp)) {
-        g_config.audio.use_dsp = true;
-    }
-    MenuItemHelp("Runs the Xbox's own sound effects processor, like a real "
-                 "console. Uses about a quarter of a CPU core more.");
-    ImGui::PopItemFlag();
 
     MenuHeader("Shaders");
     MenuToggle("Save shaders to disk", &g_config.perf.cache_shaders,
@@ -605,51 +656,40 @@ static void SettingsMenu()
                    "used before, not only the Black Arrow list.");
         ImGui::EndMenu();
     }
-}
 
-static void ViewMenu()
-{
-    int ui_scale_idx;
-    if (g_config.display.ui.auto_scale) {
-        ui_scale_idx = 0;
-    } else {
-        ui_scale_idx = g_config.display.ui.scale;
-        if (ui_scale_idx < 1) ui_scale_idx = 1;
-        else if (ui_scale_idx > 2) ui_scale_idx = 2;
-    }
-    if (ImGui::Combo("UI Scale", &ui_scale_idx,
-                     "Auto\0"
-                     "1x\0"
-                     "2x\0")) {
-        if (ui_scale_idx == 0) {
-            g_config.display.ui.auto_scale = true;
-        } else {
-            g_config.display.ui.auto_scale = false;
-            g_config.display.ui.scale = ui_scale_idx;
-        }
-    }
-
-    ImGui::Combo("Display Mode", &g_config.display.ui.fit,
-                 "Center\0Scale\0Stretch\0");
-    ImGui::SameLine();
-    HelpMarker("Controls how the rendered content should be scaled "
-               "into the window");
-    ImGui::Combo("Filter Method", &g_config.display.filtering,
-                 "Linear\0Nearest\0");
-    ImGui::Combo("Aspect Ratio", &g_config.display.ui.aspect_ratio,
-                 "Native\0Auto\0""4:3\0""16:9\0");
-    if (ImGui::MenuItem("Fullscreen", "F11", xemu_is_fullscreen(), true)) {
-        xemu_toggle_fullscreen();
-    }
-
-    MenuHeader("Performance Overlay");
-    MenuToggle("Show performance overlay", &g_config.display.overlay.enabled,
-               "Frame rate, 1% lows, frame times and how busy the PC is, over "
-               "the game. The frame times are the game's own frames, so every "
-               "hitch shows.");
-    if (ImGui::BeginMenu("Customize")) {
+    MenuHeader("Performance");
+    MenuToggle("Improve render handling",
+               &g_config.display.quality.skip_reuse_copyback,
+               "Improves frame rate and reduces stutter when rendering screen "
+               "effects. Turn off if effects look wrong. OpenGL only.");
+    if (ImGui::BeginMenu("Performance Overlay")) {
+        MenuToggle("Show performance overlay",
+                   &g_config.display.overlay.enabled,
+                   "Frame rate, 1% lows, frame times and how busy the PC is, "
+                   "over the game. The frame times are the game's own frames, "
+                   "so every hitch shows.");
+        ImGui::Separator();
         OverlayMenu();
         ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Renderer")) {
+        if (ImGui::MenuItem("OpenGL (recommended)", NULL,
+                            g_config.display.renderer ==
+                                CONFIG_DISPLAY_RENDERER_OPENGL)) {
+            g_config.display.renderer = CONFIG_DISPLAY_RENDERER_OPENGL;
+        }
+#ifdef CONFIG_VULKAN
+        if (ImGui::MenuItem("Vulkan", NULL,
+                            g_config.display.renderer ==
+                                CONFIG_DISPLAY_RENDERER_VULKAN)) {
+            g_config.display.renderer = CONFIG_DISPLAY_RENDERER_VULKAN;
+        }
+#endif
+        ImGui::EndMenu();
+    }
+    if (opengl_running !=
+        (g_config.display.renderer == CONFIG_DISPLAY_RENDERER_OPENGL)) {
+        ImGui::TextDisabled("  Restart Black Arrow Online to switch renderer");
     }
 }
 
@@ -753,12 +793,12 @@ void ShowMainMenu()
         } else {
             xbonline_menu_open = false;
         }
-        if (ImGui::BeginMenu("BA Online")) {
-            SettingsMenu();
+        if (ImGui::BeginMenu("Sound")) {
+            SoundMenu();
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("View")) {
-            ViewMenu();
+        if (ImGui::BeginMenu("Graphics")) {
+            GraphicsMenu();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Troubleshoot")) {

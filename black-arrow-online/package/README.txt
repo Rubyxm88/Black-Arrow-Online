@@ -64,20 +64,24 @@ XB LIVE        your Xbox Live account and the connection
   CONNECTION
     Connection Check          Runs the XB Online check (see below).
 
-BA ONLINE      how the game looks and sounds; every switch can be turned
-               back off if something looks wrong
-  GRAPHICS
-    Renderer                  OpenGL (recommended) or Vulkan. Needs a restart.
-                              Shader caching works with OpenGL only.
-    Resolution                1x (fastest) to 4x. 2x is the default.
-    Vertical sync             Turn off only if you know you need to.
-    Skip render target copy-back
-                              Speed hack. Turn off if the game looks wrong.
-  SOUND
+SOUND          how the game sounds
+  QUALITY
     Fast (recommended)        Mixes the game's sounds straight to your
                               speakers. Steadiest frame rate.
     Accurate                  Runs the Xbox's own sound effects processor.
                               Uses about a quarter of a CPU core more.
+  GAMEPLAY
+    Louder movement           Footsteps and gear rattle are easier to hear.
+
+GRAPHICS       how the game looks; every switch can be turned back off
+  QUALITY
+    Resolution                1x (fastest) to 4x. 2x is the default.
+    Enhanced graphics         Antialiasing, sharpening, trilinear filtering,
+                              anisotropic filtering and crisp menus.
+  DISPLAY
+    Fullscreen (F11), Vertical sync
+    Window & Scaling          Aspect Ratio, Display Mode, UI Scale and
+                              Filter Method.
   SHADERS
     Save shaders to disk      Keep built shaders for the next start.
     Build shaders in the background
@@ -85,17 +89,13 @@ BA ONLINE      how the game looks and sounds; every switch can be turned
                               it may be missing for a frame or two instead.
     Precache                  Precache shaders automatically (see SHADERS
                               below), and Precache this PC's own shaders.
-
-VIEW           the window
-  UI Scale, Display Mode, Filter Method, Aspect Ratio, Fullscreen (F11)
-  PERFORMANCE OVERLAY
-    Show performance overlay  FPS, 1% low, frame times with a graph, CPU,
-                              GPU, RAM and video memory over the game, like
-                              the Steam overlay. Colors follow the game's
-                              own pace, so a steady 30 FPS is green.
-    Customize                 Style: Detailed, Compact or Minimal. Also the
-                              corner and distance from it, size, the
-                              background and what the style shows.
+  PERFORMANCE
+    Improve render handling   Speed-up. Turn off if the game looks wrong.
+    Performance Overlay       FPS, 1% low, frame times with a graph, CPU,
+                              GPU, RAM and video memory over the game, with
+                              style and corner customization.
+    Renderer                  OpenGL (recommended) or Vulkan. Needs a restart.
+                              Shader caching works with OpenGL only.
 
 TROUBLESHOOT   when something goes wrong
   CONNECTION
@@ -135,7 +135,7 @@ seconds after starting, it builds the ones not ready yet for your graphics
 card and resolution in the background. A small notice in the top left shows
 the progress, then "Shaders ready". This takes a few seconds and only
 happens again after a graphics driver update or a resolution change.
-To turn it off: BA Online > Precache > Precache shaders automatically.
+To turn it off: Graphics > Precache > Precache shaders automatically.
 
 
 LAG
@@ -264,9 +264,9 @@ Setup window says "Add content pack" instead of "Start clean": this folder
     account that is not linked to xb.live does not work until you link it
     (FIRST TIME, step 3).
   - Still failing: send system\xemu.log to whoever shared the package.
-Game looks wrong: BA Online, turn off "Skip render target copy-back".
+Game looks wrong: Graphics, turn off "Improve render handling".
   Effects missing or flickering: turn off "Build shaders in the background".
-Slow: BA Online > Resolution, choose 1x.
+Slow: Graphics > Resolution, choose 1x.
 Stutter on a 144 Hz (or other high refresh) monitor: the game runs at 30
   frames, which divides evenly into 60, 120 or 240 Hz but not 144 or 165.
   Set the monitor to 120 Hz (or 60 Hz) in Windows display settings.
