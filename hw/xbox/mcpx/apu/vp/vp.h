@@ -56,7 +56,7 @@ typedef struct VoiceWorkItem {
 typedef struct VoiceWorker {
     QemuThread thread;
     float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME];
-    float sample_buf[NUM_SAMPLES_PER_FRAME][2];
+    float sample_buf[NUM_SAMPLES_PER_FRAME][6];
     VoiceWorkItem queue[MCPX_HW_MAX_VOICES];
     int queue_len;
 } VoiceWorker;
@@ -85,7 +85,9 @@ typedef struct {
     uint8_t hrtf_headroom;
     uint8_t hrtf_submix[4];
     uint8_t submix_headroom[NUM_MIXBINS];
-    float sample_buf[NUM_SAMPLES_PER_FRAME][2];
+    /* Fast sound (MON_VP) mix: FL FR, plus FC LFE BL BR when surround */
+    float sample_buf[NUM_SAMPLES_PER_FRAME][6];
+    bool surround;
     uint64_t voice_locked[4];
     /* Voices a worker is mixing right now (see voice_lock) */
     uint64_t voice_busy[4];

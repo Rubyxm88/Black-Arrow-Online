@@ -860,6 +860,14 @@ void MainMenuAudioView::Draw()
            "Makes footsteps and the rattle of gear and clothes easier "
            "to hear nearby");
 
+    SectionTitle("Speakers");
+    ChevronCombo("Channels", &g_config.audio.channels,
+                 "Stereo "
+                 "5.1 Surround (beta) ",
+                 "5.1 sends the game's speaker mix to front, center, sub "
+                 "and rear speakers. Works with Fast sound; Accurate stays "
+                 "on the front pair");
+
 }
 
 NetworkInterface::NetworkInterface(pcap_if_t *pcap_desc, char *_friendlyname)

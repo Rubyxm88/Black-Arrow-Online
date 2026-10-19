@@ -119,6 +119,9 @@ typedef struct MCPXAPUState {
     struct {
         McpxApuDebugMonitorPoint point;
         int16_t frame_buf[256][2]; // 1 EP frame (0x400 bytes)
+        /* Fast sound in 5.1: FL FR FC LFE BL BR (SDL's 6 channel order) */
+        int16_t frame_buf51[256][6];
+        int channels; /* of the open stream: 2, or 6 for 5.1 */
         SDL_AudioStream *stream;
         int queued_bytes_low, queued_bytes_high;
     } monitor;

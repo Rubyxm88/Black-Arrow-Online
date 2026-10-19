@@ -535,6 +535,24 @@ static void SoundMenu()
                  "console. Uses about a quarter of a CPU core more.");
     ImGui::PopItemFlag();
 
+    MenuHeader("Channels");
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+    if (ImGui::MenuItem("Stereo", NULL,
+                        g_config.audio.channels ==
+                            CONFIG_AUDIO_CHANNELS_STEREO)) {
+        g_config.audio.channels = CONFIG_AUDIO_CHANNELS_STEREO;
+    }
+    MenuItemHelp("Two speakers or headphones.");
+    if (ImGui::MenuItem("5.1 Surround (beta)", NULL,
+                        g_config.audio.channels ==
+                            CONFIG_AUDIO_CHANNELS_SURROUND)) {
+        g_config.audio.channels = CONFIG_AUDIO_CHANNELS_SURROUND;
+    }
+    MenuItemHelp("Front, center, sub and rear speakers, from the game's own "
+                 "speaker mix. Works with Fast sound; Accurate stays on the "
+                 "front pair.");
+    ImGui::PopItemFlag();
+
     MenuHeader("Gameplay");
     MenuToggle("Louder movement", &g_config.audio.louder_movement,
                "Makes footsteps and the rattle of gear and clothes easier to "

@@ -18,27 +18,37 @@
  */
 
 #include "apu_int.h"
+#include "qemu/error-report.h"
 
-void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+static int monitor_wanted_channels(void)
+{
+    return g_config.audio.channels == CONFIG_AUDIO_CHANNELS_SURROUND ? 6 : 2;
+}
+
+/* Open the output stream with 2 or 6 channels; SDL mixes 6 down when the
+ * sound device has fewer speakers. */
+static void monitor_open(MCPXAPUState *d, int channels)
 {
     SDL_AudioSpec spec = {
         .freq = 48000,
         .format = SDL_AUDIO_S16LE,
-        .channels = 2,
+        .channels = channels,
     };
 
-    d->monitor.stream = NULL;
-
-    if (!SDL_Init(SDL_INIT_AUDIO)) {
-        error_setg(errp, "SDL_Init failed: %s", SDL_GetError());
-        return;
+    if (d->monitor.stream) {
+        SDL_DestroyAudioStream(d->monitor.stream);
     }
-
+    d->monitor.channels = channels;
     d->monitor.stream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    if (d->monitor.stream == NULL && channels != 2) {
+        warn_report("audio: no %d channel output (%s); using stereo",
+                    channels, SDL_GetError());
+        spec.channels = d->monitor.channels = 2;
+        d->monitor.stream = SDL_OpenAudioDeviceStream(
+            SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    }
     if (d->monitor.stream == NULL) {
-        error_setg(errp, "SDL_OpenAudioDeviceStream failed: %s",
-                   SDL_GetError());
         return;
     }
 
@@ -52,12 +62,30 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
                           SDL_AUDIO_BYTESIZE(spec.format) *
                           spec.freq / dev_spec.freq;
     }
-    int frame_bytes = sizeof(d->monitor.frame_buf);
+    int frame_bytes = 256 * spec.channels * SDL_AUDIO_BYTESIZE(spec.format);
     int drain = MAX(dev_drain_bytes, frame_bytes);
     d->monitor.queued_bytes_low = drain;
     d->monitor.queued_bytes_high = 3 * drain;
 
     SDL_ResumeAudioDevice(dev);
+}
+
+void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+{
+    d->monitor.stream = NULL;
+    d->monitor.channels = 2;
+
+    if (!SDL_Init(SDL_INIT_AUDIO)) {
+        error_setg(errp, "SDL_Init failed: %s", SDL_GetError());
+        return;
+    }
+
+    monitor_open(d, monitor_wanted_channels());
+    if (d->monitor.stream == NULL) {
+        error_setg(errp, "SDL_OpenAudioDeviceStream failed: %s",
+                   SDL_GetError());
+        return;
+    }
 }
 
 void mcpx_apu_monitor_finalize(MCPXAPUState *d)
@@ -76,9 +104,29 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d)
     if (d->monitor.stream) {
         float vu = pow(fmax(0.0, fmin(g_config.audio.volume_limit, 1.0)), M_E);
         SDL_SetAudioStreamGain(d->monitor.stream, vu);
-        SDL_PutAudioStreamData(d->monitor.stream, d->monitor.frame_buf,
-                            sizeof(d->monitor.frame_buf));
+        if (d->monitor.channels == 6) {
+            /* Fast sound mixed 6 channels itself; the DSP paths are stereo,
+             * so they play on the front pair */
+            if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
+                for (int i = 0; i < 256; i++) {
+                    d->monitor.frame_buf51[i][0] = d->monitor.frame_buf[i][0];
+                    d->monitor.frame_buf51[i][1] = d->monitor.frame_buf[i][1];
+                }
+            }
+            SDL_PutAudioStreamData(d->monitor.stream, d->monitor.frame_buf51,
+                                   sizeof(d->monitor.frame_buf51));
+        } else {
+            SDL_PutAudioStreamData(d->monitor.stream, d->monitor.frame_buf,
+                                   sizeof(d->monitor.frame_buf));
+        }
     }
 
     memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
+    memset(d->monitor.frame_buf51, 0, sizeof(d->monitor.frame_buf51));
+
+    /* Stereo / 5.1 changed in the menu: reopen between frames */
+    if (d->monitor.stream &&
+        monitor_wanted_channels() != d->monitor.channels) {
+        monitor_open(d, monitor_wanted_channels());
+    }
 }
