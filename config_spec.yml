@@ -383,7 +383,7 @@ audio:
   volume_limit:
     type: number
     default: 1
-  louder_movement:  # footsteps and gear rattle at 180% (Rainbow Six 3)
+  louder_movement:  # footsteps and gear rattle at 200% (Rainbow Six 3)
     type: bool
     default: true
 

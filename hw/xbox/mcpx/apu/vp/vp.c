@@ -702,7 +702,7 @@ static hwaddr get_data_ptr(hwaddr sge_base, unsigned int max_sge, uint32_t addr)
  * from the Rainbow Six 3 sound banks.
  */
 #define SOUND_PRINT_BYTES 72
-#define LOUDER_MOVEMENT_GAIN 1.8f
+#define LOUDER_MOVEMENT_GAIN 2.0f
 
 enum {
     SOUND_MIX_OTHER,
