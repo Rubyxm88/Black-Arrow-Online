@@ -273,12 +273,22 @@ void pgraph_gl_bind_textures(NV2AState *d)
         bool possibly_dirty_checked = false;
 
         SurfaceBinding *surface = pgraph_gl_surface_get(d, texture_vram_offset);
+        bool surf_to_tex = false;
+        if (surface != NULL) {
+            surf_to_tex = pgraph_gl_check_surface_to_texture_compatibility(
+                    surface, &state);
+
+            if (surf_to_tex && surface->upload_pending) {
+                pgraph_gl_upload_surface_data(d, surface, false);
+            }
+        }
+
         TextureBinding *tbind = r->texture_binding[i];
         if (!pg->texture_dirty[i] && tbind) {
             bool reusable = false;
-            if (surface && tbind->draw_time == surface->draw_time) {
-                reusable = true;
-            } else if (!surface) {
+            if (surf_to_tex) {
+                reusable = tbind->draw_time == surface->draw_time;
+            } else if (!surface && !tbind->draw_time) {
                 possibly_dirty = check_texture_possibly_dirty(
                         d,
                         texture_vram_offset,
@@ -302,19 +312,6 @@ void pgraph_gl_bind_textures(NV2AState *d)
                                          border_color,
                                          max_anisotropy);
                 continue;
-            }
-        }
-
-        /*
-         * Check active surfaces to see if this texture was a render target
-         */
-        bool surf_to_tex = false;
-        if (surface != NULL) {
-            surf_to_tex = pgraph_gl_check_surface_to_texture_compatibility(
-                    surface, &state);
-
-            if (surf_to_tex && surface->upload_pending) {
-                pgraph_gl_upload_surface_data(d, surface, false);
             }
         }
 
@@ -357,14 +354,15 @@ void pgraph_gl_bind_textures(NV2AState *d)
                     NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT23_A8R8G8B8 ||
                 state.color_format ==
                     NV097_SET_TEXTURE_FORMAT_COLOR_L_DXT45_A8R8G8B8;
-            QTAILQ_FOREACH(surface, &r->surfaces, entry) {
-                hwaddr surf_vram_end = surface->vram_addr + surface->size - 1;
-                bool overlapping = !(surface->vram_addr >= tex_vram_end
+            SurfaceBinding *surf_it;
+            QTAILQ_FOREACH(surf_it, &r->surfaces, entry) {
+                hwaddr surf_vram_end = surf_it->vram_addr + surf_it->size - 1;
+                bool overlapping = !(surf_it->vram_addr >= tex_vram_end
                                      || texture_vram_offset >= surf_vram_end);
                 if (!overlapping) {
                     continue;
                 }
-                if (tex_compressed && surface->draw_dirty) {
+                if (tex_compressed && surf_it->draw_dirty) {
                     /*
                      * A render target can never produce compressed texel
                      * data, so the guest has reused this memory for a texture
@@ -372,12 +370,12 @@ void pgraph_gl_bind_textures(NV2AState *d)
                      * the texture; guest memory is authoritative instead.
                      */
                     nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_STALE);
-                    surface->draw_dirty = false;
-                    surface->download_pending = false;
-                    surface->upload_pending = true;
+                    surf_it->draw_dirty = false;
+                    surf_it->download_pending = false;
+                    surf_it->upload_pending = true;
                     continue;
                 }
-                pgraph_gl_surface_download_if_dirty_why(d, surface, NV2A_PROF_SURF_DL_TEX);
+                pgraph_gl_surface_download_if_dirty_why(d, surf_it, NV2A_PROF_SURF_DL_TEX);
             }
         }
 
@@ -412,7 +410,8 @@ void pgraph_gl_bind_textures(NV2AState *d)
         void *palette_data = (char*)d->vram_ptr + palette_vram_offset;
 
         uint64_t tex_data_hash = 0;
-        if (!surf_to_tex && possibly_dirty) {
+        if (!surf_to_tex && (!key_out->binding || key_out->binding->draw_time ||
+                             possibly_dirty)) {
             tex_data_hash = fast_hash(texture_data, length);
             if (is_indexed) {
                 tex_data_hash ^= fast_hash(palette_data, palette_length);
@@ -420,9 +419,13 @@ void pgraph_gl_bind_textures(NV2AState *d)
         }
 
         // Free existing binding, if texture data has changed
-        bool must_destroy = (key_out->binding != NULL)
-                            && possibly_dirty
-                            && (key_out->binding->data_hash != tex_data_hash);
+        bool must_destroy = false;
+        if (key_out->binding && !surf_to_tex) {
+            must_destroy = key_out->binding->draw_time ||
+                           (possibly_dirty &&
+                            (key_out->binding->data_hash != tex_data_hash));
+        }
+
         if (must_destroy) {
             texture_binding_destroy(key_out->binding);
             key_out->binding = NULL;
@@ -444,7 +447,6 @@ void pgraph_gl_bind_textures(NV2AState *d)
         binding->refcnt++;
 
         if (surf_to_tex && binding->draw_time < surface->draw_time) {
-
             trace_nv2a_pgraph_surface_render_to_texture(
                 surface->vram_addr, surface->width, surface->height);
             pgraph_gl_render_surface_to_texture(d, surface, binding, &state, i);
