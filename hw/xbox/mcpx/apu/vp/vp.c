@@ -1617,6 +1617,8 @@ static void voice_process(MCPXAPUState *d,
         if (d->vp.surround) {
             static const int speaker_of_bin[10] = { 0, 1, 2, 3, 4,
                                                     5, 0, 1, 4, 5 };
+            /* gain per speaker and source channel; bins on one speaker add */
+            float gs[6][2] = { 0 };
             for (int b = 0; b < 8; b++) {
                 if (bin[b] > 9 || (bin[b] == mp_bin && !debug_isolation)) {
                     continue;
@@ -1626,13 +1628,28 @@ static void voice_process(MCPXAPUState *d,
                 if (gb <= 0.0f) {
                     continue;
                 }
-                int spk = speaker_of_bin[bin[b]];
                 int src_ch = (hrtf_applied && b < 4) ? (b >> 1)
                                                      : (b % channels);
-                for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-                    sample_buf[i][spk] += gb * samples[i][src_ch];
-                }
+                gs[speaker_of_bin[bin[b]]][src_ch] += gb;
                 to_speakers = true;
+            }
+            /* No louder than stereo, which plays the voice once at its
+             * loudest bin (g) on each of L and R: the 5.1 total power is
+             * capped at 2 g^2. With Dolby the game sends a side sound to
+             * the front and the rear pair at full level (+3 dB without it). */
+            float p = 0.0f;
+            for (int s = 0; s < 6; s++) {
+                p += gs[s][0] * gs[s][0] + gs[s][1] * gs[s][1];
+            }
+            float scale = p > 2.0f * g * g ? sqrtf(2.0f * g * g / p) : 1.0f;
+            for (int s = 0; s < 6; s++) {
+                float g0 = scale * gs[s][0], g1 = scale * gs[s][1];
+                if (g0 == 0.0f && g1 == 0.0f) {
+                    continue;
+                }
+                for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+                    sample_buf[i][s] += g0 * samples[i][0] + g1 * samples[i][1];
+                }
             }
         }
         if (!to_speakers) {
