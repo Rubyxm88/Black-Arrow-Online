@@ -1637,11 +1637,12 @@ static void voice_process(MCPXAPUState *d,
              * loudest bin (g) on each of L and R: the 5.1 total power is
              * capped at 2 g^2. With Dolby the game sends a side sound to
              * the front and the rear pair at full level (+3 dB without it). */
-            float p = 0.0f;
+            float power = 0.0f;
             for (int s = 0; s < 6; s++) {
-                p += gs[s][0] * gs[s][0] + gs[s][1] * gs[s][1];
+                power += gs[s][0] * gs[s][0] + gs[s][1] * gs[s][1];
             }
-            float scale = p > 2.0f * g * g ? sqrtf(2.0f * g * g / p) : 1.0f;
+            float scale = power > 2.0f * g * g ? sqrtf(2.0f * g * g / power)
+                                               : 1.0f;
             for (int s = 0; s < 6; s++) {
                 float g0 = scale * gs[s][0], g1 = scale * gs[s][1];
                 if (g0 == 0.0f && g1 == 0.0f) {
