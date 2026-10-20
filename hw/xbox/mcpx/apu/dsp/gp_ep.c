@@ -574,8 +574,15 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_
         }
     }
 
-    /* Run EP */
-    if ((d->ep.regs[NV_PAPU_EPRST] & NV_PAPU_GPRST_GPRST) &&
+    /*
+     * Run EP. xemu: Fast sound plays the voice processor's mix and never the
+     * EP's output, so the EP only runs for Accurate. With the Xbox audio
+     * setting Dolby Surround or Dolby Digital the game loads an EP program
+     * that hits DSP instructions the interpreter lacks (extractu) and reads
+     * past Y memory, which closed xemu at boot even on Fast.
+     */
+    if (d->ep.realtime &&
+        (d->ep.regs[NV_PAPU_EPRST] & NV_PAPU_GPRST_GPRST) &&
         (d->ep.regs[NV_PAPU_EPRST] & NV_PAPU_GPRST_GPDSPRST)) {
         if (d->ep_frame_div % 8 == 0) {
             dsp_start_frame(d->ep.dsp);
