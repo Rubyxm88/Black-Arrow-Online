@@ -68,13 +68,52 @@ static bool dsp_frame_too_long(DSPState *dsp, const char *name)
 
 static const int16_t ep_silence[256][2] = { 0 };
 
+/*
+ * xemu: with the Xbox set to Dolby Surround, Dolby Digital or DTS the game
+ * loads an encoder program into the EP that the interpreter cannot run
+ * (extractu, then a Y read past the end) and whose output is not plain
+ * stereo anyway. Accurate plays the EP's output, so it is off while the
+ * console's EEPROM has one of those settings; Fast never runs the EP.
+ * Read from the EEPROM file (the dashboard writes it) at most once a second.
+ */
+#define EEPROM_AUDIO_FLAGS 0x98
+#define EEPROM_AUDIO_SURROUND 2
+#define EEPROM_AUDIO_AC3 0x10000
+#define EEPROM_AUDIO_DTS 0x20000
+
+bool mcpx_apu_dolby_eeprom(void)
+{
+    static int64_t checked_us;
+    static bool dolby;
+
+    int64_t now = g_get_monotonic_time();
+    if (checked_us && now - checked_us < G_USEC_PER_SEC) {
+        return dolby;
+    }
+    checked_us = now;
+
+    uint8_t b[4];
+    bool found = false;
+    FILE *f = qemu_fopen(g_config.sys.files.eeprom_path, "rb");
+    if (f) {
+        found = fseek(f, EEPROM_AUDIO_FLAGS, SEEK_SET) == 0 &&
+                fread(b, sizeof(b), 1, f) == 1;
+        fclose(f);
+    }
+    uint32_t flags = found ? ldl_le_p(b) : 0;
+    dolby = (flags & 0xFF) == EEPROM_AUDIO_SURROUND ||
+            (flags & (EEPROM_AUDIO_AC3 | EEPROM_AUDIO_DTS));
+    return dolby;
+}
+
 void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
 {
     static int last_known_dsp_pref = -1;
     static int last_known_jit_pref = -1;
 
-    if (last_known_dsp_pref != (int)g_config.audio.use_dsp) {
-        if (g_config.audio.use_dsp) {
+    bool accurate = g_config.audio.use_dsp && !mcpx_apu_dolby_eeprom();
+    if (last_known_dsp_pref != (int)accurate) {
+        if (accurate) {
             d->monitor.point = MCPX_APU_DEBUG_MON_GP_OR_EP;
             d->gp.realtime = true;
             d->ep.realtime = true;
@@ -83,7 +122,7 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
             d->gp.realtime = false;
             d->ep.realtime = false;
         }
-        last_known_dsp_pref = g_config.audio.use_dsp;
+        last_known_dsp_pref = accurate;
     }
 
     /*

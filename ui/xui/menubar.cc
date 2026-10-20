@@ -522,18 +522,24 @@ static void SoundMenu()
 {
     MenuHeader("Quality");
     ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+    bool dolby = mcpx_apu_dolby_eeprom();
     if (ImGui::MenuItem("Fast Enhanced (recommended)", NULL,
-                        !g_config.audio.use_dsp)) {
+                        !g_config.audio.use_dsp || dolby)) {
         g_config.audio.use_dsp = false;
     }
     MenuItemHelp("Mixes the game's sounds straight to your speakers. Lightest "
                  "on the PC, steadiest frame rate.");
-    if (ImGui::MenuItem("Accurate", NULL, g_config.audio.use_dsp)) {
+    if (ImGui::MenuItem("Accurate", NULL, g_config.audio.use_dsp && !dolby,
+                        !dolby)) {
         g_config.audio.use_dsp = true;
         g_config.audio.use_dsp_jit = true;
     }
-    MenuItemHelp("Runs the Xbox's own sound effects processor, like a real "
-                 "console. Uses about a quarter of a CPU core more.");
+    MenuItemHelp(dolby ? "Off while the Xbox's audio setting is Dolby "
+                         "Surround, Dolby Digital or DTS. Set it to Stereo in "
+                         "the Xbox Dashboard to use Accurate."
+                       : "Runs the Xbox's own sound effects processor, like a "
+                         "real console. Uses about a quarter of a CPU core "
+                         "more.");
     ImGui::PopItemFlag();
 
     MenuHeader("Channels");

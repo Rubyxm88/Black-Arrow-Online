@@ -845,17 +845,23 @@ void MainMenuAudioView::Draw()
     Slider("Output volume limit", &g_config.audio.volume_limit, buf);
 
     SectionTitle("Quality");
-    int mode = g_config.audio.use_dsp ? 1 : 0;
+    bool dolby = mcpx_apu_dolby_eeprom();
+    int mode = g_config.audio.use_dsp && !dolby ? 1 : 0;
+    ImGui::BeginDisabled(dolby);
     if (ChevronCombo("Sound", &mode,
                      "Fast Enhanced (recommended)\0"
                      "Accurate\0",
-                     "Accurate runs the Xbox's own sound effects processor "
-                     "and uses several times more CPU")) {
+                     dolby ? "Accurate is off while the Xbox's audio setting "
+                             "is Dolby Surround, Dolby Digital or DTS. Set it "
+                             "to Stereo in the Xbox Dashboard to use it"
+                           : "Accurate runs the Xbox's own sound effects "
+                             "processor and uses several times more CPU")) {
         g_config.audio.use_dsp = mode == 1;
         if (g_config.audio.use_dsp) {
             g_config.audio.use_dsp_jit = true;
         }
     }
+    ImGui::EndDisabled();
     Toggle("Louder movement", &g_config.audio.louder_movement,
            "Makes footsteps and the rattle of gear and clothes easier "
            "to hear nearby");

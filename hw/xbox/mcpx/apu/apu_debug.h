@@ -111,6 +111,9 @@ bool mcpx_apu_debug_is_muted(uint16_t v);
 void mcpx_apu_debug_set_gp_realtime_enabled(bool enable);
 void mcpx_apu_debug_set_ep_realtime_enabled(bool enable);
 
+/* The Xbox is set to Dolby Surround / Digital or DTS: Accurate is off */
+bool mcpx_apu_dolby_eeprom(void);
+
 #ifdef __cplusplus
 }
 #endif
