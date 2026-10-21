@@ -30,7 +30,14 @@ extern "C" {
  * This PC's own list, same format: every shader the game needed here.
  * Updates never replace it, and Clear Cache keeps it unless asked.
  */
-#define NV2A_SHADER_LEARNED_FILE "shader-list-mine.bin"
+#define NV2A_SHADER_LEARNED_FILE "shader-list-mine-v2.bin"
+
+/*
+ * The own list of builds up to 20 (xemu 0.8.137 layout). Never written, so a
+ * rollback to those builds still finds it; what they add to it is merged
+ * into NV2A_SHADER_LEARNED_FILE at every start.
+ */
+#define NV2A_SHADER_LEARNED_V1_FILE "shader-list-mine.bin"
 
 /*
  * Crash guard: the shader being precached is written here, and the file is

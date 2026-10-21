@@ -35,6 +35,7 @@
 #include "hw/xbox/nv2a/pgraph/util.h"
 #include "debug.h"
 #include "renderer.h"
+#include "shader-state-v1.h"
 
 static GLenum get_gl_primitive_mode(enum ShaderPolygonMode polygon_mode, enum ShaderPrimitiveMode primitive_mode)
 {
@@ -424,16 +425,151 @@ static const char *shader_cache_tag(void)
     return tag;
 }
 
+/*
+ * The cache folder of this tag (shaders-0.8.138-s2756-r1), with its own
+ * shader_cache_list inside. Builds up to 20 use "shaders" and a
+ * shader_cache_list beside it; each build deletes cache files with another
+ * tag when it opens them, so sharing one folder made an update or a
+ * rollback throw away the other build's shaders.
+ */
+static const char *shader_cache_dir(void)
+{
+    static char *dir;
+    if (!dir) {
+        dir = g_strdup_printf("%sshaders-%s", xemu_settings_get_base_path(),
+                              shader_cache_tag());
+    }
+    return dir;
+}
+
+#define SHADER_CACHE_LIST "shader_cache_list"
+
 static void shader_create_cache_folder(void)
 {
-    char *shader_path = g_strdup_printf("%sshaders", xemu_settings_get_base_path());
-    qemu_mkdir(shader_path);
-    g_free(shader_path);
+    qemu_mkdir(shader_cache_dir());
 }
 
 static char *shader_get_lru_cache_path(void)
 {
-    return g_strdup_printf("%s/shader_cache_list", xemu_settings_get_base_path());
+    return g_build_filename(shader_cache_dir(), SHADER_CACHE_LIST, NULL);
+}
+
+/* Delete a cache folder: its xxxx folders, their files and its own files */
+static void shader_remove_cache_folder(const char *root)
+{
+    GDir *dir = g_dir_open(root, 0, NULL);
+    const char *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+        char *sub_path = g_build_filename(root, name, NULL);
+        GDir *sub = g_dir_open(sub_path, 0, NULL);
+        const char *file;
+        while (sub && (file = g_dir_read_name(sub))) {
+            char *file_path = g_build_filename(sub_path, file, NULL);
+            g_remove(file_path);
+            g_free(file_path);
+        }
+        if (sub) {
+            g_dir_close(sub);
+            g_rmdir(sub_path);
+        } else {
+            g_remove(sub_path);
+        }
+        g_free(sub_path);
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+    g_rmdir(root);
+}
+
+/*
+ * When a cache folder was last used: its list is written at a clean exit,
+ * and an xxxx folder changes when a shader is saved in it (a crash or a
+ * killed xemu leaves the list old).
+ */
+static gint64 shader_cache_folder_time(const char *root, const char *list)
+{
+    GStatBuf st;
+    gint64 newest = g_stat(list, &st) == 0 ? (gint64)st.st_mtime : 0;
+    GDir *dir = g_dir_open(root, 0, NULL);
+    const char *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+        char *sub_path = g_build_filename(root, name, NULL);
+        if (g_stat(sub_path, &st) == 0 && (gint64)st.st_mtime > newest) {
+            newest = st.st_mtime;
+        }
+        g_free(sub_path);
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+    return newest;
+}
+
+/*
+ * Other builds' cache folders: the newest one is kept, so going back to that
+ * build finds its shaders built; older ones are deleted. With every_one, all
+ * of them go (Clear Cache).
+ */
+static void shader_cache_prune_others(bool every_one)
+{
+    const char *base = xemu_settings_get_base_path();
+    const char *mine = shader_cache_dir();
+    GPtrArray *roots = g_ptr_array_new_with_free_func(g_free);
+    GArray *times = g_array_new(FALSE, FALSE, sizeof(gint64));
+
+    /* Builds up to 20: "shaders" with shader_cache_list beside it */
+    char *legacy = g_strdup_printf("%sshaders", base);
+    char *legacy_list = g_strdup_printf("%s%s", base, SHADER_CACHE_LIST);
+    if (g_file_test(legacy, G_FILE_TEST_IS_DIR)) {
+        gint64 t = shader_cache_folder_time(legacy, legacy_list);
+        g_ptr_array_add(roots, g_strdup(legacy));
+        g_array_append_val(times, t);
+    }
+
+    GDir *dir = g_dir_open(base, 0, NULL);
+    const char *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+        if (strncmp(name, "shaders-", 8) || !g_ascii_isdigit(name[8])) {
+            continue;
+        }
+        char *root = g_strdup_printf("%s%s", base, name);
+        if (!strcmp(root, mine) || !g_file_test(root, G_FILE_TEST_IS_DIR)) {
+            g_free(root);
+            continue;
+        }
+        char *list = g_build_filename(root, SHADER_CACHE_LIST, NULL);
+        gint64 t = shader_cache_folder_time(root, list);
+        g_free(list);
+        g_ptr_array_add(roots, root);
+        g_array_append_val(times, t);
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+
+    int keep = -1;
+    for (guint i = 0; i < roots->len && !every_one; i++) {
+        if (keep < 0 || g_array_index(times, gint64, i) >
+                        g_array_index(times, gint64, keep)) {
+            keep = i;
+        }
+    }
+    for (guint i = 0; i < roots->len; i++) {
+        if ((int)i == keep) {
+            continue;
+        }
+        const char *root = g_ptr_array_index(roots, i);
+        fprintf(stderr, "nv2a: removing an older shader cache: %s\n", root);
+        shader_remove_cache_folder(root);
+        if (!strcmp(root, legacy)) {
+            g_remove(legacy_list);
+        }
+    }
+    g_free(legacy);
+    g_free(legacy_list);
+    g_ptr_array_free(roots, TRUE);
+    g_array_free(times, TRUE);
 }
 
 static void shader_write_lru_list_entry_to_disk(Lru *lru, LruNode *node, void *opaque)
@@ -535,9 +671,8 @@ bool pgraph_gl_shader_load_from_memory(ShaderBinding *binding)
 
 static char *shader_get_bin_directory(uint64_t hash)
 {
-    const char *cfg_dir = xemu_settings_get_base_path();
     char *shader_bin_dir =
-        g_strdup_printf("%s/shaders/%04x", cfg_dir, (uint32_t)(hash >> 48));
+        g_strdup_printf("%s/%04x", shader_cache_dir(), (uint32_t)(hash >> 48));
     return shader_bin_dir;
 }
 
@@ -1136,8 +1271,72 @@ static struct {
     ShaderPrecacheStatus status;
 } precache;
 
-/* The shaders of a list file, or NULL. *count is -1 when there is no file. */
-static ShaderState *shader_list_load(const char *file, int *count)
+QEMU_BUILD_BUG_ON(sizeof(ShaderStateV1) == sizeof(ShaderState));
+
+/*
+ * Turn a state saved by xemu 0.8.137 or earlier into the state the current
+ * shader generator makes for it.
+ * - specular_power(_back) are uniforms now, so they are dropped.
+ * - texgen_infinite_viewer is new; Black Arrow never sets it (coverage run
+ *   on Agora and Presidio, 2026-10-20: 363 fixed-function states, all off).
+ * - point_sprite is now off unless points are drawn, and the game draws
+ *   none with it, so it is cleared.
+ */
+static void shader_state_from_v1(const ShaderStateV1 *o, ShaderState *out)
+{
+    ShaderState n;
+    memset(&n, 0, sizeof(n));
+
+    const VshStateV1 *ov = &o->vsh;
+    VshState *v = &n.vsh;
+    v->surface_scale_factor = ov->surface_scale_factor;
+    v->compressed_attrs = ov->compressed_attrs;
+    v->uniform_attrs = ov->uniform_attrs;
+    v->swizzle_attrs = ov->swizzle_attrs;
+    v->fog_enable = ov->fog_enable;
+    v->fog_mode = ov->fog_mode;
+    v->specular_enable = ov->specular_enable;
+    v->separate_specular = ov->separate_specular;
+    v->ignore_specular_alpha = ov->ignore_specular_alpha;
+    v->point_params_enable = ov->point_params_enable;
+    v->point_size = ov->point_size;
+    memcpy(v->point_params, ov->point_params, sizeof(v->point_params));
+    v->smooth_shading = ov->smooth_shading;
+    v->z_perspective = ov->z_perspective;
+    v->is_fixed_function = ov->is_fixed_function;
+
+    const FixedFunctionVshStateV1 *of = &ov->fixed_function;
+    FixedFunctionVshState *f = &v->fixed_function;
+    f->normalization = of->normalization;
+    memcpy(f->texture_matrix_enable, of->texture_matrix_enable,
+           sizeof(f->texture_matrix_enable));
+    memcpy(f->texgen, of->texgen, sizeof(f->texgen));
+    f->foggen = of->foggen;
+    f->skinning = of->skinning;
+    f->lighting = of->lighting;
+    memcpy(f->light, of->light, sizeof(f->light));
+    f->emission_src = of->emission_src;
+    f->ambient_src = of->ambient_src;
+    f->diffuse_src = of->diffuse_src;
+    f->specular_src = of->specular_src;
+    f->local_eye = of->local_eye;
+    f->texgen_infinite_viewer = false;
+
+    QEMU_BUILD_BUG_ON(sizeof(v->programmable) != sizeof(ov->programmable));
+    memcpy(&v->programmable, &ov->programmable, sizeof(v->programmable));
+    n.geom = o->geom;
+    n.psh = o->psh;
+    n.psh.point_sprite = false;
+
+    *out = n;
+}
+
+/*
+ * The shaders of a list file, or NULL. *count is -1 when there is no file.
+ * *converted is set when the file had the 0.8.137 layout.
+ */
+static ShaderState *shader_list_load(const char *file, int *count,
+                                     bool *converted)
 {
     char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(), file);
     gchar *data = NULL;
@@ -1145,13 +1344,30 @@ static ShaderState *shader_list_load(const char *file, int *count)
     ShaderState *states = NULL;
 
     *count = -1;
+    *converted = false;
     if (g_file_get_contents(path, &data, &len, NULL)) {
         *count = 0;
-        if (len >= 16 && !memcmp(data, SHADER_LIST_MAGIC, 8) &&
-            ldl_le_p(data + 8) == sizeof(ShaderState) &&
-            len == 16 + (gsize)ldl_le_p(data + 12) * sizeof(ShaderState)) {
-            *count = ldl_le_p(data + 12);
+        uint32_t size = len >= 16 ? ldl_le_p(data + 8) : 0;
+        uint32_t n = len >= 16 ? ldl_le_p(data + 12) : 0;
+        bool magic = len >= 16 && !memcmp(data, SHADER_LIST_MAGIC, 8);
+        if (magic && size == sizeof(ShaderState) &&
+            len == 16 + (gsize)n * sizeof(ShaderState)) {
+            *count = n;
             states = g_memdup2(data + 16, *count * sizeof(ShaderState));
+        } else if (magic && size == sizeof(ShaderStateV1) &&
+                   len == 16 + (gsize)n * sizeof(ShaderStateV1)) {
+            states = g_new(ShaderState, MAX(n, 1));
+            for (uint32_t i = 0; i < n; i++) {
+                ShaderStateV1 old;
+                memcpy(&old, data + 16 + i * sizeof(old), sizeof(old));
+                shader_state_from_v1(&old, states + i);
+            }
+            *count = n;
+            *converted = true;
+            fprintf(stderr, "nv2a: %s converted from the 0.8.137 layout, "
+                    "%u -> %d shaders\n", path, n, *count);
+            xemu_diag_event("%s converted from the old shader layout, "
+                            "%u -> %d", file, n, *count);
         } else {
             fprintf(stderr, "nv2a: %s does not match this emulator\n", path);
         }
@@ -1193,7 +1409,7 @@ static bool shader_on_disk(uint64_t hash)
 /* Count the files and bytes of the cache on disk */
 static void shader_disk_usage(int *count, uint64_t *bytes)
 {
-    char *root = g_strdup_printf("%sshaders", xemu_settings_get_base_path());
+    char *root = g_strdup(shader_cache_dir());
     GDir *dir = g_dir_open(root, 0, NULL);
     const char *name;
 
@@ -1351,7 +1567,7 @@ static bool shader_file_state(const char *path, ShaderState *state)
 /* Add the state of every shader in this PC's cache */
 static void precache_add_own(GArray *states)
 {
-    char *root = g_strdup_printf("%sshaders", xemu_settings_get_base_path());
+    char *root = g_strdup(shader_cache_dir());
     GDir *dir = g_dir_open(root, 0, NULL);
     const char *name;
 
@@ -1436,7 +1652,9 @@ static void learned_init(void)
                                            g_free, NULL);
 
     int count;
-    ShaderState *states = shader_list_load(NV2A_SHADER_LEARNED_FILE, &count);
+    bool converted;
+    ShaderState *states = shader_list_load(NV2A_SHADER_LEARNED_FILE, &count,
+                                           &converted);
     if (count == 0 && !states) {
         /* A file that does not match: keep it aside, start a new one */
         char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
@@ -1445,7 +1663,7 @@ static void learned_init(void)
             char *bad = g_strdup_printf("%s.bad", path);
             g_remove(bad);
             g_rename(path, bad);
-            xemu_diag_event("shader-list-mine.bin unreadable, set aside");
+            xemu_diag_event("%s unreadable, set aside", NV2A_SHADER_LEARNED_FILE);
             g_free(bad);
         }
         g_free(path);
@@ -1455,6 +1673,25 @@ static void learned_init(void)
     }
     g_free(states);
     learned.dirty = false;
+
+    /*
+     * The list of builds up to 20, read only: the first start after the
+     * update takes all of it, later starts what was played after a rollback.
+     */
+    int old_count;
+    states = shader_list_load(NV2A_SHADER_LEARNED_V1_FILE, &old_count,
+                              &converted);
+    guint before = learned.states->len;
+    for (int i = 0; i < old_count; i++) {
+        learned_insert_locked(&states[i]);
+    }
+    g_free(states);
+    if (learned.states->len > before) {
+        fprintf(stderr, "nv2a: %u shaders added from %s\n",
+                learned.states->len - before, NV2A_SHADER_LEARNED_V1_FILE);
+        learned.dirty = true;
+        learned.dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    }
     learned.ready = true;
     fprintf(stderr, "nv2a: %d shaders in this PC's own list\n",
             (int)learned.states->len);
@@ -1641,8 +1878,16 @@ static void guard_clear(void)
 static void *precache_thread(void *arg)
 {
     PGRAPHState *pg = arg;
+    static bool pruned;
+    if (!pruned) {
+        /* Here, off the render thread: it can delete thousands of files */
+        pruned = true;
+        shader_cache_prune_others(false);
+    }
     int list_count;
-    ShaderState *list = shader_list_load(NV2A_SHADER_LIST_FILE, &list_count);
+    bool list_converted;
+    ShaderState *list = shader_list_load(NV2A_SHADER_LIST_FILE, &list_count,
+                                         &list_converted);
     GArray *all = g_array_new(FALSE, FALSE, sizeof(ShaderState));
 
     if (list) {
@@ -1887,32 +2132,10 @@ bool nv2a_shader_cache_clear(bool forget_learned)
         g_array_free(own, TRUE);
     }
 
-    char *root = g_strdup_printf("%sshaders", xemu_settings_get_base_path());
-    GDir *dir = g_dir_open(root, 0, NULL);
-    const char *name;
-    while (dir && (name = g_dir_read_name(dir))) {
-        char *sub_path = g_build_filename(root, name, NULL);
-        GDir *sub = g_dir_open(sub_path, 0, NULL);
-        const char *file;
-        while (sub && (file = g_dir_read_name(sub))) {
-            char *file_path = g_build_filename(sub_path, file, NULL);
-            g_remove(file_path);
-            g_free(file_path);
-        }
-        if (sub) {
-            g_dir_close(sub);
-        }
-        g_rmdir(sub_path);
-        g_free(sub_path);
-    }
-    if (dir) {
-        g_dir_close(dir);
-    }
-    g_free(root);
-
-    char *list = shader_get_lru_cache_path();
-    g_remove(list);
-    g_free(list);
+    /* This build's folder (its list included) and other builds' folders */
+    shader_remove_cache_folder(shader_cache_dir());
+    shader_create_cache_folder();
+    shader_cache_prune_others(true);
 
     if (forget_learned) {
         /* A save still running would write the list back */
@@ -1923,6 +2146,10 @@ bool nv2a_shader_cache_clear(bool forget_learned)
         learned.dirty = false;
         qemu_mutex_unlock(&learned.lock);
         char *path = base_file(NV2A_SHADER_LEARNED_FILE);
+        g_remove(path);
+        g_free(path);
+        /* Or the next start would merge the old builds' list back in */
+        path = base_file(NV2A_SHADER_LEARNED_V1_FILE);
         g_remove(path);
         g_free(path);
         qemu_mutex_unlock(&learned.save_lock);

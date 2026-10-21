@@ -1,9 +1,9 @@
 """Make shader-list.bin from xemu shader cache folders.
 
-Each file in a cache folder (system/shaders/xxxx/...) holds the emulated GPU
-state of one shader next to the program compiled for one graphics card. The
-state does not depend on the graphics card, so the states of all files make
-a list that xemu's Shader Cache window can build on any PC.
+Each file in a cache folder (system/shaders-<tag>/xxxx/..., up to build 20
+system/shaders/xxxx/...) holds the emulated GPU state of one shader next to
+the program compiled for one graphics card. The state does not depend on
+the graphics card, so the states of all files make a list that xemu's Shader Cache window can build on any PC.
 
   python make-shader-list.py OUT.bin CACHE_DIR [CACHE_DIR ...]
 

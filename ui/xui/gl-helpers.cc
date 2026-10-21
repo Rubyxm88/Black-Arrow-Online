@@ -1312,7 +1312,12 @@ void RenderFramebuffer(GLint tex, int width, int height, bool flip, float scale[
         glUniform1i(s->text_sharpen_loc, enhanced ? 1 : 0);
     }
     if (s->surface_scale_loc >= 0) {
-        int surf_scale = nv2a_get_surface_scale_factor();
+        /*
+         * Not nv2a_get_surface_scale_factor(): it drops and retakes the BQL,
+         * which this thread does not hold while drawing (screenshots crashed).
+         * The renderer takes its scale from this setting.
+         */
+        int surf_scale = g_config.display.quality.surface_scale;
         if (surf_scale < 1) surf_scale = 1;
         glUniform1f(s->surface_scale_loc, (float)surf_scale);
     }
