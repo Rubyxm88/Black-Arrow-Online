@@ -686,7 +686,13 @@ void cpu_io_recompile(CPUState *cpu, uintptr_t retaddr)
     cpu_restore_state_from_tb(cpu, tb, retaddr);
     xemu_perf_event(XEMU_PERF_IO_RECOMPILE);
     if (cap) {
+        /*
+         * The game's code was running, so on Apple Silicon this thread
+         * can't write the block (it lives with the code) until it switches
+         */
+        qemu_thread_jit_write();
         tb_phys_invalidate(tb, -1);
+        qemu_thread_jit_execute();
     }
 
     /*
