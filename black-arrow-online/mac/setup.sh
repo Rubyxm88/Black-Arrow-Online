@@ -240,9 +240,19 @@ if [ -n "$update_pid" ]; then
     exec >> "$system/update.log" 2>&1
     echo "=== $(date): updating from $here"
     trap 'fail "step at line $LINENO of setup.sh failed (see update.log)."' ERR
+    # A copy stuck in the game (builds up to 21 on Apple Silicon) never
+    # closes: after a minute ask it to quit, then make it
     waited=0
     while kill -0 "$update_pid" 2>/dev/null; do
-        [ "$waited" -lt 120 ] || fail "Black Arrow Online did not close."
+        if [ "$waited" -eq 120 ]; then
+            echo "Black Arrow Online did not close in a minute, quitting it."
+            kill -TERM "$update_pid" 2>/dev/null || true
+        elif [ "$waited" -eq 140 ]; then
+            echo "Still open, closing it."
+            kill -KILL "$update_pid" 2>/dev/null || true
+        elif [ "$waited" -ge 160 ]; then
+            fail "Black Arrow Online did not close."
+        fi
         sleep 0.5
         waited=$((waited + 1))
     done
