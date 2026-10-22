@@ -61,16 +61,18 @@
  * the disc and hard disk reading less than FREEZE_LOADING_BYTES a second
  * for FREEZE_IDLE_IO_SECONDS (more is a long load; a game that streams its
  * music keeps reading a little), or no frame at all for
- * FREEZE_ANYWAY_SECONDS
+ * FREEZE_ANYWAY_SECONDS (RS3 loads for 35 s with no picture after the
+ * game cache was emptied, reading the hard disk all the time)
  */
 #define FREEZE_SECONDS 10
 #define FREEZE_IDLE_IO_SECONDS 3
 #define FREEZE_LOADING_BYTES (1024 * 1024)
-#define FREEZE_ANYWAY_SECONDS 20
+#define FREEZE_ANYWAY_SECONDS 120
 
 /*
  * Seconds with frames before the watch starts, so a screen that never
- * moves (some dashboards right after boot) does not count as a freeze
+ * moves (some dashboards right after boot) does not count as a freeze.
+ * A disc change starts this again: the new title boots and loads.
  */
 #define FREEZE_ARM_SECONDS 10
 
@@ -162,6 +164,7 @@ static int worst_count;
 /* Freeze watch, on the main loop only */
 static int frame_seconds, no_frame_seconds, io_idle_seconds;
 static bool freeze_noticed;
+static int disc_changed;    /* set by xemu_diag_poll */
 static CpuSample cpu_samples[CPU_SAMPLES];
 static int cpu_sample_count;
 static int64_t freeze_us = -1;
@@ -805,6 +808,7 @@ void xemu_diag_poll(void)
         last_disc = g_strdup(disc);
         xemu_diag_event("disc: %s", disc && disc[0] ? base_name(disc) :
                                                       "ejected");
+        qatomic_set(&disc_changed, 1);
     }
 
     if (!cache_reported) {
@@ -1201,6 +1205,10 @@ static char *write_freeze_report(int64_t now)
 /* Once a second while the emulator runs: no frames may mean a freeze */
 static void watch_freeze(int64_t now, int frames, bool loading)
 {
+    if (qatomic_xchg(&disc_changed, 0) && !freeze_noticed) {
+        frame_seconds = 0;
+        no_frame_seconds = 0;
+    }
     if (frames > 0) {
         if (freeze_noticed) {
             xemu_diag_event("the game shows pictures again after %d s",
