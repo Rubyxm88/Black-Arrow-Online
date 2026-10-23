@@ -376,6 +376,18 @@ int qemu_poll_ns(GPollFD *fds, guint nfds, int64_t timeout)
             }
             now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
         }
+#else
+        /* macOS: no ppoll, but nanosleep is precise enough to do the same */
+        static int sleep_state; /* 0: untried, 1: sleep, -1: spin only */
+        if (sleep_state == 0) {
+            const char *mode = g_getenv("XEMU_MAINLOOP_WAIT");
+            sleep_state = mode && !strcmp(mode, "spin") ? -1 : 1;
+        }
+        if (sleep_state == 1 && timeout > XBOX_BUSYWAIT_SPIN_NS) {
+            struct timespec ts = { 0, timeout - XBOX_BUSYWAIT_SPIN_NS };
+            nanosleep(&ts, NULL);
+            now = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+        }
 #endif
         while (now < end) {
             cpu_relax();

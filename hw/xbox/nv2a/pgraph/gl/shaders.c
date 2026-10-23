@@ -404,6 +404,14 @@ static const char *shader_gl_version = NULL;
 static const char *shader_gl_renderer = NULL;
 
 /*
+ * The driver cannot hand out compiled programs (Apple's OpenGL), so nothing
+ * is cached on disk: the precache builds the list into the shader cache in
+ * memory instead, again every session. XEMU_SHADER_NO_BINARY=1 acts as if
+ * the driver were one of them, to test this on other PCs.
+ */
+static bool shader_no_binaries;
+
+/*
  * Bump when this fork changes how shaders are generated, so old cached
  * programs are thrown away.
  */
@@ -870,7 +878,7 @@ static bool shader_fill_from_disk(ShaderBinding *binding)
 
 static void *shader_reload_lru_from_disk(void *arg)
 {
-    if (!g_config.perf.cache_shaders) {
+    if (!g_config.perf.cache_shaders || shader_no_binaries) {
         return NULL;
     }
 
@@ -944,6 +952,15 @@ void pgraph_gl_init_shaders(PGRAPHState *pg)
     }
     if (!shader_gl_renderer) {
         shader_gl_renderer = (const char *) glGetString(GL_RENDERER);
+    }
+
+    GLint binary_formats = 0;
+    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &binary_formats);
+    shader_no_binaries = binary_formats <= 0 ||
+                         g_getenv("XEMU_SHADER_NO_BINARY") != NULL;
+    if (shader_no_binaries) {
+        fprintf(stderr, "nv2a: this driver cannot save compiled shaders: "
+                "the precache builds them in memory\n");
     }
 
     shader_create_cache_folder();
@@ -1223,7 +1240,7 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
             if (!async_finish(binding)) {
                 generate_shaders(r, binding);
             }
-            if (g_config.perf.cache_shaders) {
+            if (g_config.perf.cache_shaders && !shader_no_binaries) {
                 pgraph_gl_shader_cache_to_disk(binding);
             }
             xemu_perf_end(late ? XEMU_PERF_SHADER_GEN : XEMU_PERF_SHADER_ASYNC,
@@ -1231,7 +1248,8 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
         }
     } else if (!binding->initialized) {
         int64_t perf_start = xemu_perf_start();
-        if (!binding->program && g_config.perf.cache_shaders) {
+        if (!binding->program && g_config.perf.cache_shaders &&
+            !shader_no_binaries) {
             shader_fill_from_disk(binding);
         }
         bool loaded = pgraph_gl_shader_load_from_memory(binding);
@@ -1253,7 +1271,7 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
             nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
             learned_add(&state);
             generate_shaders(r, binding);
-            if (g_config.perf.cache_shaders) {
+            if (g_config.perf.cache_shaders && !shader_no_binaries) {
                 pgraph_gl_shader_cache_to_disk(binding);
             }
             xemu_perf_end(XEMU_PERF_SHADER_GEN, perf_start);
@@ -1535,12 +1553,58 @@ static GLuint precache_compile(GLenum kind, MString *code)
 }
 
 /*
- * Build the program for a state the way generate_shaders() does and save it
- * the way pgraph_gl_shader_cache_to_disk() does. Returns false if it failed,
- * and sets *unsupported when the driver cannot hand out program binaries.
+ * Hand a program the precache built to the shader cache in memory, where the
+ * game finds it ready (contexts share their programs). False if the game
+ * built or started building that shader itself in the meantime.
  */
-static bool precache_build(const ShaderState *state, uint64_t hash,
-                           bool *unsupported)
+static bool precache_keep(PGRAPHState *pg, GLuint program,
+                          const ShaderState *state, uint64_t hash)
+{
+    PGRAPHGLState *r = pg->gl_renderer_state;
+    bool kept = false;
+
+    qemu_mutex_lock(&r->shader_cache_lock);
+    LruNode *node = lru_lookup(&r->shader_cache, hash, state);
+    ShaderBinding *binding = container_of(node, ShaderBinding, node);
+    if (!binding->initialized && !binding->async_pending) {
+        binding->gl_program = program;
+        binding->gl_primitive_mode =
+            get_gl_primitive_mode(binding->state.geom.polygon_front_mode,
+                                  binding->state.geom.primitive_mode);
+        glUseProgram(program);
+        set_texture_sampler_uniforms(binding);
+        update_shader_uniform_locs(binding);
+        glUseProgram(0);
+        /* Complete here before the render thread's context uses it */
+        glFinish();
+        binding->initialized = true;
+        kept = true;
+    }
+    qemu_mutex_unlock(&r->shader_cache_lock);
+    return kept;
+}
+
+/* Whether the game would find the shader ready: on disk, or in memory */
+static bool precache_have(PGRAPHState *pg, uint64_t hash)
+{
+    if (!shader_no_binaries) {
+        return shader_on_disk(hash);
+    }
+    PGRAPHGLState *r = pg->gl_renderer_state;
+    qemu_mutex_lock(&r->shader_cache_lock);
+    bool have = lru_contains_hash(&r->shader_cache, hash);
+    qemu_mutex_unlock(&r->shader_cache_lock);
+    return have;
+}
+
+/*
+ * Build the program for a state the way generate_shaders() does and save it
+ * the way pgraph_gl_shader_cache_to_disk() does, or, when the driver cannot
+ * hand out program binaries, keep it in memory (precache_keep). Returns
+ * false if it failed.
+ */
+static bool precache_build(PGRAPHState *pg, const ShaderState *state,
+                           uint64_t hash)
 {
     GLuint program = glCreateProgram();
     GLuint stages[3];
@@ -1578,15 +1642,28 @@ static bool precache_build(const ShaderState *state, uint64_t hash,
         ok = linked;
     }
 
-    GLint size = 0;
-    if (ok) {
-        glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &size);
-        if (size <= 0) {
-            *unsupported = true;
-            ok = false;
+    for (int i = 0; i < n; i++) {
+        if (stages[i]) {
+            glDetachShader(program, stages[i]);
+            glDeleteShader(stages[i]);
         }
     }
-    if (ok) {
+
+    GLint size = 0;
+    if (ok && !shader_no_binaries) {
+        glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &size);
+        if (size <= 0) {
+            /* GL_NUM_PROGRAM_BINARY_FORMATS said otherwise */
+            shader_no_binaries = true;
+            fprintf(stderr, "nv2a: this driver cannot save compiled "
+                    "shaders: the precache builds them in memory\n");
+        }
+    }
+    if (ok && shader_no_binaries) {
+        if (precache_keep(pg, program, state, hash)) {
+            program = 0;
+        }
+    } else if (ok) {
         ShaderBinding *binding = g_malloc0(sizeof(*binding));
         GLsizei copied = 0;
         binding->node.hash = hash;
@@ -1605,13 +1682,9 @@ static bool precache_build(const ShaderState *state, uint64_t hash,
         g_free(binding);
     }
 
-    for (int i = 0; i < n; i++) {
-        if (stages[i]) {
-            glDetachShader(program, stages[i]);
-            glDeleteShader(stages[i]);
-        }
+    if (program) {
+        glDeleteProgram(program);
     }
-    glDeleteProgram(program);
     return ok;
 }
 
@@ -2033,9 +2106,9 @@ static unsigned int precache_next_scale(unsigned int targets,
     return 0;
 }
 
-/* How many of the list's states are not on disk yet at this scale */
-static int precache_missing(const ShaderState *states, int count,
-                            unsigned int scale, int *skipped)
+/* How many of the list's states are not ready yet at this scale */
+static int precache_missing(PGRAPHState *pg, const ShaderState *states,
+                            int count, unsigned int scale, int *skipped)
 {
     int missing = 0;
     for (int i = 0; i < count; i++) {
@@ -2046,7 +2119,7 @@ static int precache_missing(const ShaderState *states, int count,
             if (skipped) {
                 (*skipped)++;
             }
-        } else if (!shader_on_disk(hash)) {
+        } else if (!precache_have(pg, hash)) {
             missing++;
         }
     }
@@ -2068,10 +2141,9 @@ static void *precache_thread(void *arg)
                                          &list_converted);
     GArray *all = g_array_new(FALSE, FALSE, sizeof(ShaderState));
 
-    if (list) {
+    if (list && !shader_no_binaries) {
         g_array_append_vals(all, list, list_count);
     }
-    g_free(list);
     if (g_config.perf.shader_precache_own) {
         /* The cache files' states join this PC's own list too */
         guint from = all->len;
@@ -2083,6 +2155,11 @@ static void *precache_thread(void *arg)
         g_array_append_vals(all, learned.states->data, learned.states->len);
         qemu_mutex_unlock(&learned.lock);
     }
+    if (list && shader_no_binaries) {
+        /* Built every session: the shaders this PC has used come first */
+        g_array_append_vals(all, list, list_count);
+    }
+    g_free(list);
 
     /*
      * The resolution scale is part of every vertex shader's state. The list
@@ -2110,7 +2187,9 @@ static void *precache_thread(void *arg)
     g_free(hashes);
 
     unsigned int now = qatomic_read(&pg->surface_scale_factor);
-    unsigned int targets = precache_targets(now);
+    /* Kept only in memory: the scale the game runs at now is enough */
+    unsigned int targets = shader_no_binaries ? PRECACHE_BIT(now)
+                                              : precache_targets(now);
     /* The scale this session started at: built at full speed */
     static unsigned int boot_scale;
     if (!boot_scale) {
@@ -2120,7 +2199,7 @@ static void *precache_thread(void *arg)
     for (unsigned int s = 1; s <= PRECACHE_MAX_SCALE; s++) {
         if (targets & PRECACHE_BIT(s)) {
             n_scales++;
-            n_missing += precache_missing(states, count, s, &skipped);
+            n_missing += precache_missing(pg, states, count, s, &skipped);
         }
     }
 
@@ -2141,17 +2220,20 @@ static void *precache_thread(void *arg)
     qemu_mutex_unlock(&precache.lock);
 
     if (build) {
-        bool unsupported = false;
         int64_t start = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
         xemu_diag_event("shader precache started: %d to build", n_missing);
         glo_set_current(g_nv2a_context_precache);
         unsigned int finished = 0;   /* scales gone through to the end */
-        while (!qatomic_read(&precache.stop) && !unsupported) {
+        while (!qatomic_read(&precache.stop)) {
             now = qatomic_read(&pg->surface_scale_factor);
             if (!(targets & PRECACHE_BIT(now))) {
-                /* A scale this player has not used before */
-                targets = precache_targets(now);
-                int more = precache_missing(states, count, now, NULL);
+                /*
+                 * A scale this player has not used before (kept only in
+                 * memory: not in this session)
+                 */
+                targets = shader_no_binaries ? targets | PRECACHE_BIT(now)
+                                             : precache_targets(now);
+                int more = precache_missing(pg, states, count, now, NULL);
                 qemu_mutex_lock(&precache.lock);
                 precache.status.list_total += count;
                 precache.status.list_missing += more;
@@ -2174,12 +2256,12 @@ static void *precache_thread(void *arg)
                 state.vsh.surface_scale_factor = scale;
                 uint64_t hash = fast_hash((uint8_t *)&state, sizeof(state));
                 if (g_hash_table_contains(precache_skip, &hash) ||
-                    shader_on_disk(hash)) {
+                    precache_have(pg, hash)) {
                     continue;
                 }
                 guard_set(hash);
                 int64_t built_at = g_get_monotonic_time();
-                bool ok = precache_build(&state, hash, &unsupported);
+                bool ok = precache_build(pg, &state, hash);
                 if (scale != boot_scale) {
                     /*
                      * Any scale but the one this session started at is
@@ -2191,7 +2273,7 @@ static void *precache_thread(void *arg)
                     int64_t took = g_get_monotonic_time() - built_at;
                     g_usleep(MIN(2 * took, 200000));
                 }
-                if (ok && scale == game) {
+                if (ok && scale == game && !shader_no_binaries) {
                     /* Use it in this session too */
                     shader_load_from_disk(pg, hash);
                 }
@@ -2202,9 +2284,6 @@ static void *precache_thread(void *arg)
                     precache.status.failed++;
                 }
                 qemu_mutex_unlock(&precache.lock);
-                if (unsupported) {
-                    break;
-                }
             }
             if (!moved && !qatomic_read(&precache.stop)) {
                 finished |= PRECACHE_BIT(scale);
@@ -2219,18 +2298,19 @@ static void *precache_thread(void *arg)
         precache.status.disk_count = disk_count;
         precache.status.disk_bytes = disk_bytes;
         precache.status.list_missing -= precache.status.done;
-        if (unsupported) {
+        if (shader_no_binaries) {
             snprintf(precache.status.error, sizeof(precache.status.error),
-                     "This graphics driver cannot save compiled shaders.");
+                     "This graphics driver cannot save compiled shaders, so "
+                     "they are built again at every start.");
         }
         int done = precache.status.done, failed = precache.status.failed;
         qemu_mutex_unlock(&precache.lock);
         int ms = qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - start;
-        fprintf(stderr, "nv2a: precache built %d shaders (%d failed) in %d ms\n",
-                done, failed, ms);
+        fprintf(stderr, "nv2a: precache built %d shaders (%d failed) in %d ms%s\n",
+                done, failed, ms, shader_no_binaries ? ", kept in memory" : "");
         xemu_diag_event("shader precache finished: %d built, %d failed, "
                         "%d ms%s", done, failed, ms,
-                        unsupported ? ", driver cannot save shaders" : "");
+                        shader_no_binaries ? ", kept in memory" : "");
     }
 
     qemu_mutex_lock(&precache.lock);
