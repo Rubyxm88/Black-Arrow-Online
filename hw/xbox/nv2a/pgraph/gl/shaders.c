@@ -1607,11 +1607,14 @@ static bool precache_build(const ShaderState *state, uint64_t hash,
     return ok;
 }
 
-/* The state stored in one of this PC's cache files, whatever its driver */
-static bool shader_file_state(const char *path, ShaderState *state)
+/*
+ * The state stored in one of this PC's cache files with this tag, whatever
+ * its driver
+ */
+static bool shader_file_state(const char *path, const char *tag,
+                              ShaderState *state)
 {
     FILE *f = qemu_fopen(path, "rb");
-    const char *tag = shader_cache_tag();
     GLenum format;
     bool ok = f != NULL;
 
@@ -1633,10 +1636,10 @@ static bool shader_file_state(const char *path, ShaderState *state)
     return ok;
 }
 
-/* Add the state of every shader in this PC's cache */
-static void precache_add_own(GArray *states)
+/* Add the state of every shader in one cache folder whose files carry tag */
+static void precache_add_folder(GArray *states, const char *root,
+                                const char *tag)
 {
-    char *root = g_strdup(shader_cache_dir());
     GDir *dir = g_dir_open(root, 0, NULL);
     const char *name;
 
@@ -1647,7 +1650,7 @@ static void precache_add_own(GArray *states)
         while (sub && (file = g_dir_read_name(sub))) {
             char *file_path = g_build_filename(sub_path, file, NULL);
             ShaderState state;
-            if (shader_file_state(file_path, &state)) {
+            if (shader_file_state(file_path, tag, &state)) {
                 g_array_append_val(states, state);
             }
             g_free(file_path);
@@ -1660,7 +1663,48 @@ static void precache_add_own(GArray *states)
     if (dir) {
         g_dir_close(dir);
     }
-    g_free(root);
+}
+
+/*
+ * Add the state of every shader in this PC's cache. The first time in a
+ * session this also reads the other build's folder that pruning kept, if its
+ * states have this layout: after an xemu update the new tag starts with an
+ * empty folder, and shaders that build made but never put in the learned
+ * list (a crash, a killed xemu) would be lost.
+ */
+static void precache_add_own(GArray *states)
+{
+    static bool others_read;
+
+    precache_add_folder(states, shader_cache_dir(), shader_cache_tag());
+    if (others_read) {
+        return;
+    }
+    others_read = true;
+
+    const char *base = xemu_settings_get_base_path();
+    char *layout = g_strdup_printf("-s%zu-r", sizeof(ShaderState));
+    GDir *dir = g_dir_open(base, 0, NULL);
+    const char *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+        if (strncmp(name, "shaders-", 8) || !g_ascii_isdigit(name[8]) ||
+            !strstr(name, layout)) {
+            continue;
+        }
+        char *root = g_strdup_printf("%s%s", base, name);
+        if (strcmp(root, shader_cache_dir()) &&
+            g_file_test(root, G_FILE_TEST_IS_DIR)) {
+            guint before = states->len;
+            precache_add_folder(states, root, name + 8);
+            fprintf(stderr, "nv2a: %u shader states from %s\n",
+                    states->len - before, name);
+        }
+        g_free(root);
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+    g_free(layout);
 }
 
 /*
