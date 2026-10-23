@@ -2059,6 +2059,11 @@ static void *precache_thread(void *arg)
 
     unsigned int now = qatomic_read(&pg->surface_scale_factor);
     unsigned int targets = precache_targets(now);
+    /* The scale this session started at: built at full speed */
+    static unsigned int boot_scale;
+    if (!boot_scale) {
+        boot_scale = now;
+    }
     int skipped = 0, n_missing = 0, n_scales = 0;
     for (unsigned int s = 1; s <= PRECACHE_MAX_SCALE; s++) {
         if (targets & PRECACHE_BIT(s)) {
@@ -2121,7 +2126,19 @@ static void *precache_thread(void *arg)
                     continue;
                 }
                 guard_set(hash);
+                int64_t built_at = g_get_monotonic_time();
                 bool ok = precache_build(&state, hash, &unsupported);
+                if (scale != boot_scale) {
+                    /*
+                     * Any scale but the one this session started at is
+                     * built at a third of the speed: the player may be in
+                     * a match, and building flat out at once takes most of
+                     * the GPU (a switch to 4x fell from 11 to 2 fps). What
+                     * the game needs meanwhile is still built as it draws.
+                     */
+                    int64_t took = g_get_monotonic_time() - built_at;
+                    g_usleep(MIN(2 * took, 200000));
+                }
                 if (ok && scale == game) {
                     /* Use it in this session too */
                     shader_load_from_disk(pg, hash);
