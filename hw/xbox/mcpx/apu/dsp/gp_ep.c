@@ -21,6 +21,7 @@
 
 #include "hw/xbox/mcpx/apu/apu_int.h"
 #include "ui/xemu-diag.h"
+#include "hw/xbox/xbox-audio-setting.h"
 
 /*
  * xemu: a game can point a sound chip transfer at a buffer that is not set
@@ -74,36 +75,18 @@ static const int16_t ep_silence[256][2] = { 0 };
  * (extractu, then a Y read past the end) and whose output is not plain
  * stereo anyway. Accurate plays the EP's output, so it is off while the
  * console's EEPROM has one of those settings; Fast never runs the EP.
- * Read from the EEPROM file (the dashboard writes it) at most once a second.
+ * Both the setting the Xbox started with and the one it has now count: the
+ * game keeps the encoder until the Xbox restarts, and a change to Dolby (in
+ * the dashboard or xemu's Sound menu) turns Accurate off at once.
  */
-#define EEPROM_AUDIO_FLAGS 0x98
-#define EEPROM_AUDIO_SURROUND 2
-#define EEPROM_AUDIO_AC3 0x10000
-#define EEPROM_AUDIO_DTS 0x20000
-
 bool mcpx_apu_dolby_eeprom(void)
 {
-    static int64_t checked_us;
-    static bool dolby;
-
-    int64_t now = g_get_monotonic_time();
-    if (checked_us && now - checked_us < G_USEC_PER_SEC) {
-        return dolby;
+    uint32_t now, booted;
+    if (!xbox_audio_setting_get(&now, &booted)) {
+        return false;
     }
-    checked_us = now;
-
-    uint8_t b[4];
-    bool found = false;
-    FILE *f = qemu_fopen(g_config.sys.files.eeprom_path, "rb");
-    if (f) {
-        found = fseek(f, EEPROM_AUDIO_FLAGS, SEEK_SET) == 0 &&
-                fread(b, sizeof(b), 1, f) == 1;
-        fclose(f);
-    }
-    uint32_t flags = found ? ldl_le_p(b) : 0;
-    dolby = (flags & 0xFF) == EEPROM_AUDIO_SURROUND ||
-            (flags & (EEPROM_AUDIO_AC3 | EEPROM_AUDIO_DTS));
-    return dolby;
+    return xbox_audio_setting_is_dolby(now) ||
+           xbox_audio_setting_is_dolby(booted);
 }
 
 void mcpx_apu_update_dsp_preference(MCPXAPUState *d)

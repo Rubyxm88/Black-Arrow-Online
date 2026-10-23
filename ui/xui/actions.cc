@@ -24,6 +24,7 @@
 #include "../xemu-notifications.h"
 #include "../xemu-xbonline.h"
 #include "snapshot-manager.hh"
+#include "hw/xbox/xbox-audio-setting.h"
 #include <filesystem>
 
 void ActionEjectDisc(void)
@@ -152,4 +153,54 @@ void ActionActivateBoundSnapshot(int slot, bool save)
 void ActionLoadSnapshotChecked(const char *name)
 {
     g_snapshot_mgr.LoadSnapshotChecked(name);
+}
+
+static void SetXboxAudio(uint32_t flags)
+{
+    if (!xbox_audio_setting_set(flags)) {
+        xemu_queue_notification("Could not change the Xbox's audio setting "
+                                "(eeprom.bin).");
+    }
+}
+
+void ActionSoundFast()
+{
+    g_config.audio.use_dsp = false;
+}
+
+void ActionSoundAccurate()
+{
+    g_config.audio.use_dsp = true;
+    g_config.audio.use_dsp_jit = true;
+    g_config.audio.channels = CONFIG_AUDIO_CHANNELS_STEREO;
+    SetXboxAudio(XBOX_AUDIO_STEREO);
+}
+
+void ActionSoundChannels(int channels)
+{
+    g_config.audio.channels = channels;
+    if (channels == CONFIG_AUDIO_CHANNELS_SURROUND) {
+        // The game only sends 3D sound to the rear speakers with Dolby on,
+        // and Accurate cannot run the Dolby encoder
+        g_config.audio.use_dsp = false;
+        SetXboxAudio(XBOX_AUDIO_STEREO | XBOX_AUDIO_AC3);
+    } else {
+        SetXboxAudio(XBOX_AUDIO_STEREO);
+    }
+}
+
+bool SoundRestartNeeded(const char **name)
+{
+    uint32_t now, booted;
+    if (!xbox_audio_setting_get(&now, &booted)) {
+        return false;
+    }
+    if (name) {
+        *name = (now & XBOX_AUDIO_DTS)                         ? "DTS"
+                : (now & XBOX_AUDIO_AC3)                       ? "Dolby Digital"
+                : (now & 0xFF) == XBOX_AUDIO_DOLBY_SURROUND    ? "Dolby Surround"
+                : (now & 0xFF) == 1                            ? "Mono"
+                                                               : "Stereo";
+    }
+    return ((now ^ booted) & XBOX_AUDIO_SETTING_MASK) != 0;
 }

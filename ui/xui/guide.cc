@@ -161,9 +161,13 @@ static const char *const settings_text[] = {
     "- Fast Enhanced (recommended): mixes the game's sounds straight to "
     "your speakers, with 3D direction fixes. Light on the PC.",
     "- Channels: Stereo, or 5.1 Surround (beta) for front, center, sub and "
-    "rear speakers (Fast Enhanced only).",
+    "rear speakers (Fast Enhanced only). 5.1 sets the Xbox's audio to Dolby "
+    "Digital for you; no Xbox Dashboard needed.",
     "- Accurate: runs the Xbox's own sound effects processor, about a quarter "
-    "of a CPU core more.",
+    "of a CPU core more. Stereo only: it sets the Xbox's audio back to "
+    "Stereo.",
+    "- After changing either, choose Restart the game to apply in the Sound "
+    "menu: the game reads the Xbox's audio setting when it starts.",
     "- Louder movement: makes footsteps and the rattle of gear and clothes "
     "easier to hear nearby.",
     "# Shaders",

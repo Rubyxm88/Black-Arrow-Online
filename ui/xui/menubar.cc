@@ -522,24 +522,20 @@ static void SoundMenu()
 {
     MenuHeader("Quality");
     ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
-    bool dolby = mcpx_apu_dolby_eeprom();
+    const char *xbox_audio = NULL;
+    bool restart = SoundRestartNeeded(&xbox_audio);
     if (ImGui::MenuItem("Fast Enhanced (recommended)", NULL,
-                        !g_config.audio.use_dsp || dolby)) {
-        g_config.audio.use_dsp = false;
+                        !g_config.audio.use_dsp)) {
+        ActionSoundFast();
     }
     MenuItemHelp("Mixes the game's sounds straight to your speakers. Lightest "
                  "on the PC, steadiest frame rate.");
-    if (ImGui::MenuItem("Accurate", NULL, g_config.audio.use_dsp && !dolby,
-                        !dolby)) {
-        g_config.audio.use_dsp = true;
-        g_config.audio.use_dsp_jit = true;
+    if (ImGui::MenuItem("Accurate", NULL, g_config.audio.use_dsp)) {
+        ActionSoundAccurate();
     }
-    MenuItemHelp(dolby ? "Off while the Xbox's audio setting is Dolby "
-                         "Surround, Dolby Digital or DTS. Set it to Stereo in "
-                         "the Xbox Dashboard to use Accurate."
-                       : "Runs the Xbox's own sound effects processor, like a "
-                         "real console. Uses about a quarter of a CPU core "
-                         "more.");
+    MenuItemHelp("Runs the Xbox's own sound effects processor, like a real "
+                 "console. Uses about a quarter of a CPU core more. Stereo "
+                 "only: sets the Xbox's audio to Stereo.");
     ImGui::PopItemFlag();
 
     MenuHeader("Channels");
@@ -547,18 +543,31 @@ static void SoundMenu()
     if (ImGui::MenuItem("Stereo", NULL,
                         g_config.audio.channels ==
                             CONFIG_AUDIO_CHANNELS_STEREO)) {
-        g_config.audio.channels = CONFIG_AUDIO_CHANNELS_STEREO;
+        ActionSoundChannels(CONFIG_AUDIO_CHANNELS_STEREO);
     }
     MenuItemHelp("Two speakers or headphones.");
     if (ImGui::MenuItem("5.1 Surround (beta)", NULL,
                         g_config.audio.channels ==
                             CONFIG_AUDIO_CHANNELS_SURROUND)) {
-        g_config.audio.channels = CONFIG_AUDIO_CHANNELS_SURROUND;
+        ActionSoundChannels(CONFIG_AUDIO_CHANNELS_SURROUND);
     }
     MenuItemHelp("Front, center, sub and rear speakers, from the game's own "
-                 "speaker mix. Works with Fast Enhanced sound; Accurate stays "
-                 "on the front pair.");
+                 "speaker mix. Uses Fast Enhanced sound and sets the Xbox's "
+                 "audio to Dolby Digital, so shots behind you come from the "
+                 "rear speakers.");
     ImGui::PopItemFlag();
+
+    if (xbox_audio) {
+        ImGui::TextDisabled("Xbox audio setting: %s", xbox_audio);
+    }
+    if (restart) {
+        if (ImGui::MenuItem("Restart the game to apply")) {
+            ActionReset();
+        }
+        MenuItemHelp("The game reads the Xbox's audio setting when it "
+                     "starts and keeps the old one until then. Accurate "
+                     "waits for the restart too.");
+    }
 
     MenuHeader("Gameplay");
     MenuToggle("Louder movement", &g_config.audio.louder_movement,

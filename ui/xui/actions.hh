@@ -30,3 +30,13 @@ void ActionShutdown();
 void ActionScreenshot();
 void ActionActivateBoundSnapshot(int slot, bool save);
 void ActionLoadSnapshotChecked(const char *name);
+
+// Sound: pick Fast or Accurate and the speaker layout. Each also sets the
+// Xbox's own audio setting (Accurate needs Stereo, 5.1 needs Dolby Digital),
+// which the game uses from its next start.
+void ActionSoundFast();
+void ActionSoundAccurate();
+void ActionSoundChannels(int channels);
+// The Xbox audio setting changed since the game started: restart to apply.
+// name gets what it is now ("Stereo", "Dolby Digital", ...)
+bool SoundRestartNeeded(const char **name);

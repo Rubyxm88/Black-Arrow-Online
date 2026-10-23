@@ -845,34 +845,44 @@ void MainMenuAudioView::Draw()
     Slider("Output volume limit", &g_config.audio.volume_limit, buf);
 
     SectionTitle("Quality");
-    bool dolby = mcpx_apu_dolby_eeprom();
-    int mode = g_config.audio.use_dsp && !dolby ? 1 : 0;
-    ImGui::BeginDisabled(dolby);
+    int mode = g_config.audio.use_dsp ? 1 : 0;
     if (ChevronCombo("Sound", &mode,
                      "Fast Enhanced (recommended)\0"
                      "Accurate\0",
-                     dolby ? "Accurate is off while the Xbox's audio setting "
-                             "is Dolby Surround, Dolby Digital or DTS. Set it "
-                             "to Stereo in the Xbox Dashboard to use it"
-                           : "Accurate runs the Xbox's own sound effects "
-                             "processor and uses several times more CPU")) {
-        g_config.audio.use_dsp = mode == 1;
-        if (g_config.audio.use_dsp) {
-            g_config.audio.use_dsp_jit = true;
+                     "Accurate runs the Xbox's own sound effects processor "
+                     "and uses several times more CPU. It is stereo only and "
+                     "sets the Xbox's audio to Stereo")) {
+        if (mode == 1) {
+            ActionSoundAccurate();
+        } else {
+            ActionSoundFast();
         }
     }
-    ImGui::EndDisabled();
     Toggle("Louder movement", &g_config.audio.louder_movement,
            "Makes footsteps and the rattle of gear and clothes easier "
            "to hear nearby");
 
     SectionTitle("Speakers");
-    ChevronCombo("Channels", &g_config.audio.channels,
-                 "Stereo\0"
-                 "5.1 Surround (beta)\0",
-                 "5.1 sends the game's speaker mix to front, center, sub "
-                 "and rear speakers. Works with Fast Enhanced sound; Accurate stays "
-                 "on the front pair");
+    int channels = g_config.audio.channels;
+    if (ChevronCombo("Channels", &channels,
+                     "Stereo\0"
+                     "5.1 Surround (beta)\0",
+                     "5.1 sends the game's speaker mix to front, center, sub "
+                     "and rear speakers. It uses Fast Enhanced sound and sets "
+                     "the Xbox's audio to Dolby Digital")) {
+        ActionSoundChannels(channels);
+    }
+    const char *xbox_audio = NULL;
+    bool restart = SoundRestartNeeded(&xbox_audio);
+    if (xbox_audio) {
+        ImGui::TextDisabled("Xbox audio setting: %s", xbox_audio);
+    }
+    if (restart) {
+        ImGui::TextDisabled("The game uses it from its next start.");
+        if (ImGui::Button("Restart the game to apply")) {
+            ActionReset();
+        }
+    }
 
 }
 
