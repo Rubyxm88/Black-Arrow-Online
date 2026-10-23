@@ -62,6 +62,7 @@ ShaderCacheWindow::ShaderCacheWindow()
     is_open = false;
     m_auto_checked = false;
     m_scan_requested = false;
+    m_auto_scale = 0;
     m_auto_running = false;
     m_toast_end = -1;
     m_toast_built = 0;
@@ -78,10 +79,19 @@ void ShaderCacheWindow::Open()
     is_open = true;
 }
 
-// Once per run: build in the background whatever the list and this PC's own
-// cache have that is not built for this driver and resolution scale yet
+// Once per run, and again when the resolution scale changes: build in the
+// background whatever the list and this PC's own cache have that is not built
+// for this driver and the resolution scales the player uses yet
 void ShaderCacheWindow::CheckAuto()
 {
+    int scale = g_config.display.quality.surface_scale;
+    if (scale != m_auto_scale) {
+        if (m_auto_scale) {
+            m_auto_checked = false;
+            m_scan_requested = false;
+        }
+        m_auto_scale = scale;
+    }
     if (m_auto_checked || !g_config.perf.shader_precache_auto ||
         ImGui::GetTime() < AUTO_DELAY) {
         return;
@@ -210,9 +220,20 @@ void ShaderCacheWindow::Draw()
             if (status.list_total < 0) {
                 ImGui::TextDisabled("No shader list in this package.");
             } else if (!status.running) {
-                ImGui::Text("Shaders to have ready at %ux: %d, %d still to "
-                            "build", nv2a_get_surface_scale_factor(),
-                            status.list_total, status.list_missing);
+                char scales[64] = "";
+                size_t len = 0;
+                for (int s = 1; s <= 10; s++) {
+                    if (status.scales & (1u << (s - 1))) {
+                        len += snprintf(scales + len, sizeof(scales) - len,
+                                        "%s%dx", len ? ", " : "", s);
+                        if (len >= sizeof(scales)) {
+                            break;
+                        }
+                    }
+                }
+                ImGui::Text("Shaders to have ready at %s: %d, %d still to "
+                            "build", scales, status.list_total,
+                            status.list_missing);
                 ImGui::TextDisabled(g_config.perf.shader_precache_own ?
                                     "From the Black Arrow list and the "
                                     "shaders this PC has used." :

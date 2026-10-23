@@ -18,6 +18,7 @@ public:
 private:
     bool   m_auto_checked;   // looked once whether to precache by itself
     bool   m_scan_requested;
+    int    m_auto_scale;     // resolution scale the last check was for
     bool   m_auto_running;   // a precache started by itself is running
     double m_toast_end;      // "Shaders ready" shown until then
     int    m_toast_built;

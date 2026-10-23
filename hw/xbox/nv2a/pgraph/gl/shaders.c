@@ -801,6 +801,65 @@ error:
     g_free(cached_gl_version);
 }
 
+/*
+ * Fill an entry the game asks for from its file on disk, if this PC built it
+ * before (in an earlier session, at another resolution scale, or in the
+ * precache). Reading the file takes a moment; compiling takes tens of ms.
+ * Called with shader_cache_lock held. Nothing is deleted here: the precache
+ * may still be writing the file.
+ */
+static bool shader_fill_from_disk(ShaderBinding *binding)
+{
+    uint64_t hash = binding->node.hash;
+    char *dir = shader_get_bin_directory(hash);
+    char *path = shader_get_binary_path(dir, hash);
+    FILE *f = qemu_fopen(path, "rb");
+    g_free(dir);
+    g_free(path);
+    if (!f) {
+        return false;
+    }
+
+    /* The same three strings shader_load_from_disk() checks */
+    const char *want[3] = { shader_cache_tag(), shader_gl_vendor,
+                            shader_gl_version };
+    bool ok = true;
+    for (int i = 0; i < 3 && ok; i++) {
+        uint64_t len;
+        char buf[256];
+        ok = fread(&len, sizeof(len), 1, f) == 1 &&
+             len == strlen(want[i]) + 1 && len <= sizeof(buf) &&
+             fread(buf, len, 1, f) == 1 && !memcmp(buf, want[i], len);
+    }
+
+    GLenum format;
+    ShaderState *state = g_new(ShaderState, 1);
+    size_t size = 0;
+    void *program = NULL;
+    ok = ok && fread(&format, sizeof(format), 1, f) == 1 &&
+         fread(state, sizeof(*state), 1, f) == 1 &&
+         !memcmp(state, &binding->state, sizeof(*state)) &&
+         fread(&size, sizeof(size), 1, f) == 1 && size > 0 &&
+         size < 64 * 1024 * 1024;
+    if (ok) {
+        program = g_malloc(size);
+        ok = fread(program, size, 1, f) == 1;
+    }
+    fclose(f);
+    g_free(state);
+    if (!ok) {
+        g_free(program);
+        return false;
+    }
+
+    g_free(binding->program);
+    binding->program = program;
+    binding->program_format = format;
+    binding->program_size = size;
+    binding->cached = true;
+    return true;
+}
+
 static void *shader_reload_lru_from_disk(void *arg)
 {
     if (!g_config.perf.cache_shaders) {
@@ -1164,7 +1223,17 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
         }
     } else if (!binding->initialized) {
         int64_t perf_start = xemu_perf_start();
-        if (pgraph_gl_shader_load_from_memory(binding)) {
+        if (!binding->program && g_config.perf.cache_shaders) {
+            shader_fill_from_disk(binding);
+        }
+        bool loaded = pgraph_gl_shader_load_from_memory(binding);
+        if (!loaded && binding->program) {
+            /* A binary the driver rejects: build it and write it again */
+            g_free(binding->program);
+            binding->program = NULL;
+            binding->cached = false;
+        }
+        if (loaded) {
             xemu_perf_end(XEMU_PERF_SHADER_LOAD, perf_start);
         } else if (async_supported && g_config.perf.shader_async) {
             nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
@@ -1875,6 +1944,63 @@ static void guard_clear(void)
     g_free(guard);
 }
 
+/*
+ * Resolution scales to build for: the ones the player has used (remembered
+ * in the settings) plus 2x and 3x by default, so a switch in a match finds
+ * them ready. Each scale is about 125 MB and 2-3 minutes for the full list.
+ */
+#define PRECACHE_MAX_SCALE 10
+#define PRECACHE_BIT(s) (1u << ((s) - 1))
+
+static unsigned int precache_targets(unsigned int now)
+{
+    unsigned int mask = (unsigned int)g_config.perf.shader_precache_scales;
+    if (now >= 1 && now <= PRECACHE_MAX_SCALE) {
+        mask |= PRECACHE_BIT(now);
+    }
+    mask &= PRECACHE_BIT(PRECACHE_MAX_SCALE + 1) - 1;
+    g_config.perf.shader_precache_scales = (int)mask;
+    return mask;
+}
+
+/* The game's scale first, then 3x, 2x, 1x, then the higher ones; 0 if done */
+static unsigned int precache_next_scale(unsigned int targets,
+                                        unsigned int finished,
+                                        unsigned int now)
+{
+    static const unsigned int order[] = { 3, 2, 1, 4, 5, 6, 7, 8, 9, 10 };
+    unsigned int todo = targets & ~finished;
+    if (now >= 1 && now <= PRECACHE_MAX_SCALE && (todo & PRECACHE_BIT(now))) {
+        return now;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(order); i++) {
+        if (todo & PRECACHE_BIT(order[i])) {
+            return order[i];
+        }
+    }
+    return 0;
+}
+
+/* How many of the list's states are not on disk yet at this scale */
+static int precache_missing(const ShaderState *states, int count,
+                            unsigned int scale, int *skipped)
+{
+    int missing = 0;
+    for (int i = 0; i < count; i++) {
+        ShaderState state = states[i];
+        state.vsh.surface_scale_factor = scale;
+        uint64_t hash = fast_hash((uint8_t *)&state, sizeof(state));
+        if (g_hash_table_contains(precache_skip, &hash)) {
+            if (skipped) {
+                (*skipped)++;
+            }
+        } else if (!shader_on_disk(hash)) {
+            missing++;
+        }
+    }
+    return missing;
+}
+
 static void *precache_thread(void *arg)
 {
     PGRAPHState *pg = arg;
@@ -1907,11 +2033,11 @@ static void *precache_thread(void *arg)
     }
 
     /*
-     * The resolution scale is part of every vertex shader's state, so build
-     * each state at the scale the game runs at now, and drop the duplicates
-     * that leaves.
+     * The resolution scale is part of every vertex shader's state. The list
+     * is kept at scale 1 and built at every scale the player uses (see
+     * precache_targets), the one the game runs at now first, so switching
+     * the scale in a match finds its shaders ready too.
      */
-    unsigned int scale = pg->surface_scale_factor;
     ShaderState *states = g_new(ShaderState, MAX(all->len, 1));
     uint64_t *hashes = g_new(uint64_t, MAX(all->len, 1));
     GHashTable *seen = g_hash_table_new(g_int64_hash, g_int64_equal);
@@ -1919,7 +2045,7 @@ static void *precache_thread(void *arg)
 
     for (guint i = 0; i < all->len; i++) {
         states[count] = g_array_index(all, ShaderState, i);
-        states[count].vsh.surface_scale_factor = scale;
+        states[count].vsh.surface_scale_factor = 1;
         hashes[count] =
             fast_hash((uint8_t *)&states[count], sizeof(ShaderState));
         if (!g_hash_table_contains(seen, &hashes[count])) {
@@ -1929,31 +2055,27 @@ static void *precache_thread(void *arg)
     }
     g_hash_table_destroy(seen);
     g_array_free(all, TRUE);
+    g_free(hashes);
 
-    uint64_t *missing = g_new(uint64_t, MAX(count, 1));
-    int *missing_index = g_new(int, MAX(count, 1));
-    int n_missing = 0;
-
-    int skipped = 0;
-    for (int i = 0; i < count; i++) {
-        if (g_hash_table_contains(precache_skip, &hashes[i])) {
-            skipped++;
-            continue;
-        }
-        if (!shader_on_disk(hashes[i])) {
-            missing[n_missing] = hashes[i];
-            missing_index[n_missing++] = i;
+    unsigned int now = qatomic_read(&pg->surface_scale_factor);
+    unsigned int targets = precache_targets(now);
+    int skipped = 0, n_missing = 0, n_scales = 0;
+    for (unsigned int s = 1; s <= PRECACHE_MAX_SCALE; s++) {
+        if (targets & PRECACHE_BIT(s)) {
+            n_scales++;
+            n_missing += precache_missing(states, count, s, &skipped);
         }
     }
-    g_free(hashes);
 
     int disk_count;
     uint64_t disk_bytes;
     shader_disk_usage(&disk_count, &disk_bytes);
 
     qemu_mutex_lock(&precache.lock);
-    precache.status.list_total = list_count < 0 && count == 0 ? -1 : count;
+    precache.status.list_total =
+        list_count < 0 && count == 0 ? -1 : count * n_scales;
     precache.status.list_missing = n_missing;
+    precache.status.scales = targets;
     precache.status.disk_count = disk_count;
     precache.status.disk_bytes = disk_bytes;
     precache.status.skipped_count = skipped;
@@ -1966,23 +2088,57 @@ static void *precache_thread(void *arg)
         int64_t start = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
         xemu_diag_event("shader precache started: %d to build", n_missing);
         glo_set_current(g_nv2a_context_precache);
-        for (int i = 0; i < n_missing && !qatomic_read(&precache.stop); i++) {
-            guard_set(missing[i]);
-            bool ok = precache_build(&states[missing_index[i]], missing[i],
-                                     &unsupported);
-            if (ok) {
-                /* Use it in this session too */
-                shader_load_from_disk(pg, missing[i]);
+        unsigned int finished = 0;   /* scales gone through to the end */
+        while (!qatomic_read(&precache.stop) && !unsupported) {
+            now = qatomic_read(&pg->surface_scale_factor);
+            if (!(targets & PRECACHE_BIT(now))) {
+                /* A scale this player has not used before */
+                targets = precache_targets(now);
+                int more = precache_missing(states, count, now, NULL);
+                qemu_mutex_lock(&precache.lock);
+                precache.status.list_total += count;
+                precache.status.list_missing += more;
+                precache.status.scales = targets;
+                qemu_mutex_unlock(&precache.lock);
             }
-            qemu_mutex_lock(&precache.lock);
-            if (ok) {
-                precache.status.done++;
-            } else {
-                precache.status.failed++;
-            }
-            qemu_mutex_unlock(&precache.lock);
-            if (unsupported) {
+            unsigned int scale = precache_next_scale(targets, finished, now);
+            if (!scale) {
                 break;
+            }
+            bool moved = false;
+            for (int i = 0; i < count && !qatomic_read(&precache.stop); i++) {
+                unsigned int game = qatomic_read(&pg->surface_scale_factor);
+                if (game != scale && !(finished & PRECACHE_BIT(game))) {
+                    /* The player switched: that scale comes first */
+                    moved = true;
+                    break;
+                }
+                ShaderState state = states[i];
+                state.vsh.surface_scale_factor = scale;
+                uint64_t hash = fast_hash((uint8_t *)&state, sizeof(state));
+                if (g_hash_table_contains(precache_skip, &hash) ||
+                    shader_on_disk(hash)) {
+                    continue;
+                }
+                guard_set(hash);
+                bool ok = precache_build(&state, hash, &unsupported);
+                if (ok && scale == game) {
+                    /* Use it in this session too */
+                    shader_load_from_disk(pg, hash);
+                }
+                qemu_mutex_lock(&precache.lock);
+                if (ok) {
+                    precache.status.done++;
+                } else {
+                    precache.status.failed++;
+                }
+                qemu_mutex_unlock(&precache.lock);
+                if (unsupported) {
+                    break;
+                }
+            }
+            if (!moved && !qatomic_read(&precache.stop)) {
+                finished |= PRECACHE_BIT(scale);
             }
         }
         glFinish();
@@ -2014,8 +2170,6 @@ static void *precache_thread(void *arg)
     qemu_mutex_unlock(&precache.lock);
 
     g_free(states);
-    g_free(missing);
-    g_free(missing_index);
     return NULL;
 }
 

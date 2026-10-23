@@ -453,6 +453,9 @@ perf:
   shader_precache_own:
     type: bool
     default: true
+  shader_precache_scales:
+    type: integer
+    default: 6
   freeze_report:
     type: bool
     default: true

@@ -52,8 +52,9 @@ typedef struct ShaderPrecacheStatus {
     bool running;        /* counting or building in the background */
     bool building;       /* building, not only counting */
     bool scanned;        /* the counts below are filled in */
-    int list_total;      /* shaders in the list, -1 if there is no list */
+    int list_total;      /* list shaders times scales, -1 if no list */
     int list_missing;    /* of those, not built on this PC yet */
+    unsigned int scales; /* resolution scales built for: bit 0 = 1x */
     int done;            /* built so far in this run */
     int failed;          /* could not be built in this run */
     int disk_count;      /* shaders in the cache on disk */
