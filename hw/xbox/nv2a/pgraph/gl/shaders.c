@@ -1563,6 +1563,17 @@ static bool precache_keep(PGRAPHState *pg, GLuint program,
     PGRAPHGLState *r = pg->gl_renderer_state;
     bool kept = false;
 
+    /* All GL work before taking the lock, which every draw of a new shader
+     * needs */
+    ShaderBinding *ready = g_new0(ShaderBinding, 1);
+    ready->gl_program = program;
+    glUseProgram(program);
+    set_texture_sampler_uniforms(ready);
+    update_shader_uniform_locs(ready);
+    glUseProgram(0);
+    /* Complete here before the render thread's context uses it */
+    glFinish();
+
     qemu_mutex_lock(&r->shader_cache_lock);
     LruNode *node = lru_lookup(&r->shader_cache, hash, state);
     ShaderBinding *binding = container_of(node, ShaderBinding, node);
@@ -1571,16 +1582,12 @@ static bool precache_keep(PGRAPHState *pg, GLuint program,
         binding->gl_primitive_mode =
             get_gl_primitive_mode(binding->state.geom.polygon_front_mode,
                                   binding->state.geom.primitive_mode);
-        glUseProgram(program);
-        set_texture_sampler_uniforms(binding);
-        update_shader_uniform_locs(binding);
-        glUseProgram(0);
-        /* Complete here before the render thread's context uses it */
-        glFinish();
+        binding->uniform_locs = ready->uniform_locs;
         binding->initialized = true;
         kept = true;
     }
     qemu_mutex_unlock(&r->shader_cache_lock);
+    g_free(ready);
     return kept;
 }
 
