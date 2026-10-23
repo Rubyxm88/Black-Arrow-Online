@@ -419,19 +419,13 @@ unsigned int nv2a_get_surface_scale_factor(void)
     NV2AState *d = g_nv2a;
     int s = 1;
 
-    /* The screenshot path draws the picture without the BQL held */
-    bool locked = bql_locked();
-    if (locked) {
-        bql_unlock();
-    }
+    bql_unlock();
     qemu_mutex_lock(&d->pgraph.renderer_lock);
     if (d->pgraph.renderer->ops.get_surface_scale_factor) {
         s = d->pgraph.renderer->ops.get_surface_scale_factor(d);
     }
     qemu_mutex_unlock(&d->pgraph.renderer_lock);
-    if (locked) {
-        bql_lock();
-    }
+    bql_lock();
 
     return s;
 }
