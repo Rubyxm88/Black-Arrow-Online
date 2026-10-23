@@ -44,6 +44,7 @@ extern "C" {
 #include <glib/gstdio.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include "hw/xbox/xbox-audio-setting.h"
 #include <cfloat>
 #include <cmath>
 #ifndef _WIN32
@@ -468,6 +469,16 @@ static void ParseNotes(const std::string &body, ReleaseBuild &b)
 void VersionsWindow::Install(int build)
 {
     int local = Installed().build, newest = NewestBuild();
+    // Published builds up to 23 cannot run the game with the Xbox's audio on
+    // Dolby (xemu closes when it starts), and only this one can set it back
+    uint32_t audio_now, audio_booted;
+    if (xbox_audio_setting_get(&audio_now, &audio_booted) &&
+        xbox_audio_setting_is_dolby(audio_now)) {
+        g_config.audio.channels = CONFIG_AUDIO_CHANNELS_STEREO;
+        xbox_audio_setting_set(XBOX_AUDIO_STEREO);
+        fprintf(stderr, "versions: Xbox audio set back to Stereo before "
+                "installing build %d\n", build);
+    }
     if (HoldsNewest(build, local, newest)) {
         SkipBuild(newest);
         fprintf(stderr, "versions: rolling back to build %d, build %d is not "
@@ -592,6 +603,14 @@ void VersionsWindow::DrawConfirm()
                            "To come back, choose Update now when the "
                            "launcher offers build %d at the start.",
                            build, newest);
+    }
+    uint32_t audio_now, audio_booted;
+    if (xbox_audio_setting_get(&audio_now, &audio_booted) &&
+        xbox_audio_setting_is_dolby(audio_now)) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("The Xbox's audio setting goes back to Stereo "
+                           "first: builds without the 5.1 beta close when the "
+                           "game starts with Dolby on.");
     }
     if (runstate_is_running() && g_config.sys.files.dvd_path &&
         g_config.sys.files.dvd_path[0]) {
