@@ -485,12 +485,15 @@ static void shader_remove_cache_folder(const char *root)
 /*
  * When a cache folder was last used: its list is written at a clean exit,
  * and an xxxx folder changes when a shader is saved in it (a crash or a
- * killed xemu leaves the list old).
+ * killed xemu leaves the list old). A folder with no shader files in it
+ * counts as never used, so an empty leftover (builds up to 20 leave an empty
+ * "shaders" after a cache move) is never kept over one full of shaders.
  */
 static gint64 shader_cache_folder_time(const char *root, const char *list)
 {
     GStatBuf st;
     gint64 newest = g_stat(list, &st) == 0 ? (gint64)st.st_mtime : 0;
+    bool any = false;
     GDir *dir = g_dir_open(root, 0, NULL);
     const char *name;
     while (dir && (name = g_dir_read_name(dir))) {
@@ -498,12 +501,17 @@ static gint64 shader_cache_folder_time(const char *root, const char *list)
         if (g_stat(sub_path, &st) == 0 && (gint64)st.st_mtime > newest) {
             newest = st.st_mtime;
         }
+        GDir *sub = any ? NULL : g_dir_open(sub_path, 0, NULL);
+        if (sub) {
+            any = g_dir_read_name(sub) != NULL;
+            g_dir_close(sub);
+        }
         g_free(sub_path);
     }
     if (dir) {
         g_dir_close(dir);
     }
-    return newest;
+    return any ? newest : 0;
 }
 
 /*
