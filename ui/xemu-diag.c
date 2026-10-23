@@ -38,6 +38,7 @@
 #include "xemu-settings.h"
 #include "xemu-os-utils.h"
 #include "xemu-xbcheck.h"
+#include "xemu-input.h"
 #include "xemu-version.h"
 #include "hw/xbox/nv2a/nv2a.h"
 #include "hw/xbox/nv2a/debug.h"
@@ -734,8 +735,62 @@ void xemu_diag_write_check(void)
     }
 }
 
+static CpuSample sample_cpu(int second);
+
+/* Seconds between status lines in xemu.log */
+#define STATUS_SECONDS 30
+
+/*
+ * Every STATUS_SECONDS while the game runs, a line in xemu.log: the game's
+ * frames, where its CPU is, and the buttons player 1 pressed. A report taken
+ * on a screen that does not move on then shows whether the game is stuck,
+ * slow, or waiting for a button that never arrived.
+ */
+static void status_line(void)
+{
+    static int64_t next_us;
+    static unsigned int last_frames;
+    static uint16_t last_buttons;
+    static int presses;
+
+    ControllerState *pad = xemu_input_get_bound(0);
+    uint16_t buttons = pad ? pad->buttons : 0;
+    for (uint16_t b = buttons & ~last_buttons; b; b &= b - 1) {
+        presses++;
+    }
+    last_buttons = buttons;
+
+    int64_t now = g_get_monotonic_time();
+    if (!next_us) {
+        next_us = now + STATUS_SECONDS * G_USEC_PER_SEC;
+        last_frames = g_nv2a_stats.frame_count;
+        return;
+    }
+    if (now < next_us) {
+        return;
+    }
+    next_us = now + STATUS_SECONDS * G_USEC_PER_SEC;
+    unsigned int frames = g_nv2a_stats.frame_count - last_frames;
+    last_frames = g_nv2a_stats.frame_count;
+    if (!runstate_is_running()) {
+        presses = 0;
+        return;
+    }
+    CpuSample c = sample_cpu(0);
+    const char *pad_name = !pad ? "no controller" :
+                           pad->name ? pad->name : "controller";
+    fprintf(stderr, "status: %u game frames in %d s (%.1f fps), CPU at "
+            "%08x (%s)%s, player 1 %s, %d button presses\n", frames,
+            STATUS_SECONDS, frames / (double)STATUS_SECONDS, c.eip,
+            c.eip >= 0x80000000 ? "kernel" : "game", c.halted ? " idle" : "",
+            pad_name, presses);
+    presses = 0;
+}
+
 void xemu_diag_poll(void)
 {
+    status_line();
+
     static bool env_checked;
     if (!env_checked) {
         const char *path = getenv("XEMU_PERF_LOG");

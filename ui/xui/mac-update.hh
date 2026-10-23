@@ -50,6 +50,7 @@ private:
     bool        m_quiet;      // checked by itself: shown only for an update
     bool        m_later;      // "Later" was clicked
     bool        m_restarting;
+    bool        m_wrong_copy; // not the copy setup.sh put in Applications
 
 public:
     MacUpdateWindow();
@@ -66,6 +67,7 @@ private:
     void Restart();
     void ShowLastResult();
     void DrawContents(State state);
+    void DrawWrongCopy();
     static gpointer CheckThread(gpointer self);
     static gpointer DownloadThread(gpointer self);
     static gpointer BuildInfoThread(gpointer self);

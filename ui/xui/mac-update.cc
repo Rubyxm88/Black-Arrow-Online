@@ -126,6 +126,65 @@ MacUpdateWindow::MacUpdateWindow()
     m_quiet = true;
     m_later = false;
     m_restarting = false;
+    m_wrong_copy = false;
+}
+
+// Opened somewhere else than where setup.sh installs the app, usually from
+// the unzipped download (macOS then runs it from a hidden copy in
+// AppTranslocation). Updates replace the copy in Applications, so this one
+// would never change.
+static bool WrongCopy()
+{
+    const char *base = SDL_GetBasePath();
+    if (!base) {
+        return false;
+    }
+    std::string path = base;
+    std::string home_apps = std::string(g_get_home_dir()) + "/Applications/";
+    bool translocated = path.find("/AppTranslocation/") != std::string::npos;
+    bool in_apps = path.rfind("/Applications/", 0) == 0 ||
+                   path.rfind(home_apps, 0) == 0;
+    bool installed =
+        g_file_test("/Applications/Black Arrow Online.app",
+                    G_FILE_TEST_IS_DIR) ||
+        g_file_test((home_apps + "Black Arrow Online.app").c_str(),
+                    G_FILE_TEST_IS_DIR);
+    if (translocated || (!in_apps && installed)) {
+        fprintf(stderr, "update: running from %s, not the copy in "
+                "Applications\n", base);
+        return true;
+    }
+    return false;
+}
+
+void MacUpdateWindow::DrawWrongCopy()
+{
+    float scale = g_viewport_mgr.m_scale;
+    PopupStackPlace();
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    if (ImGui::Begin("Black Arrow Online Wrong Copy", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f * scale);
+        ImGui::TextColored(problem_color,
+                           "Opened from the download folder");
+        ImGui::TextWrapped(
+            "Updates go to Black Arrow Online in your Applications folder, "
+            "so this copy will stay on this build. Quit, then open Black "
+            "Arrow Online from Applications (Finder > Applications, or "
+            "Launchpad). You can delete the downloaded folder.");
+        ImGui::PopTextWrapPos();
+        PushGreenButtons();
+        if (ImGui::Button("OK")) {
+            m_wrong_copy = false;
+        }
+        PopButtonColors();
+        PopupStackTake();
+    }
+    ImGui::End();
 }
 
 void MacUpdateWindow::Open()
@@ -618,6 +677,10 @@ void MacUpdateWindow::Draw()
     if (!m_started) {
         m_started = true;
         ShowLastResult();
+        m_wrong_copy = WrongCopy();
+    }
+    if (m_wrong_copy) {
+        DrawWrongCopy();
     }
     if (!m_auto_checked && ImGui::GetTime() >= AUTO_DELAY) {
         m_auto_checked = true;
