@@ -133,12 +133,12 @@ static void throttle_publish_debug(MCPXAPUState *d)
     g_dbg.throttle.deviation.avg_us = d->throttle.deviation.sum_us / d->throttle.deviation.count;
     g_dbg.throttle.deviation.max_us = d->throttle.deviation.max_us;
     if (d->throttle.queued_bytes_count > 0) {
-        g_dbg.throttle.latency.min_ms = d->throttle.queued_bytes_min / (float)MONITOR_BYTES_PER_MS;
+        g_dbg.throttle.latency.min_ms = d->throttle.queued_bytes_min / (MONITOR_BYTES_PER_MS * d->monitor.channels / 2.0f);
         g_dbg.throttle.latency.avg_ms = d->throttle.queued_bytes_sum /
-            (d->throttle.queued_bytes_count * (float)MONITOR_BYTES_PER_MS);
-        g_dbg.throttle.latency.max_ms = d->throttle.queued_bytes_max / (float)MONITOR_BYTES_PER_MS;
-        g_dbg.throttle.latency.low_ms = d->monitor.queued_bytes_low / (float)MONITOR_BYTES_PER_MS;
-        g_dbg.throttle.latency.high_ms = d->monitor.queued_bytes_high / (float)MONITOR_BYTES_PER_MS;
+            (d->throttle.queued_bytes_count * (MONITOR_BYTES_PER_MS * d->monitor.channels / 2.0f));
+        g_dbg.throttle.latency.max_ms = d->throttle.queued_bytes_max / (MONITOR_BYTES_PER_MS * d->monitor.channels / 2.0f);
+        g_dbg.throttle.latency.low_ms = d->monitor.queued_bytes_low / (MONITOR_BYTES_PER_MS * d->monitor.channels / 2.0f);
+        g_dbg.throttle.latency.high_ms = d->monitor.queued_bytes_high / (MONITOR_BYTES_PER_MS * d->monitor.channels / 2.0f);
     }
     d->throttle.pacing.backoff = d->throttle.pacing.ok = d->throttle.pacing.speedup = 0;
     d->throttle.deviation.min_us = d->throttle.deviation.max_us = d->throttle.deviation.sum_us = 0;

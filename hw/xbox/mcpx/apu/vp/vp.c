@@ -702,7 +702,7 @@ static hwaddr get_data_ptr(hwaddr sge_base, unsigned int max_sge, uint32_t addr)
  * from the Rainbow Six 3 sound banks.
  */
 #define SOUND_PRINT_BYTES 72
-#define LOUDER_MOVEMENT_GAIN 1.8f
+#define LOUDER_MOVEMENT_GAIN 2.0f
 
 enum {
     SOUND_MIX_OTHER,
@@ -1370,7 +1370,7 @@ static void get_multipass_samples(MCPXAPUState *d,
 
 static void voice_process(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME],
-                          float sample_buf[NUM_SAMPLES_PER_FRAME][2],
+                          float sample_buf[NUM_SAMPLES_PER_FRAME][6],
                           uint16_t v, int voice_list)
 {
     assert(v < MCPX_HW_MAX_VOICES);
@@ -1608,9 +1608,56 @@ static void voice_process(MCPXAPUState *d,
             g = fmax(g, attenuate(vol[b]) / hr);
         }
         g *= ea_value;
-        for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-            sample_buf[i][0] += g*samples[i][0];
-            sample_buf[i][1] += g*samples[i][1];
+
+        /* 5.1: each DirectSound speaker bin to its speaker (0-5 = FL FR FC
+         * LFE BL BR, the 3D crosstalk bins 6-9 = FL FR BL BR), at the same
+         * per-bin level the stereo mix uses. A voice with no speaker bin
+         * (reverb or effect sends only) falls back to the stereo mix. */
+        bool to_speakers = false;
+        if (d->vp.surround) {
+            static const int speaker_of_bin[10] = { 0, 1, 2, 3, 4,
+                                                    5, 0, 1, 4, 5 };
+            /* gain per speaker and source channel; bins on one speaker add */
+            float gs[6][2] = { 0 };
+            for (int b = 0; b < 8; b++) {
+                if (bin[b] > 9 || (bin[b] == mp_bin && !debug_isolation)) {
+                    continue;
+                }
+                float hr = 1 << d->vp.submix_headroom[bin[b]];
+                float gb = ea_value * attenuate(vol[b]) / hr;
+                if (gb <= 0.0f) {
+                    continue;
+                }
+                int src_ch = (hrtf_applied && b < 4) ? (b >> 1)
+                                                     : (b % channels);
+                gs[speaker_of_bin[bin[b]]][src_ch] += gb;
+                to_speakers = true;
+            }
+            /* No louder than stereo, which plays the voice once at its
+             * loudest bin (g) on each of L and R: the 5.1 total power is
+             * capped at 2 g^2. With Dolby the game sends a side sound to
+             * the front and the rear pair at full level (+3 dB without it). */
+            float power = 0.0f;
+            for (int s = 0; s < 6; s++) {
+                power += gs[s][0] * gs[s][0] + gs[s][1] * gs[s][1];
+            }
+            float scale = power > 2.0f * g * g ? sqrtf(2.0f * g * g / power)
+                                               : 1.0f;
+            for (int s = 0; s < 6; s++) {
+                float g0 = scale * gs[s][0], g1 = scale * gs[s][1];
+                if (g0 == 0.0f && g1 == 0.0f) {
+                    continue;
+                }
+                for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+                    sample_buf[i][s] += g0 * samples[i][0] + g1 * samples[i][1];
+                }
+            }
+        }
+        if (!to_speakers) {
+            for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+                sample_buf[i][0] += g*samples[i][0];
+                sample_buf[i][1] += g*samples[i][1];
+            }
         }
     }
 }
@@ -1683,7 +1730,7 @@ static void get_voice_bin_src_dst(MCPXAPUState *d, int v,
  */
 static void voice_process_unlocked(
     MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME],
-    float sample_buf[NUM_SAMPLES_PER_FRAME][2], int v, int list)
+    float sample_buf[NUM_SAMPLES_PER_FRAME][6], int v, int list)
 {
     uint64_t mask = 1LL << (v % 64);
     int64_t give_up = 0;
@@ -1746,9 +1793,11 @@ static void *voice_worker_thread(void *arg)
                 }
             }
             if (d->monitor.point == MCPX_APU_DEBUG_MON_VP) {
+                int nch = d->vp.surround ? 6 : 2;
                 for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-                    d->vp.sample_buf[i][0] += self->sample_buf[i][0];
-                    d->vp.sample_buf[i][1] += self->sample_buf[i][1];
+                    for (int c = 0; c < nch; c++) {
+                        d->vp.sample_buf[i][c] += self->sample_buf[i][c];
+                    }
                 }
             }
 
@@ -1936,6 +1985,7 @@ static void voice_work_finalize(MCPXAPUState *d)
 void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
 {
     sound_mix_update();
+    d->vp.surround = d->monitor.channels == 6;
     memset(d->vp.sample_buf, 0, sizeof(d->vp.sample_buf));
 
     /* Process all voices, mixing each into the affected MIXBINs */
@@ -1971,13 +2021,19 @@ void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_P
 
     if (d->monitor.point == MCPX_APU_DEBUG_MON_VP) {
         /* Mix all voices together to hear any audible voice */
-        int16_t isamp[NUM_SAMPLES_PER_FRAME * 2];
+        int16_t isamp[NUM_SAMPLES_PER_FRAME * 6];
         src_float_to_short_array((float *)d->vp.sample_buf, isamp,
-                                 NUM_SAMPLES_PER_FRAME * 2);
+                                 NUM_SAMPLES_PER_FRAME * 6);
         int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
         for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-            d->monitor.frame_buf[off + i][0] += isamp[2*i];
-            d->monitor.frame_buf[off + i][1] += isamp[2*i+1];
+            if (d->vp.surround) {
+                for (int c = 0; c < 6; c++) {
+                    d->monitor.frame_buf51[off + i][c] += isamp[6*i + c];
+                }
+            } else {
+                d->monitor.frame_buf[off + i][0] += isamp[6*i];
+                d->monitor.frame_buf[off + i][1] += isamp[6*i + 1];
+            }
         }
 
         memset(d->vp.sample_buf, 0, sizeof(d->vp.sample_buf));
