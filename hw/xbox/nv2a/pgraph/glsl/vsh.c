@@ -69,15 +69,9 @@ static void set_fixed_function_vsh_state(PGRAPHState *pg,
                  NV_PGRAPH_CSV0_D_TEXGEN_REF) ==
         NV_PGRAPH_CSV0_D_TEXGEN_REF_INFINITE_VIEWER;
 
+    /* The light types are not part of the state: see the lightType uniform */
     state->lighting =
         GET_MASK(pgraph_reg_r(pg, NV_PGRAPH_CSV0_C), NV_PGRAPH_CSV0_C_LIGHTING);
-    if (state->lighting) {
-        for (int i = 0; i < NV2A_MAX_LIGHTS; i++) {
-            state->light[i] =
-                (enum VshLight)GET_MASK(pgraph_reg_r(pg, NV_PGRAPH_CSV0_D),
-                                        NV_PGRAPH_CSV0_D_LIGHT0 << (i * 2));
-        }
-    }
 
     if (pgraph_reg_r(pg, NV_PGRAPH_CONTROL_3) & NV_PGRAPH_CONTROL_3_FOGENABLE) {
         state->foggen = (enum VshFoggen)GET_MASK(
@@ -582,6 +576,14 @@ void pgraph_glsl_set_vsh_uniform_values(PGRAPHState *pg, const VshState *state,
                                "Uniform value size inconsistency");
             memcpy(values->lightLocalAttenuation, pg->light_local_attenuation,
                    sizeof(pg->light_local_attenuation));
+        }
+
+        if (locs[VshUniform_lightType] != -1) {
+            uint32_t csv0_d = pgraph_reg_r(pg, NV_PGRAPH_CSV0_D);
+            for (int i = 0; i < NV2A_MAX_LIGHTS; i++) {
+                values->lightType[i] =
+                    GET_MASK(csv0_d, NV_PGRAPH_CSV0_D_LIGHT0 << (i * 2));
+            }
         }
 
         if (locs[VshUniform_specularParams] != -1) {
