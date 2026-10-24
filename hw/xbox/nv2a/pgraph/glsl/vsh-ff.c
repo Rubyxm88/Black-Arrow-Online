@@ -323,161 +323,153 @@ GLSL_DEFINE(materialEmissionColor, GLSL_LTCTXA(NV_IGRAPH_XF_LTCTXA_CM_COL) ".xyz
             );
         }
 
-        for (i = 0; i < NV2A_MAX_LIGHTS; i++) {
-            if (state->fixed_function.light[i] == LIGHT_OFF) {
-                continue;
-            }
+        /*
+         * One loop over the light slots, with each slot's type in the
+         * lightType uniform: the game mixes the 8 slots so freely (431 mixes
+         * in 1957 lit states) that a shader per mix meant a compile whenever
+         * an object came near a new lamp or muzzle flash.
+         */
+        mstring_append_fmt(body,
+            "for (int i = 0; i < %d; i++) {\n"
+            "  int lightKind = lightType[i];\n"
+            "  if (lightKind == %d) {\n"
+            "    continue;\n"
+            "  }\n"
+            "  float attenuation;\n"
+            "  float nDotVP;\n"
+            "  float nDotHV;\n"
+            "  if (lightKind == %d) {\n",
+            NV2A_MAX_LIGHTS, LIGHT_OFF, LIGHT_INFINITE);
 
-            mstring_append_fmt(body, "/* Light %d */ {\n", i);
-
-            if (state->fixed_function.light[i] == LIGHT_LOCAL
-                    || state->fixed_function.light[i] == LIGHT_SPOT) {
-
-                mstring_append_fmt(body,
-                    "  vec3 tPos = tPosition.xyz/tPosition.w;\n"
-                    "  vec3 VP = lightLocalPosition[%d] - tPos;\n"
-                    "  float d = length(VP);\n"
-                    "  if (d <= lightLocalRange(%d)) {\n"  /* FIXME: Double check that range is inclusive */
-                    "    VP = normalize(VP);\n"
-                    "    float attenuation = 1.0 / (lightLocalAttenuation[%d].x\n"
-                    "                                 + lightLocalAttenuation[%d].y * d\n"
-                    "                                 + lightLocalAttenuation[%d].z * d * d);\n"
-                    "    vec3 halfVector = normalize(VP + %s);\n"
-                    "    float nDotVP = max(0.0, dot(tNormal, VP));\n"
-                    "    float nDotHV = max(0.0, dot(tNormal, halfVector));\n",
-                    i, i, i, i, i,
-                    state->fixed_function.local_eye ? "VPeye" : "vec3(0.0, 0.0, 0.0)"
-                );
-            }
-
-            switch(state->fixed_function.light[i]) {
-            case LIGHT_INFINITE:
-
-                /* lightLocalRange will be 1e+30 here */
-
-                mstring_append_fmt(body,
-                    "  {\n"
-                    "    float attenuation = 1.0;\n"
-                    "    vec3 lightDirection = normalize(lightInfiniteDirection[%d]);\n"
-                    "    float nDotVP = max(0.0, dot(tNormal, lightDirection));\n",
-                    i);
-                if (state->fixed_function.local_eye) {
-                    mstring_append(body,
-                        "    float nDotHV = max(0.0, dot(tNormal, normalize(lightDirection + VPeye)));\n"
-                    );
-                } else {
-                    mstring_append_fmt(body,
-                        "    float nDotHV = max(0.0, dot(tNormal, lightInfiniteHalfVector[%d]));\n",
-                        i
-                    );
-                }
-                break;
-            case LIGHT_LOCAL:
-                /* Everything done already */
-                break;
-            case LIGHT_SPOT:
-                /* From https://patents.google.com/patent/US6417851B1/en the
-                 * factor s = dot(spotDir.xyz, VP) + spotDir.w is evaluated
-                 * with the rational approximation: (s + L) / (M * s + N)
-                 * where lightSpotFalloff(i) = (L, M, N).
-                 * When s >= 1.0, the vertex is inside the inner cone (1.0).
-                 * When s <= 0.0 or s <= -L, the factor is clamped to 0.0.
-                 */
-                mstring_append_fmt(body,
-                    "    vec4 spotDir = lightSpotDirection(%d);\n"
-                    "    float spotDirDotVP = dot(spotDir.xyz, VP);\n"
-                    "    float s = spotDirDotVP + spotDir.w;\n"
-                    "    if (s <= 0.0) {\n"
-                    "      attenuation = 0.0;\n"
-                    "    } else if (s < 1.0) {\n"
-                    "      vec3 spotFalloff = lightSpotFalloff(%d);\n"
-                    "      float spotFactor = 0.0;\n"
-                    "      if (s > -spotFalloff.x) {\n"
-                    "        float denom = spotFalloff.y * s + spotFalloff.z;\n"
-                    "        if (denom == 0.0) {\n"
-                    "          spotFactor = 1.0;\n"
-                    "        } else if (denom > 0.0) {\n"
-                    "          float num = s + spotFalloff.x;\n"
-                    "          spotFactor = clamp(num / denom, 0.0, 1.0);\n"
-                    "        }\n"
-                    "      }\n"
-                    "      attenuation *= spotFactor;\n"
-                    "    }\n",
-                    i, i);
-                break;
-            default:
-                assert(!"Invalid light type");
-                break;
-            }
-
-            /* From https://patents.google.com/patent/US6417851B1/en the
-             * coefficients are used to calculate
-             *    (x + L) / (M x + N)
-             *  where x is the dot product of the normal and half angle vector.
-             *  specularParams = (L, M , N)
-             */
-            mstring_append_fmt(body,
-                "    float pf = 0.0;\n"
-                "    if (nDotVP > 0.0 && nDotHV > -specularParams.x) {\n"
-                "      float denom = specularParams.y * nDotHV + specularParams.z;\n"
-                "      if (denom == 0.0) {\n"
-                "        pf = 10000.0;\n"
-                "      } else if (denom > 0.0) {\n"
-                "        pf = clamp((nDotHV + specularParams.x) / denom, 0.0, 10000.0);\n"
-                "      }\n"
-                "    }\n"
-                "    vec3 lightAmbient = lightAmbientColor(%d) * attenuation;\n"
-                "    vec3 lightDiffuse = lightDiffuseColor(%d) * attenuation * nDotVP;\n"
-                "    vec3 lightSpecular = lightSpecularColor(%d) * attenuation * pf;\n",
-                i, i, i);
-
-            switch (state->fixed_function.ambient_src) {
-            case MATERIAL_COLOR_SRC_MATERIAL:
-                mstring_append(body, "    oD0.rgb += lightAmbient;\n");
-                break;
-            case MATERIAL_COLOR_SRC_DIFFUSE:
-                mstring_append(body,
-                               "    oD0.rgb += diffuse.rgb * lightAmbient;\n");
-                break;
-            case MATERIAL_COLOR_SRC_SPECULAR:
-                mstring_append(body,
-                               "    oD0.rgb += specular.rgb * lightAmbient;\n");
-                break;
-            }
-
-            switch (state->fixed_function.diffuse_src) {
-            case MATERIAL_COLOR_SRC_MATERIAL:
-                mstring_append(body,
-                               "    oD0.xyz += lightDiffuse;\n");
-                break;
-            case MATERIAL_COLOR_SRC_DIFFUSE:
-                mstring_append(body,
-                               "    oD0.xyz += diffuse.xyz * lightDiffuse;\n");
-                break;
-            case MATERIAL_COLOR_SRC_SPECULAR:
-                mstring_append(body,
-                               "    oD0.xyz += specular.xyz * lightDiffuse;\n");
-                break;
-            }
-
-            switch (state->fixed_function.specular_src) {
-            case MATERIAL_COLOR_SRC_MATERIAL:
-                mstring_append(body,
-                               "    oD1.xyz += lightSpecular;\n");
-                break;
-            case MATERIAL_COLOR_SRC_DIFFUSE:
-                mstring_append(body,
-                               "    oD1.xyz += diffuse.xyz * lightSpecular;\n");
-                break;
-            case MATERIAL_COLOR_SRC_SPECULAR:
-                mstring_append(body,
-                               "    oD1.xyz += specular.xyz * lightSpecular;\n");
-                break;
-            }
-
-            mstring_append(body, "  }\n"
-                                 "}\n");
+        /* lightLocalRange will be 1e+30 here */
+        mstring_append(body,
+            "    attenuation = 1.0;\n"
+            "    vec3 lightDirection = normalize(lightInfiniteDirection[i]);\n"
+            "    nDotVP = max(0.0, dot(tNormal, lightDirection));\n");
+        if (state->fixed_function.local_eye) {
+            mstring_append(body,
+                "    nDotHV = max(0.0, dot(tNormal, normalize(lightDirection + VPeye)));\n"
+            );
+        } else {
+            mstring_append(body,
+                "    nDotHV = max(0.0, dot(tNormal, lightInfiniteHalfVector[i]));\n"
+            );
         }
+
+        mstring_append_fmt(body,
+            "  } else {\n"
+            "    vec3 tPos = tPosition.xyz/tPosition.w;\n"
+            "    vec3 VP = lightLocalPosition[i] - tPos;\n"
+            "    float d = length(VP);\n"
+            "    if (!(d <= lightLocalRange(i))) {\n" /* FIXME: Double check that range is inclusive */
+            "      continue;\n"
+            "    }\n"
+            "    VP = normalize(VP);\n"
+            "    attenuation = 1.0 / (lightLocalAttenuation[i].x\n"
+            "                         + lightLocalAttenuation[i].y * d\n"
+            "                         + lightLocalAttenuation[i].z * d * d);\n"
+            "    vec3 halfVector = normalize(VP + %s);\n"
+            "    nDotVP = max(0.0, dot(tNormal, VP));\n"
+            "    nDotHV = max(0.0, dot(tNormal, halfVector));\n",
+            state->fixed_function.local_eye ? "VPeye" : "vec3(0.0, 0.0, 0.0)");
+
+        /* From https://patents.google.com/patent/US6417851B1/en the
+         * factor s = dot(spotDir.xyz, VP) + spotDir.w is evaluated
+         * with the rational approximation: (s + L) / (M * s + N)
+         * where lightSpotFalloff(i) = (L, M, N).
+         * When s >= 1.0, the vertex is inside the inner cone (1.0).
+         * When s <= 0.0 or s <= -L, the factor is clamped to 0.0.
+         */
+        mstring_append_fmt(body,
+            "    if (lightKind == %d) {\n"
+            "      vec4 spotDir = lightSpotDirection(i);\n"
+            "      float spotDirDotVP = dot(spotDir.xyz, VP);\n"
+            "      float s = spotDirDotVP + spotDir.w;\n"
+            "      if (s <= 0.0) {\n"
+            "        attenuation = 0.0;\n"
+            "      } else if (s < 1.0) {\n"
+            "        vec3 spotFalloff = lightSpotFalloff(i);\n"
+            "        float spotFactor = 0.0;\n"
+            "        if (s > -spotFalloff.x) {\n"
+            "          float denom = spotFalloff.y * s + spotFalloff.z;\n"
+            "          if (denom == 0.0) {\n"
+            "            spotFactor = 1.0;\n"
+            "          } else if (denom > 0.0) {\n"
+            "            float num = s + spotFalloff.x;\n"
+            "            spotFactor = clamp(num / denom, 0.0, 1.0);\n"
+            "          }\n"
+            "        }\n"
+            "        attenuation *= spotFactor;\n"
+            "      }\n"
+            "    }\n"
+            "  }\n",
+            LIGHT_SPOT);
+
+        /* From https://patents.google.com/patent/US6417851B1/en the
+         *  coefficients are used to calculate
+         *    (x + L) / (M x + N)
+         *  where x is the dot product of the normal and half angle vector.
+         *  specularParams = (L, M , N)
+         */
+        mstring_append(body,
+            "  float pf = 0.0;\n"
+            "  if (nDotVP > 0.0 && nDotHV > -specularParams.x) {\n"
+            "    float denom = specularParams.y * nDotHV + specularParams.z;\n"
+            "    if (denom == 0.0) {\n"
+            "      pf = 10000.0;\n"
+            "    } else if (denom > 0.0) {\n"
+            "      pf = clamp((nDotHV + specularParams.x) / denom, 0.0, 10000.0);\n"
+            "    }\n"
+            "  }\n"
+            "  vec3 lightAmbient = lightAmbientColor(i) * attenuation;\n"
+            "  vec3 lightDiffuse = lightDiffuseColor(i) * attenuation * nDotVP;\n"
+            "  vec3 lightSpecular = lightSpecularColor(i) * attenuation * pf;\n");
+
+        switch (state->fixed_function.ambient_src) {
+        case MATERIAL_COLOR_SRC_MATERIAL:
+            mstring_append(body, "  oD0.rgb += lightAmbient;\n");
+            break;
+        case MATERIAL_COLOR_SRC_DIFFUSE:
+            mstring_append(body,
+                           "  oD0.rgb += diffuse.rgb * lightAmbient;\n");
+            break;
+        case MATERIAL_COLOR_SRC_SPECULAR:
+            mstring_append(body,
+                           "  oD0.rgb += specular.rgb * lightAmbient;\n");
+            break;
+        }
+
+        switch (state->fixed_function.diffuse_src) {
+        case MATERIAL_COLOR_SRC_MATERIAL:
+            mstring_append(body,
+                           "  oD0.xyz += lightDiffuse;\n");
+            break;
+        case MATERIAL_COLOR_SRC_DIFFUSE:
+            mstring_append(body,
+                           "  oD0.xyz += diffuse.xyz * lightDiffuse;\n");
+            break;
+        case MATERIAL_COLOR_SRC_SPECULAR:
+            mstring_append(body,
+                           "  oD0.xyz += specular.xyz * lightDiffuse;\n");
+            break;
+        }
+
+        switch (state->fixed_function.specular_src) {
+        case MATERIAL_COLOR_SRC_MATERIAL:
+            mstring_append(body,
+                           "  oD1.xyz += lightSpecular;\n");
+            break;
+        case MATERIAL_COLOR_SRC_DIFFUSE:
+            mstring_append(body,
+                           "  oD1.xyz += diffuse.xyz * lightSpecular;\n");
+            break;
+        case MATERIAL_COLOR_SRC_SPECULAR:
+            mstring_append(body,
+                           "  oD1.xyz += specular.xyz * lightSpecular;\n");
+            break;
+        }
+
+        mstring_append(body, "}\n");
 
         /* TODO: Implement two-sided lighting */
         mstring_append(body, "  oB0 = backDiffuse;\n");

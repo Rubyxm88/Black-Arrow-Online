@@ -34,6 +34,11 @@ typedef struct FixedFunctionVshState {
     enum VshFoggen foggen;
     enum VshSkinning skinning;
     bool lighting;
+    /*
+     * Always LIGHT_OFF: the light types are the lightType uniform, so a new
+     * mix of lights needs no new shader. Kept so the state layout (and the
+     * shader lists) stay the same; shader_state_normalize clears old states.
+     */
     enum VshLight light[NV2A_MAX_LIGHTS];
     enum MaterialColorSource emission_src;
     enum MaterialColorSource ambient_src;
@@ -85,6 +90,7 @@ void pgraph_glsl_set_vsh_state(PGRAPHState *pg, VshState *state);
     DECL(S, lightInfiniteHalfVector, vec3, NV2A_MAX_LIGHTS)  \
     DECL(S, lightLocalAttenuation, vec3, NV2A_MAX_LIGHTS)    \
     DECL(S, lightLocalPosition, vec3, NV2A_MAX_LIGHTS)       \
+    DECL(S, lightType, int, NV2A_MAX_LIGHTS)                 \
     DECL(S, ltc1, vec4, NV2A_LTC1_COUNT)                     \
     DECL(S, ltctxa, vec4, NV2A_LTCTXA_COUNT)                 \
     DECL(S, ltctxb, vec4, NV2A_LTCTXB_COUNT)                 \

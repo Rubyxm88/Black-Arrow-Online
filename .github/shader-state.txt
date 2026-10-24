@@ -11,4 +11,4 @@
 # The new line is printed in the failed run's error. Files, in this order:
 #   hw/xbox/nv2a/pgraph/glsl/shaders.h vsh.h geom.h psh.h
 #   hw/xbox/nv2a/pgraph/vsh_regs.h psh_regs.h
-420dbc2d0485482500f0cd619aacb15313fa60a841d38ae10fbf6f2294da5a95
+b60d8a6e08591e2b4c48a50b310e29aaf21652da3e3b3e0b39ef332801cecc94

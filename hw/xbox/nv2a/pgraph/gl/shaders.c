@@ -415,7 +415,7 @@ static bool shader_no_binaries;
  * Bump when this fork changes how shaders are generated, so old cached
  * programs are thrown away.
  */
-#define SHADER_CACHE_REV 1
+#define SHADER_CACHE_REV 2
 
 /*
  * What a cached shader must match besides the GPU and its driver: the
@@ -1427,6 +1427,17 @@ static void shader_state_from_v1(const ShaderStateV1 *o, ShaderState *out)
 }
 
 /*
+ * Clear what is no longer part of a state, so states from older lists and
+ * cache folders match the ones the game makes now: since cache rev 2 the
+ * light types are the lightType uniform (LIGHT_OFF is 0).
+ */
+static void shader_state_normalize(ShaderState *state)
+{
+    memset(state->vsh.fixed_function.light, 0,
+           sizeof(state->vsh.fixed_function.light));
+}
+
+/*
  * The shaders of a list file, or NULL. *count is -1 when there is no file.
  * *converted is set when the file had the 0.8.137 layout.
  */
@@ -1449,6 +1460,9 @@ static ShaderState *shader_list_load(const char *file, int *count,
             len == 16 + (gsize)n * sizeof(ShaderState)) {
             *count = n;
             states = g_memdup2(data + 16, *count * sizeof(ShaderState));
+            for (int i = 0; i < *count; i++) {
+                shader_state_normalize(states + i);
+            }
         } else if (magic && size == sizeof(ShaderStateV1) &&
                    len == 16 + (gsize)n * sizeof(ShaderStateV1)) {
             states = g_new(ShaderState, MAX(n, 1));
@@ -1456,6 +1470,7 @@ static ShaderState *shader_list_load(const char *file, int *count,
                 ShaderStateV1 old;
                 memcpy(&old, data + 16 + i * sizeof(old), sizeof(old));
                 shader_state_from_v1(&old, states + i);
+                shader_state_normalize(states + i);
             }
             *count = n;
             *converted = true;
@@ -1720,6 +1735,9 @@ static bool shader_file_state(const char *path, const char *tag,
          fread(state, sizeof(*state), 1, f) == 1;
     if (f) {
         fclose(f);
+    }
+    if (ok) {
+        shader_state_normalize(state);
     }
     return ok;
 }
