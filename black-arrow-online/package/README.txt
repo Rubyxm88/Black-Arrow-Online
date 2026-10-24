@@ -70,6 +70,20 @@ SOUND          how the game sounds
                               speakers. Steadiest frame rate.
     Accurate                  Runs the Xbox's own sound effects processor.
                               Uses about a quarter of a CPU core more.
+                              Stereo only.
+  CHANNELS
+    Stereo                    Two speakers or headphones (the default).
+    5.1 Surround              Front, center, sub and rear speakers. Uses
+                              Fast and sets the Xbox's audio to Dolby
+                              Digital for you, so shots behind you come from
+                              the rear speakers.
+  The game reads the Xbox's audio setting when it starts. After switching
+  between 5.1 and Stereo or Accurate, a notice at the top right offers
+  Restart game (it restarts the game, not the app); switching back
+  removes it.
+  Going back to a build before 24 sets sound to Stereo first: those builds
+  close when the game starts with 5.1 on. If you copy an older build in by
+  hand, set Channels to Stereo first.
   GAMEPLAY
     Louder movement           Footsteps and gear rattle are easier to hear.
 

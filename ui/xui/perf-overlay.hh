@@ -10,3 +10,7 @@
 
 // Draws the overlay when View > Performance Overlay has it on
 void DrawPerfOverlay();
+
+// Where the overlay ends at the top right this frame, so a notice there can
+// go under it; 0 when it is not in that corner
+float PerfOverlayTopRightBottom();

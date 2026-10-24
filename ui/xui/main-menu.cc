@@ -866,7 +866,7 @@ void MainMenuAudioView::Draw()
     int channels = g_config.audio.channels;
     if (ChevronCombo("Channels", &channels,
                      "Stereo\0"
-                     "5.1 Surround (beta)\0",
+                     "5.1 Surround\0",
                      "5.1 sends the game's speaker mix to front, center, sub "
                      "and rear speakers. It uses Fast Enhanced sound and sets "
                      "the Xbox's audio to Dolby Digital")) {

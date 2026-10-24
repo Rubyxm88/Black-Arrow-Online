@@ -609,8 +609,16 @@ static void DrawCompact(const Shown &s)
     }
 }
 
+static float top_right_bottom;
+
+float PerfOverlayTopRightBottom()
+{
+    return top_right_bottom;
+}
+
 void DrawPerfOverlay()
 {
+    top_right_bottom = 0;
     auto &o = g_config.display.overlay;
     bool minimal = o.style == CONFIG_DISPLAY_OVERLAY_STYLE_MINIMAL;
     bool compact = o.style == CONFIG_DISPLAY_OVERLAY_STYLE_COMPACT;
@@ -707,6 +715,10 @@ void DrawPerfOverlay()
             DrawCompact(s);
         } else {
             DrawDetailed(s, times, n, now);
+        }
+        if (right && !bottom) {
+            top_right_bottom = ImGui::GetWindowPos().y +
+                               ImGui::GetWindowSize().y;
         }
     }
     ImGui::End();

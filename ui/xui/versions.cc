@@ -80,6 +80,22 @@ using json = nlohmann::json;
 #define FIRST_BUILD_THAT_INSTALLS FIRST_BUILD_WITH_VERSIONS
 #endif
 
+/*
+ * The first published build that runs the game with the Xbox's audio on
+ * Dolby. Older ones close when the game starts with it, and cannot set it
+ * back themselves.
+ */
+#define FIRST_BUILD_WITH_SURROUND 24
+
+/* Whether installing a build first needs the Xbox's audio back on Stereo */
+static bool NeedsStereoFor(int build)
+{
+    uint32_t now, booted;
+    return build < FIRST_BUILD_WITH_SURROUND &&
+           xbox_audio_setting_get(&now, &booted) &&
+           xbox_audio_setting_is_dolby(now);
+}
+
 /* Whether rolling back to a build keeps the newest from being offered */
 static bool HoldsNewest(int build, int local, int newest)
 {
@@ -469,11 +485,9 @@ static void ParseNotes(const std::string &body, ReleaseBuild &b)
 void VersionsWindow::Install(int build)
 {
     int local = Installed().build, newest = NewestBuild();
-    // Published builds up to 23 cannot run the game with the Xbox's audio on
-    // Dolby (xemu closes when it starts), and only this one can set it back
-    uint32_t audio_now, audio_booted;
-    if (xbox_audio_setting_get(&audio_now, &audio_booted) &&
-        xbox_audio_setting_is_dolby(audio_now)) {
+    // Older builds close when the game starts on Dolby, and only this one can
+    // set it back
+    if (NeedsStereoFor(build)) {
         g_config.audio.channels = CONFIG_AUDIO_CHANNELS_STEREO;
         xbox_audio_setting_set(XBOX_AUDIO_STEREO);
         fprintf(stderr, "versions: Xbox audio set back to Stereo before "
@@ -604,13 +618,11 @@ void VersionsWindow::DrawConfirm()
                            "launcher offers build %d at the start.",
                            build, newest);
     }
-    uint32_t audio_now, audio_booted;
-    if (xbox_audio_setting_get(&audio_now, &audio_booted) &&
-        xbox_audio_setting_is_dolby(audio_now)) {
+    if (NeedsStereoFor(build)) {
         ImGui::Spacing();
-        ImGui::TextWrapped("The Xbox's audio setting goes back to Stereo "
-                           "first: builds without the 5.1 beta close when the "
-                           "game starts with Dolby on.");
+        ImGui::TextWrapped("Sound goes back to Stereo first: builds before "
+                           "%d close when the game starts with 5.1 on.",
+                           FIRST_BUILD_WITH_SURROUND);
     }
     if (runstate_is_running() && g_config.sys.files.dvd_path &&
         g_config.sys.files.dvd_path[0]) {

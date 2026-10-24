@@ -33,6 +33,8 @@
 #include "shader-cache.hh"
 #include "viewport-manager.hh"
 #include "notifications.hh"
+#include "perf-overlay.hh"
+#include "hw/xbox/xbox-audio-setting.h"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
@@ -251,6 +253,72 @@ void DrawFreezeToast()
         ImGui::TextDisabled("Troubleshoot > Open Last Freeze Report");
         ImGui::EndGroup();
         PopupStackTake();
+    }
+    ImGui::End();
+}
+
+// At the top right while a sound change waits for the game to restart: what
+// changes, a Restart button and Later. It goes away by itself when the change
+// is undone or the game restarts; Later hides it until the next change.
+void DrawSoundRestartNotice()
+{
+    static bool dismissed;
+    static uint32_t dismissed_pending;
+    uint32_t now, booted;
+    if (!xbox_audio_setting_get(&now, &booted) ||
+        !((now ^ booted) & XBOX_AUDIO_SETTING_MASK)) {
+        dismissed = false;
+        return;
+    }
+    uint32_t pending = now & XBOX_AUDIO_SETTING_MASK;
+    if (dismissed && pending == dismissed_pending) {
+        return;
+    }
+    dismissed = false;
+
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    float scale = g_viewport_mgr.m_scale;
+    float pad = 10.0f * scale;
+    float y = (std::max)(vp->WorkPos.y + pad,
+                         PerfOverlayTopRightBottom() + 6.0f * scale);
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - pad, y),
+                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.90f);
+    if (ImGui::Begin("Sound Restart", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Restart the game to finish the sound change");
+        if (g_config.audio.use_dsp && xbox_audio_setting_is_dolby(booted)) {
+            ImGui::TextDisabled("Accurate starts after the restart; until "
+                                "then sound stays on Fast.");
+        } else if (g_config.audio.channels == CONFIG_AUDIO_CHANNELS_SURROUND &&
+                   xbox_audio_setting_is_dolby(now)) {
+            ImGui::TextDisabled("5.1 rear sound starts after the restart.");
+        }
+        ImGui::TextDisabled("Xbox audio: %s now, %s after the restart.",
+                            xbox_audio_setting_name(booted),
+                            xbox_audio_setting_name(now));
+        ImGui::Spacing();
+        if (ImGui::Button("Restart game")) {
+            ActionReset();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Restarts the game, not the app. In a match, "
+                              "you leave it.");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Later")) {
+            dismissed = true;
+            dismissed_pending = pending;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Sound > Restart the game to apply does it "
+                              "later.");
+        }
     }
     ImGui::End();
 }
@@ -546,7 +614,7 @@ static void SoundMenu()
         ActionSoundChannels(CONFIG_AUDIO_CHANNELS_STEREO);
     }
     MenuItemHelp("Two speakers or headphones.");
-    if (ImGui::MenuItem("5.1 Surround (beta)", NULL,
+    if (ImGui::MenuItem("5.1 Surround", NULL,
                         g_config.audio.channels ==
                             CONFIG_AUDIO_CHANNELS_SURROUND)) {
         ActionSoundChannels(CONFIG_AUDIO_CHANNELS_SURROUND);

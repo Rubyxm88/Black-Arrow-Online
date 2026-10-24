@@ -43,6 +43,16 @@ static inline bool xbox_audio_setting_is_dolby(uint32_t flags)
            (flags & (XBOX_AUDIO_AC3 | XBOX_AUDIO_DTS));
 }
 
+/* The setting's name as the Xbox dashboard shows it */
+static inline const char *xbox_audio_setting_name(uint32_t flags)
+{
+    return (flags & XBOX_AUDIO_DTS)                        ? "DTS"
+           : (flags & XBOX_AUDIO_AC3)                      ? "Dolby Digital"
+           : (flags & 0xFF) == XBOX_AUDIO_DOLBY_SURROUND   ? "Dolby Surround"
+           : (flags & 0xFF) == 1                           ? "Mono"
+                                                           : "Stereo";
+}
+
 #ifdef __cplusplus
 }
 #endif

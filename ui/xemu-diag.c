@@ -44,6 +44,7 @@
 #include "hw/xbox/nv2a/debug.h"
 #include "hw/xbox/nv2a/shader-precache.h"
 #include "hw/xbox/mcpx/apu/apu_debug.h"
+#include "hw/xbox/xbox-audio-setting.h"
 
 #define LOGS_DIR "logs"
 
@@ -309,6 +310,34 @@ static void write_machine(FILE *f)
     }
 }
 
+/*
+ * The sound as the player chose it and as the game plays it: Fast or Accurate,
+ * the speakers, and the Xbox's audio setting now and at the game's start
+ * (the game uses the one it started with)
+ */
+static void sound_mode(char *buf, size_t size)
+{
+    bool surround = g_config.audio.channels == CONFIG_AUDIO_CHANNELS_SURROUND;
+    int n = snprintf(buf, size, "%s %s",
+                     g_config.audio.use_dsp ? "Accurate" : "Fast",
+                     surround ? "5.1" : "stereo");
+    uint32_t now, booted;
+    if (n < 0 || (size_t)n >= size ||
+        !xbox_audio_setting_get(&now, &booted)) {
+        return;
+    }
+    n += snprintf(buf + n, size - n, ", Xbox audio %s",
+                  xbox_audio_setting_name(now));
+    if ((size_t)n < size &&
+        ((now ^ booted) & XBOX_AUDIO_SETTING_MASK)) {
+        n += snprintf(buf + n, size - n, " (game started on %s)",
+                      xbox_audio_setting_name(booted));
+    }
+    if ((size_t)n < size && g_config.audio.use_dsp && mcpx_apu_dolby_eeprom()) {
+        snprintf(buf + n, size - n, ", Accurate waits for a restart");
+    }
+}
+
 static void write_settings(FILE *f)
 {
     static const char *const renderers[] = { "null", "opengl", "vulkan" };
@@ -336,6 +365,9 @@ static void write_settings(FILE *f)
             g_config.perf.hard_fpu, g_config.perf.cache_shaders,
             g_config.perf.shader_async, g_config.perf.shader_precache_auto,
             g_config.perf.shader_precache_own);
+    char sound[160];
+    sound_mode(sound, sizeof(sound));
+    fprintf(f, "# sound: %s\n", sound);
     fprintf(f, "# network: enabled=%d backend=%s dns_redirect=%s\n",
             g_config.net.enable, backend < 3 ? backends[backend] : "?",
             redirect < 4 ? redirects[redirect] : "?");
@@ -779,11 +811,13 @@ static void status_line(void)
     CpuSample c = sample_cpu(0);
     const char *pad_name = !pad ? "no controller" :
                            pad->name ? pad->name : "controller";
+    char sound[160];
+    sound_mode(sound, sizeof(sound));
     fprintf(stderr, "status: %u game frames in %d s (%.1f fps), CPU at "
-            "%08x (%s)%s, player 1 %s, %d button presses\n", frames,
+            "%08x (%s)%s, player 1 %s, %d button presses, sound %s\n", frames,
             STATUS_SECONDS, frames / (double)STATUS_SECONDS, c.eip,
             c.eip >= 0x80000000 ? "kernel" : "game", c.halted ? " idle" : "",
-            pad_name, presses);
+            pad_name, presses, sound);
     presses = 0;
 }
 

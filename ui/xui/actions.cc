@@ -196,11 +196,7 @@ bool SoundRestartNeeded(const char **name)
         return false;
     }
     if (name) {
-        *name = (now & XBOX_AUDIO_DTS)                         ? "DTS"
-                : (now & XBOX_AUDIO_AC3)                       ? "Dolby Digital"
-                : (now & 0xFF) == XBOX_AUDIO_DOLBY_SURROUND    ? "Dolby Surround"
-                : (now & 0xFF) == 1                            ? "Mono"
-                                                               : "Stereo";
+        *name = xbox_audio_setting_name(now);
     }
     return ((now ^ booted) & XBOX_AUDIO_SETTING_MASK) != 0;
 }

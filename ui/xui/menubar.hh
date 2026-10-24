@@ -21,6 +21,7 @@
 void ProcessKeyboardShortcuts(void);
 void ShowMainMenu();
 void DrawFreezeToast();
+void DrawSoundRestartNotice();
 void DrawRecordingBadge();
 
 #ifdef CONFIG_RENDERDOC
