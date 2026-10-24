@@ -147,12 +147,14 @@ The first time an effect appears (a map, night vision, thermal, a menu),
 your graphics card has to build a shader for it, which used to make the
 game hitch. Black Arrow Online ships a list of the game's shaders: a few
 seconds after starting, it builds the ones not ready yet for your graphics
-card and resolution in the background. A small notice in the top left shows
-the progress, then "Shaders ready". This takes a few seconds and only
-happens again after a graphics driver update or a resolution change.
+card in the background. A small notice in the top left shows the progress,
+then "Shaders ready". This takes a few seconds and only happens again after
+a graphics driver update.
 Since build 24, lights (lamps, muzzle flashes, explosions) no longer need a
-shader of their own, so far fewer effects hitch in a match. The first start
-after updating to build 24 builds the shaders once more.
+shader of their own, so far fewer effects hitch in a match, and the same
+shaders serve every resolution: switching Resolution, even in a match,
+needs no new shaders. The first start after updating to build 24 builds
+the shaders once more.
 To turn it off: Graphics > Precache > Precache shaders automatically.
 
 

@@ -54,7 +54,11 @@ typedef struct ProgrammableVshState {
 } ProgrammableVshState;
 
 typedef struct {
-    unsigned int surface_scale_factor;  // FIXME: Remove
+    /*
+     * Always 1: the scale is the surfaceScaleFactor uniform, so one shader
+     * serves every resolution. Kept so the state layout stays the same.
+     */
+    unsigned int surface_scale_factor;
 
     uint16_t compressed_attrs;
     uint16_t uniform_attrs;
@@ -98,6 +102,7 @@ void pgraph_glsl_set_vsh_state(PGRAPHState *pg, VshState *state);
     DECL(S, pointParams, float, 8)                           \
     DECL(S, specularParams, vec3, 1)                         \
     DECL(S, specularParamsBack, vec3, 1)                     \
+    DECL(S, surfaceScaleFactor, float, 1)                    \
     DECL(S, surfaceSize, vec2, 1)                            \
     DECL(S, vshCarryFog, vec4, 1)
 

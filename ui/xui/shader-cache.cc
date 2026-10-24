@@ -220,20 +220,10 @@ void ShaderCacheWindow::Draw()
             if (status.list_total < 0) {
                 ImGui::TextDisabled("No shader list in this package.");
             } else if (!status.running) {
-                char scales[64] = "";
-                size_t len = 0;
-                for (int s = 1; s <= 10; s++) {
-                    if (status.scales & (1u << (s - 1))) {
-                        len += snprintf(scales + len, sizeof(scales) - len,
-                                        "%s%dx", len ? ", " : "", s);
-                        if (len >= sizeof(scales)) {
-                            break;
-                        }
-                    }
-                }
-                ImGui::Text("Shaders to have ready at %s: %d, %d still to "
-                            "build", scales, status.list_total,
-                            status.list_missing);
+                ImGui::Text("Shaders to have ready: %d, %d still to build",
+                            status.list_total, status.list_missing);
+                ImGui::TextDisabled("The same shaders serve every "
+                                    "resolution.");
                 ImGui::TextDisabled(g_config.perf.shader_precache_own ?
                                     "From the Black Arrow list and the "
                                     "shaders this PC has used." :

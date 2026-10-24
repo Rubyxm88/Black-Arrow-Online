@@ -108,7 +108,7 @@ void pgraph_glsl_set_vsh_state(PGRAPHState *pg, VshState *vsh)
 
     assert(vertex_program || fixed_function);
 
-    vsh->surface_scale_factor = pg->surface_scale_factor; // FIXME
+    vsh->surface_scale_factor = 1; /* see the surfaceScaleFactor uniform */
 
     vsh->compressed_attrs = pg->compressed_attrs;
     vsh->uniform_attrs = pg->uniform_attrs;
@@ -303,10 +303,9 @@ MString *pgraph_glsl_gen_vsh(const VshState *state, GenVshGlslOptions opts)
             VSH_VERSION_XVS, (uint32_t *)state->programmable.program_data,
             state->programmable.program_length, header, body);
         if (!state->point_params_enable) {
-            mstring_append_fmt(body, "  oPts.x = %f * %d;\n",
+            mstring_append_fmt(body, "  oPts.x = %f * surfaceScaleFactor;\n",
                                state->point_size <= 0.f ? 1.f :
-                                                          state->point_size,
-                               state->surface_scale_factor);
+                                                          state->point_size);
         }
     }
 
@@ -519,6 +518,10 @@ void pgraph_glsl_set_vsh_uniform_values(PGRAPHState *pg, const VshState *state,
         float height = (float)pg->surface_binding_dim.height / aa_height;
         values->surfaceSize[0][0] = width;
         values->surfaceSize[0][1] = height;
+    }
+
+    if (locs[VshUniform_surfaceScaleFactor] != -1) {
+        values->surfaceScaleFactor[0] = pg->surface_scale_factor;
     }
 
     if (locs[VshUniform_vshCarryFog] != -1) {
