@@ -34,6 +34,7 @@
 #include "viewport-manager.hh"
 #include "notifications.hh"
 #include "perf-overlay.hh"
+#include "font-manager.hh"
 #include "hw/xbox/xbox-audio-setting.h"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
@@ -291,19 +292,31 @@ void DrawSoundRestartNotice()
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Restart the game to finish the sound change");
+        // The theme's green for the title and the button; plain text below,
+        // the theme's dim text is too faint over the game
+        const ImVec4 *c = ImGui::GetStyle().Colors;
+        ImGui::PushFont(g_font_mgr.m_menu_font_medium);
+        ImGui::TextColored(c[ImGuiCol_CheckMark],
+                           "Restart the game to finish the sound change");
+        ImGui::PopFont();
         if (g_config.audio.use_dsp && xbox_audio_setting_is_dolby(booted)) {
-            ImGui::TextDisabled("Accurate starts after the restart; until "
-                                "then sound stays on Fast.");
+            ImGui::Text("Accurate starts after the restart; until then "
+                        "sound stays on Fast.");
         } else if (g_config.audio.channels == CONFIG_AUDIO_CHANNELS_SURROUND &&
                    xbox_audio_setting_is_dolby(now)) {
-            ImGui::TextDisabled("5.1 rear sound starts after the restart.");
+            ImGui::Text("5.1 rear sound starts after the restart.");
         }
-        ImGui::TextDisabled("Xbox audio: %s now, %s after the restart.",
-                            xbox_audio_setting_name(booted),
-                            xbox_audio_setting_name(now));
+        ImGui::Text("Xbox audio: %s now, %s after the restart.",
+                    xbox_audio_setting_name(booted),
+                    xbox_audio_setting_name(now));
         ImGui::Spacing();
-        if (ImGui::Button("Restart game")) {
+        ImGui::PushStyleColor(ImGuiCol_Button, c[ImGuiCol_ButtonHovered]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c[ImGuiCol_CheckMark]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, c[ImGuiCol_ButtonHovered]);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        bool restart = ImGui::Button("Restart game");
+        ImGui::PopStyleColor(4);
+        if (restart) {
             ActionReset();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
