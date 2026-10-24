@@ -37,6 +37,16 @@ void ActionLoadSnapshotChecked(const char *name);
 void ActionSoundFast();
 void ActionSoundAccurate();
 void ActionSoundChannels(int channels);
-// The Xbox audio setting changed since the game started: restart to apply.
-// name gets what it is now ("Stereo", "Dolby Digital", ...)
+// What the chosen sound waits for until the game restarts, given the Xbox
+// audio setting the game started with. A changed setting alone does not
+// count: Fast in stereo plays the same on any setting, so it is just used
+// from the next start.
+enum SoundRestart {
+    SOUND_RESTART_NONE,
+    SOUND_RESTART_ACCURATE,  // Accurate, but the game started on Dolby
+    SOUND_RESTART_SURROUND,  // 5.1, but the game started without Dolby
+};
+SoundRestart SoundRestartReason();
+// Whether the chosen sound needs a game restart (SoundRestartReason).
+// name gets the Xbox audio setting now ("Stereo", "Dolby Digital", ...)
 bool SoundRestartNeeded(const char **name);

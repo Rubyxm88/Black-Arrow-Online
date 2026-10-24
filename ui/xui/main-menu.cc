@@ -879,7 +879,7 @@ void MainMenuAudioView::Draw()
     }
     if (restart) {
         ImGui::TextDisabled("The game uses it from its next start.");
-        if (ImGui::Button("Restart the game to apply")) {
+        if (ImGui::Button("Restart to Apply")) {
             ActionReset();
         }
     }

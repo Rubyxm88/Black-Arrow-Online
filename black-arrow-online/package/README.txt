@@ -77,10 +77,11 @@ SOUND          how the game sounds
                               Fast and sets the Xbox's audio to Dolby
                               Digital for you, so shots behind you come from
                               the rear speakers.
-  The game reads the Xbox's audio setting when it starts. After switching
-  between 5.1 and Stereo or Accurate, a notice at the top right offers
-  Restart game (it restarts the game, not the app); switching back
-  removes it.
+  The game reads the Xbox's audio setting when it starts. When a choice
+  needs the game to restart (5.1 after the game started in Stereo, or
+  Accurate after it started in 5.1), a Restart to Apply notice at the top
+  right offers Restart game (it restarts the game, not the app). It goes
+  away when you choose something that does not need the restart.
   Going back to a build before 24 sets sound to Stereo first: those builds
   close when the game starts with 5.1 on. If you copy an older build in by
   hand, set Channels to Stereo first.

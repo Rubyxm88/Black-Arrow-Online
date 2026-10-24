@@ -34,8 +34,6 @@
 #include "viewport-manager.hh"
 #include "notifications.hh"
 #include "perf-overlay.hh"
-#include "font-manager.hh"
-#include "hw/xbox/xbox-audio-setting.h"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
@@ -258,24 +256,22 @@ void DrawFreezeToast()
     ImGui::End();
 }
 
-// At the top right while a sound change waits for the game to restart: what
-// changes, a Restart button and Later. It goes away by itself when the change
-// is undone or the game restarts; Later hides it until the next change.
+// At the top right while the chosen sound only works after the game restarts
+// (SoundRestartReason): why, a Restart button and Later. It goes away by
+// itself when the choice no longer needs it or the game restarts; Later hides
+// it until a choice needs a restart for another reason.
 void DrawSoundRestartNotice()
 {
-    static bool dismissed;
-    static uint32_t dismissed_pending;
-    uint32_t now, booted;
-    if (!xbox_audio_setting_get(&now, &booted) ||
-        !((now ^ booted) & XBOX_AUDIO_SETTING_MASK)) {
-        dismissed = false;
+    static SoundRestart dismissed = SOUND_RESTART_NONE;
+    SoundRestart reason = SoundRestartReason();
+    if (reason == SOUND_RESTART_NONE) {
+        dismissed = SOUND_RESTART_NONE;
         return;
     }
-    uint32_t pending = now & XBOX_AUDIO_SETTING_MASK;
-    if (dismissed && pending == dismissed_pending) {
+    if (reason == dismissed) {
         return;
     }
-    dismissed = false;
+    dismissed = SOUND_RESTART_NONE;
 
     const ImGuiViewport *vp = ImGui::GetMainViewport();
     float scale = g_viewport_mgr.m_scale;
@@ -295,20 +291,13 @@ void DrawSoundRestartNotice()
         // The theme's green for the title and the button; plain text below,
         // the theme's dim text is too faint over the game
         const ImVec4 *c = ImGui::GetStyle().Colors;
-        ImGui::PushFont(g_font_mgr.m_menu_font_medium);
-        ImGui::TextColored(c[ImGuiCol_CheckMark],
-                           "Restart the game to finish the sound change");
-        ImGui::PopFont();
-        if (g_config.audio.use_dsp && xbox_audio_setting_is_dolby(booted)) {
-            ImGui::Text("Accurate starts after the restart; until then "
-                        "sound stays on Fast.");
-        } else if (g_config.audio.channels == CONFIG_AUDIO_CHANNELS_SURROUND &&
-                   xbox_audio_setting_is_dolby(now)) {
-            ImGui::Text("5.1 rear sound starts after the restart.");
+        ImGui::TextColored(c[ImGuiCol_CheckMark], "Restart to Apply");
+        if (reason == SOUND_RESTART_ACCURATE) {
+            ImGui::Text("Accurate starts after the game restarts. Until "
+                        "then sound stays on Fast.");
+        } else {
+            ImGui::Text("5.1 rear sound starts after the game restarts.");
         }
-        ImGui::Text("Xbox audio: %s now, %s after the restart.",
-                    xbox_audio_setting_name(booted),
-                    xbox_audio_setting_name(now));
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, c[ImGuiCol_ButtonHovered]);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c[ImGuiCol_CheckMark]);
@@ -325,11 +314,10 @@ void DrawSoundRestartNotice()
         }
         ImGui::SameLine();
         if (ImGui::Button("Later")) {
-            dismissed = true;
-            dismissed_pending = pending;
+            dismissed = reason;
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Sound > Restart the game to apply does it "
+            ImGui::SetTooltip("Sound > Restart to Apply does it "
                               "later.");
         }
     }
@@ -642,7 +630,7 @@ static void SoundMenu()
         ImGui::TextDisabled("Xbox audio setting: %s", xbox_audio);
     }
     if (restart) {
-        if (ImGui::MenuItem("Restart the game to apply")) {
+        if (ImGui::MenuItem("Restart to Apply")) {
             ActionReset();
         }
         MenuItemHelp("The game reads the Xbox's audio setting when it "

@@ -198,5 +198,22 @@ bool SoundRestartNeeded(const char **name)
     if (name) {
         *name = xbox_audio_setting_name(now);
     }
-    return ((now ^ booted) & XBOX_AUDIO_SETTING_MASK) != 0;
+    return SoundRestartReason() != SOUND_RESTART_NONE;
+}
+
+SoundRestart SoundRestartReason()
+{
+    uint32_t now, booted;
+    if (!xbox_audio_setting_get(&now, &booted)) {
+        return SOUND_RESTART_NONE;
+    }
+    if (g_config.audio.use_dsp && xbox_audio_setting_is_dolby(booted)) {
+        return SOUND_RESTART_ACCURATE;
+    }
+    if (g_config.audio.channels == CONFIG_AUDIO_CHANNELS_SURROUND &&
+        xbox_audio_setting_is_dolby(now) &&
+        !xbox_audio_setting_is_dolby(booted)) {
+        return SOUND_RESTART_SURROUND;
+    }
+    return SOUND_RESTART_NONE;
 }
