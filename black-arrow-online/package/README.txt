@@ -150,6 +150,9 @@ seconds after starting, it builds the ones not ready yet for your graphics
 card and resolution in the background. A small notice in the top left shows
 the progress, then "Shaders ready". This takes a few seconds and only
 happens again after a graphics driver update or a resolution change.
+Since build 24, lights (lamps, muzzle flashes, explosions) no longer need a
+shader of their own, so far fewer effects hitch in a match. The first start
+after updating to build 24 builds the shaders once more.
 To turn it off: Graphics > Precache > Precache shaders automatically.
 
 
