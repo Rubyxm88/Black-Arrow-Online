@@ -88,13 +88,19 @@ const char *xemu_settings_get_base_path(void)
             fprintf(stderr, "%s: could not change directory\n", __func__);
         }
     } else {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
         // Black Arrow Online keeps the console and its files in the same
         // layout as the Windows package folder, outside the app bundle,
-        // which must stay unchanged
+        // which must stay unchanged (on Linux: next to the app folder in
+        // ~/.local/share, where setup.sh installs it)
+#ifdef __APPLE__
         char *system_dir =
             g_build_filename(g_get_home_dir(), "Library", "Application Support",
                              "Black Arrow Online", "system", NULL);
+#else
+        char *system_dir = g_build_filename(
+            g_get_user_data_dir(), "Black Arrow Online", "system", NULL);
+#endif
         g_mkdir_with_parents(system_dir, 0755);
         base_path = g_strdup_printf("%s/", system_dir);
         g_free(system_dir);

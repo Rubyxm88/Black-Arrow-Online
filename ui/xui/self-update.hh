@@ -1,5 +1,5 @@
 //
-// xemu User Interface: Black Arrow Online updates on a Mac
+// xemu User Interface: Black Arrow Online updates on a Mac and on Linux
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@ extern "C" {
 #include "qemu/http.h"
 }
 
-class MacUpdateWindow
+class SelfUpdateWindow
 {
 public:
     enum State {
@@ -50,10 +50,10 @@ private:
     bool        m_quiet;      // checked by itself: shown only for an update
     bool        m_later;      // "Later" was clicked
     bool        m_restarting;
-    bool        m_wrong_copy; // not the copy setup.sh put in Applications
+    bool        m_wrong_copy; // not the copy setup.sh installed
 
 public:
-    MacUpdateWindow();
+    SelfUpdateWindow();
     // Opened from the update panel
     void Open();
     // Help > Versions & Updates: download and install this build, newer or
@@ -74,4 +74,4 @@ private:
     static int Progress(http_progress_cb_info *info);
 };
 
-extern MacUpdateWindow mac_update_window;
+extern SelfUpdateWindow self_update_window;

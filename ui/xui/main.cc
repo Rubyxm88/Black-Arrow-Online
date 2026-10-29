@@ -58,8 +58,8 @@
 #include "game-cache.hh"
 #include "../xemu-xbonline.h"
 #include "../xemu-diag.h"
-#if defined(__APPLE__)
-#include "mac-update.hh"
+#if defined(__APPLE__) || defined(__linux__)
+#include "self-update.hh"
 #endif
 
 bool g_screenshot_pending;
@@ -353,8 +353,8 @@ void xemu_hud_update(void)
     guide_window.Draw();
     versions_window.Draw();
     game_cache_window.Draw();
-#if defined(__APPLE__)
-    if (!first_boot_window.is_open) mac_update_window.Draw();
+#if defined(__APPLE__) || defined(__linux__)
+    if (!first_boot_window.is_open) self_update_window.Draw();
 #endif
     if (!first_boot_window.is_open) DrawFreezeToast();
     if (!first_boot_window.is_open) DrawPerfOverlay();

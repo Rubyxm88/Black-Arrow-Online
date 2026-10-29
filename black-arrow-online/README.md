@@ -31,6 +31,13 @@ xemu is licensed under the GPL, version 2 or later. See `LICENSE` and
 - **Network card**: packets held while the game's receive buffer was full
   are delivered as soon as it has room again.
 - **Memory**: the console has 128 MB by default instead of 64 MB.
+- **Shaders**: a shipped list of Black Arrow's shaders is built in the
+  background before the game needs them, and every shader a game builds is
+  kept in a list of that game's own (`shader-list-mine-<title id>.bin`), so
+  the precache builds only the loaded game's shaders. Black Arrow's list is
+  also written to `shader-list-mine-v2.bin`, the list builds up to 24 read.
+- **Linux and Mac**: the same app with a self-updater (`ui/xui/self-update.cc`);
+  Linux installs with `black-arrow-online/linux/setup.sh`.
 
 The source changes are the commits on top of the upstream history.
 
@@ -109,13 +116,15 @@ merged at build time, not pushed to `main`; if it does not merge cleanly the
 workflow opens an issue and releases nothing until `main` has been merged by
 hand.
 
-Each release has three files:
+Each release has these files:
 
 | File | Contents |
 |---|---|
 | `BlackArrowOnline-update.zip` | Launcher, `xemu.exe`, README and `system/version.txt`, laid out like the package |
 | `version.txt` | Build number, xemu version and the SHA-256 of the zip |
 | `BlackArrowOnline-source-build-N.tar.zst` | The complete source of that build |
+| `BlackArrowOnline-mac-update.zip`, `mac-version.txt` | The Mac app and what it reads to find the build |
+| `BlackArrowOnline-linux-update.tar.gz`, `linux-version.txt` | The Linux app with `setup.sh`, and what it reads to find the build |
 
 The launcher compares `system\version.txt` with the `version.txt` of the
 latest release and offers the update when the build number is higher. It

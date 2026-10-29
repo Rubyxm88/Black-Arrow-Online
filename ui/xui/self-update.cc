@@ -1,11 +1,12 @@
 //
-// xemu User Interface: Black Arrow Online updates on a Mac
+// xemu User Interface: Black Arrow Online updates on a Mac and on Linux
 //
-// A few seconds after the start the app reads mac-version.txt of the newest
-// GitHub release. When it names a newer build than the one installed (the
-// version.txt setup.sh put in the console folder), a small panel offers it.
-// Update now downloads the build's BlackArrowOnline-mac-update.zip, checks
-// it against the SHA-256 in mac-version.txt and unpacks it; then the app
+// A few seconds after the start the app reads mac-version.txt (Linux:
+// linux-version.txt) of the newest GitHub release. When it names a newer
+// build than the one installed (the version.txt setup.sh put in the console
+// folder), a small panel offers it. Update now downloads the build's update
+// (BlackArrowOnline-mac-update.zip, or BlackArrowOnline-linux-update.tar.gz),
+// checks it against the SHA-256 in that file and unpacks it; then the app
 // starts the update's own setup.sh with --update and closes. setup.sh waits
 // for it to close, installs the new app as a Terminal run would, and opens
 // it again. Downloaded here and not in a browser, nothing is marked as
@@ -21,7 +22,7 @@
 // (at your option) any later version.
 //
 #include "common.hh"
-#include "mac-update.hh"
+#include "self-update.hh"
 #include "versions.hh"
 #include "actions.hh"
 #include "notifications.hh"
@@ -36,10 +37,28 @@ extern "C" {
 #include <SDL3/SDL.h>
 #include <glib/gstdio.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <limits.h>
 
-#define RELEASES "https://github.com/Rubyxm88/Black-Arrow-Online/releases"
-#define INFO_URL RELEASES "/latest/download/mac-version.txt"
+#define RELEASES_PAGE "https://github.com/Rubyxm88/Black-Arrow-Online/releases"
+
+#if defined(__APPLE__)
+#define PLATFORM "Mac"
+#define INFO_NAME "mac-version.txt"
 #define ZIP_NAME "BlackArrowOnline-mac-update.zip"
+#else
+#define PLATFORM "Linux"
+#define INFO_NAME "linux-version.txt"
+#define ZIP_NAME "BlackArrowOnline-linux-update.tar.gz"
+#endif
+
+// The releases page; XEMU_TEST_RELEASES points it at a test server that has
+// the same download/... layout
+static std::string Releases()
+{
+    const char *test = g_getenv("XEMU_TEST_RELEASES");
+    return test && *test ? test : RELEASES_PAGE;
+}
 
 /* Seconds after starting before looking for an update */
 #define AUTO_DELAY 10.0
@@ -49,7 +68,7 @@ static const ImVec4 xbox_green_hover(0.10f, 0.62f, 0.10f, 1.0f);
 static const ImVec4 xbox_green_active(0.05f, 0.40f, 0.05f, 1.0f);
 static const ImVec4 problem_color(1.0f, 0.55f, 0.35f, 1.0f);
 
-MacUpdateWindow mac_update_window;
+SelfUpdateWindow self_update_window;
 
 // A key=value line of version.txt or mac-version.txt
 static std::string Field(const std::string &text, const char *key)
@@ -111,7 +130,7 @@ static void PopButtonColors()
     ImGui::PopStyleColor(4);
 }
 
-MacUpdateWindow::MacUpdateWindow()
+SelfUpdateWindow::SelfUpdateWindow()
 {
     g_mutex_init(&m_lock);
     is_open = false;
@@ -129,6 +148,7 @@ MacUpdateWindow::MacUpdateWindow()
     m_wrong_copy = false;
 }
 
+#if defined(__APPLE__)
 // Opened somewhere else than where setup.sh installs the app, usually from
 // the unzipped download (macOS then runs it from a hidden copy in
 // AppTranslocation). Updates replace the copy in Applications, so this one
@@ -156,8 +176,47 @@ static bool WrongCopy()
     }
     return false;
 }
+#else
+// The app folder setup.sh installs, next to the console folder (system/)
+static std::string AppDir()
+{
+    gchar *system = g_strdup(xemu_settings_get_base_path());
+    size_t n = strlen(system);
+    while (n > 1 && system[n - 1] == '/') {
+        system[--n] = 0;
+    }
+    gchar *data = g_path_get_dirname(system);
+    gchar *app = g_build_filename(data, "app", NULL);
+    std::string out = app;
+    g_free(app);
+    g_free(data);
+    g_free(system);
+    return out;
+}
 
-void MacUpdateWindow::DrawWrongCopy()
+// Opened somewhere else than the copy setup.sh installed, usually from the
+// unpacked download. Updates replace the installed copy, so this one would
+// never change.
+static bool WrongCopy()
+{
+    const char *base = SDL_GetBasePath();
+    std::string app = AppDir();
+    char real[PATH_MAX];
+    if (!base || !g_file_test((app + "/AppRun").c_str(), G_FILE_TEST_EXISTS) ||
+        !realpath(app.c_str(), real)) {
+        return false;
+    }
+    std::string prefix = std::string(real) + "/";
+    if (std::string(base).rfind(prefix, 0) != 0) {
+        fprintf(stderr, "update: running from %s, not the installed copy in "
+                "%s\n", base, real);
+        return true;
+    }
+    return false;
+}
+#endif
+
+void SelfUpdateWindow::DrawWrongCopy()
 {
     float scale = g_viewport_mgr.m_scale;
     PopupStackPlace();
@@ -171,11 +230,19 @@ void MacUpdateWindow::DrawWrongCopy()
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f * scale);
         ImGui::TextColored(problem_color,
                            "Opened from the download folder");
+#if defined(__APPLE__)
         ImGui::TextWrapped(
             "Updates go to Black Arrow Online in your Applications folder, "
             "so this copy will stay on this build. Quit, then open Black "
             "Arrow Online from Applications (Finder > Applications, or "
             "Launchpad). You can delete the downloaded folder.");
+#else
+        ImGui::TextWrapped(
+            "Updates go to the Black Arrow Online that setup.sh installed, so "
+            "this copy will stay on this build. Quit, then open Black Arrow "
+            "Online from your applications menu (or Steam, if you added it "
+            "there). You can delete the downloaded folder.");
+#endif
         ImGui::PopTextWrapPos();
         PushGreenButtons();
         if (ImGui::Button("OK")) {
@@ -187,7 +254,7 @@ void MacUpdateWindow::DrawWrongCopy()
     ImGui::End();
 }
 
-void MacUpdateWindow::Open()
+void SelfUpdateWindow::Open()
 {
     is_open = true;
     m_later = false;
@@ -200,7 +267,7 @@ void MacUpdateWindow::Open()
     }
 }
 
-void MacUpdateWindow::Check(bool quiet)
+void SelfUpdateWindow::Check(bool quiet)
 {
     g_mutex_lock(&m_lock);
     if (m_state == CHECKING || m_state == DOWNLOADING || m_state == READY) {
@@ -211,15 +278,16 @@ void MacUpdateWindow::Check(bool quiet)
     m_error.clear();
     g_mutex_unlock(&m_lock);
     m_quiet = quiet;
-    g_thread_unref(g_thread_new("mac-update-check", CheckThread, this));
+    g_thread_unref(g_thread_new("app-update-check", CheckThread, this));
 }
 
-gpointer MacUpdateWindow::CheckThread(gpointer opaque)
+gpointer SelfUpdateWindow::CheckThread(gpointer opaque)
 {
-    MacUpdateWindow *self = (MacUpdateWindow *)opaque;
+    SelfUpdateWindow *self = (SelfUpdateWindow *)opaque;
     GByteArray *data = g_byte_array_new();
     Error *err = NULL;
-    int code = http_get(INFO_URL, data, NULL, &err);
+    int code = http_get((Releases() + "/latest/download/" INFO_NAME).c_str(), data,
+                        NULL, &err);
     std::string text((const char *)data->data, data->len);
     g_byte_array_free(data, TRUE);
     int local = LocalBuild();
@@ -229,10 +297,10 @@ gpointer MacUpdateWindow::CheckThread(gpointer opaque)
     g_mutex_lock(&self->m_lock);
     self->m_local_build = local;
     if (code == 404) {
-        // The newest build has no Mac app (its Mac build failed or is still
-        // being made)
+        // The newest build has no app for this system (its build failed or
+        // is still being made)
         self->m_state = CHECK_FAILED;
-        self->m_error = "The newest build has no Mac version yet.";
+        self->m_error = "The newest build has no " PLATFORM " version yet.";
     } else if (code != 200) {
         self->m_state = CHECK_FAILED;
         if (err) {
@@ -242,7 +310,7 @@ gpointer MacUpdateWindow::CheckThread(gpointer opaque)
         }
     } else if (build <= 0 || sha256.size() != 64) {
         self->m_state = CHECK_FAILED;
-        self->m_error = "Could not read mac-version.txt.";
+        self->m_error = "Could not read " INFO_NAME ".";
     } else if (build > local && !(self->m_quiet && build == SkippedBuild())) {
         // The check at start leaves out a build the player rolled back from
         self->m_state = AVAILABLE;
@@ -262,7 +330,7 @@ gpointer MacUpdateWindow::CheckThread(gpointer opaque)
     return NULL;
 }
 
-bool MacUpdateWindow::InstallBuild(int build)
+bool SelfUpdateWindow::InstallBuild(int build)
 {
     g_mutex_lock(&m_lock);
     if (m_state == CHECKING || m_state == DOWNLOADING || m_state == READY) {
@@ -276,22 +344,22 @@ bool MacUpdateWindow::InstallBuild(int build)
     m_quiet = false;
     m_later = false;
     is_open = true;
-    g_thread_unref(g_thread_new("mac-update-build", BuildInfoThread, this));
+    g_thread_unref(g_thread_new("app-update-build", BuildInfoThread, this));
     return true;
 }
 
 // mac-version.txt of the chosen build, for its SHA-256, then the download
-gpointer MacUpdateWindow::BuildInfoThread(gpointer opaque)
+gpointer SelfUpdateWindow::BuildInfoThread(gpointer opaque)
 {
-    MacUpdateWindow *self = (MacUpdateWindow *)opaque;
+    SelfUpdateWindow *self = (SelfUpdateWindow *)opaque;
     g_mutex_lock(&self->m_lock);
     int build = self->m_build;
     g_mutex_unlock(&self->m_lock);
 
     GByteArray *data = g_byte_array_new();
     Error *err = NULL;
-    char *url = g_strdup_printf(RELEASES "/download/build-%d/mac-version.txt",
-                                build);
+    char *url = g_strdup_printf("%s/download/build-%d/" INFO_NAME,
+                                Releases().c_str(), build);
     int code = http_get(url, data, NULL, &err);
     g_free(url);
     std::string text((const char *)data->data, data->len);
@@ -304,7 +372,7 @@ gpointer MacUpdateWindow::BuildInfoThread(gpointer opaque)
     if (code == 404) {
         self->m_state = CHECK_FAILED;
         self->m_error = "Build " + std::to_string(build) +
-                        " has no Mac version.";
+                        " has no " PLATFORM " version.";
     } else if (code != 200) {
         self->m_state = CHECK_FAILED;
         self->m_error = err ? error_get_pretty(err)
@@ -312,7 +380,7 @@ gpointer MacUpdateWindow::BuildInfoThread(gpointer opaque)
     } else if (atoi(Field(text, "build").c_str()) != build ||
                sha256.size() != 64) {
         self->m_state = CHECK_FAILED;
-        self->m_error = "Could not read mac-version.txt of build " +
+        self->m_error = "Could not read " INFO_NAME " of build " +
                         std::to_string(build) + ".";
     } else {
         self->m_state = AVAILABLE;
@@ -332,7 +400,7 @@ gpointer MacUpdateWindow::BuildInfoThread(gpointer opaque)
     return NULL;
 }
 
-void MacUpdateWindow::Download()
+void SelfUpdateWindow::Download()
 {
     g_mutex_lock(&m_lock);
     if (m_state != AVAILABLE && m_state != DOWNLOAD_FAILED) {
@@ -345,12 +413,12 @@ void MacUpdateWindow::Download()
     m_dltotal = 0;
     m_cancel = false;
     g_mutex_unlock(&m_lock);
-    g_thread_unref(g_thread_new("mac-update-download", DownloadThread, this));
+    g_thread_unref(g_thread_new("app-update-download", DownloadThread, this));
 }
 
-int MacUpdateWindow::Progress(http_progress_cb_info *info)
+int SelfUpdateWindow::Progress(http_progress_cb_info *info)
 {
-    MacUpdateWindow *self = (MacUpdateWindow *)info->userptr;
+    SelfUpdateWindow *self = (SelfUpdateWindow *)info->userptr;
     g_mutex_lock(&self->m_lock);
     self->m_dlnow = info->dlnow;
     self->m_dltotal = info->dltotal;
@@ -360,9 +428,9 @@ int MacUpdateWindow::Progress(http_progress_cb_info *info)
     return cancel ? 1 : 0;
 }
 
-gpointer MacUpdateWindow::DownloadThread(gpointer opaque)
+gpointer SelfUpdateWindow::DownloadThread(gpointer opaque)
 {
-    MacUpdateWindow *self = (MacUpdateWindow *)opaque;
+    SelfUpdateWindow *self = (SelfUpdateWindow *)opaque;
     g_mutex_lock(&self->m_lock);
     int build = self->m_build;
     std::string sha256 = self->m_sha256;
@@ -374,9 +442,10 @@ gpointer MacUpdateWindow::DownloadThread(gpointer opaque)
     http_progress_cb_info info = {};
     info.progress = Progress;
     info.userptr = self;
-    // The build named in mac-version.txt, not latest: a newer build
+    // The build named in its version file, not latest: a newer build
     // published meanwhile would not match the SHA-256
-    char *url = g_strdup_printf(RELEASES "/download/build-%d/" ZIP_NAME, build);
+    char *url = g_strdup_printf("%s/download/build-%d/" ZIP_NAME,
+                                Releases().c_str(), build);
     int code = http_get(url, data, &info, &err);
     g_free(url);
 
@@ -413,12 +482,18 @@ gpointer MacUpdateWindow::DownloadThread(gpointer opaque)
                         gerr->message;
                 g_clear_error(&gerr);
             } else {
+#if defined(__APPLE__)
                 // ditto, as Finder unzips: keeps the app's links
                 const gchar *argv[] = { "/usr/bin/ditto", "-x", "-k", zip, dir,
                                         NULL };
-                if (!g_spawn_sync(NULL, (gchar **)argv, NULL,
-                                  G_SPAWN_DEFAULT, NULL, NULL, NULL, NULL,
-                                  &status, &gerr)) {
+                GSpawnFlags flags = G_SPAWN_DEFAULT;
+#else
+                // tar is on every Linux system, unzip is not
+                const gchar *argv[] = { "tar", "-xzf", zip, "-C", dir, NULL };
+                GSpawnFlags flags = G_SPAWN_SEARCH_PATH;
+#endif
+                if (!g_spawn_sync(NULL, (gchar **)argv, NULL, flags, NULL,
+                                  NULL, NULL, NULL, &status, &gerr)) {
                     g_clear_error(&gerr);
                     status = -1;
                 }
@@ -427,12 +502,17 @@ gpointer MacUpdateWindow::DownloadThread(gpointer opaque)
             g_free(zip);
             gchar *script =
                 g_build_filename(dir, "BlackArrowOnline", "setup.sh", NULL);
+#if defined(__APPLE__)
             gchar *app = g_build_filename(dir, "BlackArrowOnline",
                                           "Black Arrow Online.app", NULL);
+#else
+            gchar *app = g_build_filename(dir, "BlackArrowOnline", "app",
+                                          "AppRun", NULL);
+#endif
             if (error.empty()) {
                 if (status != 0 ||
                     !g_file_test(script, G_FILE_TEST_IS_REGULAR) ||
-                    !g_file_test(app, G_FILE_TEST_IS_DIR)) {
+                    !g_file_test(app, G_FILE_TEST_EXISTS)) {
                     error = "Could not unpack the update.";
                 } else {
                     setup = script;
@@ -474,6 +554,7 @@ static void Detach(gpointer)
 // opens it itself, but macOS ignores that when it still counts the old copy
 // as closing, and the setup.sh of an older build (rolling back) cannot be
 // fixed, so this part comes from the running build.
+#if defined(__APPLE__)
 static const char *const relaunch_script = R"SH(
 setup="$1"; pid="$2"
 name="Black Arrow Online.app"
@@ -493,16 +574,54 @@ for try in 1 2 3 4; do
     if [ "$try" -lt 3 ]; then open "$app"; else open -n "$app"; fi
 done
 )SH";
+#else
+// $3 is the folder with app/ and system/. The app counts as open only when a
+// process started from app/ runs its xemu, not for any command line that
+// names the folder.
+static const char *const relaunch_script = R"SH(
+setup="$1"; pid="$2"; data="$3"
+log="$data/system/update.log"
+app="$data/app/AppRun"
+running() {
+    exe="$(readlink -f "$data/app/usr/bin/xemu" 2>/dev/null)" || return 1
+    for p in $(pgrep -f -- "$data/app/" 2>/dev/null); do
+        [ "$(readlink -f "/proc/$p/exe" 2>/dev/null)" = "$exe" ] && return 0
+    done
+    return 1
+}
+/bin/bash "$setup" --update "$pid"
+for try in 1 2 3; do
+    waited=0
+    while [ "$waited" -lt 8 ]; do
+        running && exit 0
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "$(date): not open after the update, opening $app again (try $try)" >> "$log" 2>/dev/null
+    [ -e "$app" ] || exit 1
+    setsid "$app" </dev/null >/dev/null 2>&1 &
+done
+)SH";
+#endif
 
 // Starts the update's setup.sh, which waits for the app to close, and closes
 // the app
-void MacUpdateWindow::Restart()
+void SelfUpdateWindow::Restart()
 {
     m_restarting = true;
     char pid[16];
     snprintf(pid, sizeof(pid), "%d", (int)getpid());
+#if defined(__APPLE__)
     const gchar *argv[] = { "/bin/bash", "-c", relaunch_script,
                             "bao-update", m_setup.c_str(), pid, NULL };
+#else
+    gchar *data = g_path_get_dirname(AppDir().c_str());
+    std::string data_dir = data;
+    g_free(data);
+    const gchar *argv[] = { "/bin/bash", "-c", relaunch_script,
+                            "bao-update", m_setup.c_str(), pid,
+                            data_dir.c_str(), NULL };
+#endif
     GError *gerr = NULL;
     if (!g_spawn_async(NULL, (gchar **)argv, NULL,
                        (GSpawnFlags)(G_SPAWN_STDOUT_TO_DEV_NULL |
@@ -522,7 +641,7 @@ void MacUpdateWindow::Restart()
 }
 
 // What the last update's setup.sh left
-void MacUpdateWindow::ShowLastResult()
+void SelfUpdateWindow::ShowLastResult()
 {
     std::string failed_path = ConsoleFile("update-failed.txt");
     std::string done_path = ConsoleFile("update-done.txt");
@@ -550,7 +669,7 @@ void MacUpdateWindow::ShowLastResult()
     }
 }
 
-void MacUpdateWindow::DrawContents(State state)
+void SelfUpdateWindow::DrawContents(State state)
 {
     float scale = g_viewport_mgr.m_scale;
     g_mutex_lock(&m_lock);
@@ -610,10 +729,17 @@ void MacUpdateWindow::DrawContents(State state)
         ImGui::TextColored(problem_color,
                            "The last update could not be installed.");
         ImGui::TextWrapped("%s", error.c_str());
+#if defined(__APPLE__)
         ImGui::TextWrapped("To install it by hand, download "
                            ZIP_NAME " from the releases page and run the "
                            "Terminal line from README.txt, as for the first "
                            "install.");
+#else
+        ImGui::TextWrapped("To install it by hand, download "
+                           ZIP_NAME " from the releases page, unpack it and "
+                           "run its setup.sh, as for the first install (see "
+                           "README.txt).");
+#endif
         break;
     }
     ImGui::PopTextWrapPos();
@@ -651,7 +777,7 @@ void MacUpdateWindow::DrawContents(State state)
         break;
     case INSTALL_FAILED:
         if (ImGui::Button("Open the releases page")) {
-            SDL_OpenURL(RELEASES);
+            SDL_OpenURL(RELEASES_PAGE);
         }
         ImGui::SameLine();
         if (ImGui::Button("Close")) {
@@ -672,7 +798,7 @@ void MacUpdateWindow::DrawContents(State state)
     PopButtonColors();
 }
 
-void MacUpdateWindow::Draw()
+void SelfUpdateWindow::Draw()
 {
     if (!m_started) {
         m_started = true;

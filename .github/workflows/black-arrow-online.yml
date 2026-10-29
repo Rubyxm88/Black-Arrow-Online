@@ -15,19 +15,20 @@ name: Black Arrow Online release
 # A push whose shader state headers no longer match .github/shader-state.txt
 # releases nothing (see that file): the shader lists would stop loading.
 #
-# The Windows files are published as soon as they are built. The Mac app
-# takes longer; its files are added to the same release when it is done, and
-# a failed Mac build leaves the release Windows only. Windows files and Mac
-# files never share a name: launchers read version.txt and
+# The Windows files are published as soon as they are built. The Mac and
+# Linux apps take longer; their files are added to the same release when
+# each is done, and a failed Mac or Linux build leaves the release without
+# it. The systems' files never share a name: launchers read version.txt and
 # BlackArrowOnline-update.zip, the Mac app mac-version.txt and
-# BlackArrowOnline-mac-update.zip.
+# BlackArrowOnline-mac-update.zip, the Linux app linux-version.txt and
+# BlackArrowOnline-linux-update.tar.gz.
 #
-# A push to mac-build runs everything without publishing: the would-be
-# release files are kept as downloads on the run's page (Artifacts).
+# A push to mac-build or linux-build runs everything without publishing: the
+# would-be release files are kept as downloads on the run's page (Artifacts).
 
 on:
   push:
-    branches: [main, mac-build]
+    branches: [main, mac-build, linux-build]
     paths-ignore:
       - '**.md'
       - '.github/**'
@@ -702,6 +703,226 @@ jobs:
       run: |
         if ! out=$(gh release upload "$TAG" BlackArrowOnline-mac-update.zip \
             mac-version.txt 2>&1); then
+          echo "::error::$(echo "$out" | tr '\n' ' ')"
+          exit 1
+        fi
+        echo "$out"
+        if [ -f notes.md ]; then
+          gh release edit "$TAG" --notes-file notes.md
+        fi
+
+  # xemu's own Linux build steps (build-linux.yml), x86_64 release only. The
+  # app is the AppDir linuxdeploy makes (the program with its libraries, run
+  # by its AppRun), not an AppImage: an AppImage needs FUSE 2, which newer
+  # systems no longer have.
+  linux:
+    name: Build for Linux
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: /tmp/xemu-ccache
+      CCACHE_MAXSIZE: 512M
+      LTO_CACHE_DIR: /tmp/xemu-lto-cache
+      LTO_CACHE_MAXSIZE: 512m
+      DEB_BUILD_MAINT_OPTIONS: optimize=-lto
+      DEB_LDFLAGS_MAINT_APPEND: -Wl,--build-id=sha1
+      CC: ccache clang-21
+      CXX: ccache clang++-21
+      CC_LD: lld-21
+      CXX_LD: lld-21
+      AR: llvm-ar-21
+      RANLIB: llvm-ranlib-21
+      NM: llvm-nm-21
+    steps:
+    - name: Initialize compiler cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4
+      with:
+        path: |
+          ${{ env.CCACHE_DIR }}
+          ${{ env.LTO_CACHE_DIR }}
+        key: cache-bao-linux-${{ github.sha }}
+        restore-keys: cache-bao-linux-
+    - name: Download source package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: src
+    - name: Extract source package
+      run: |
+        mkdir src
+        tar -xf xemu-${{ needs.prepare.outputs.version }}.tar.zst -C src --strip-components=2
+        printf 'xemu (1:0.0.0-0) unstable; urgency=medium\n\n  Built from %s\n\n -- Black Arrow Online <noreply@github.com>  %s\n' \
+            "${{ needs.prepare.outputs.version }}" "$(date -R)" > src/debian/changelog
+    - name: Install dependencies
+      env:
+        POOL: https://apt.llvm.org/jammy/pool/main/l/llvm-toolchain-21/
+      run: |
+        set -euxo pipefail
+        sudo apt-get -qy update
+        sudo apt-get install -qy ccache libusb-1.0-0-dev
+        (cd src && sudo apt-get -qy build-dep .)
+        # LLVM 21, as xemu's own Linux build: the newest version in the pool
+        html="$(curl -fsSL --compressed "$POOL")"
+        ver="$(grep -oE 'libllvm21_[0-9][^"]+_amd64\.deb' <<<"$html" | head -n1 |
+               sed -E 's/^libllvm21_//; s/_amd64\.deb$//')"
+        mkdir -p /tmp/llvm21 && cd /tmp/llvm21
+        for pkg in clang-21 clang-tools-21 lld-21 libllvm21 libclang-cpp21 \
+            libclang-common-21-dev libclang1-21 libclang-rt-21-dev llvm-21 \
+            llvm-21-dev llvm-21-linker-tools llvm-21-runtime llvm-21-tools; do
+          curl -fsSLO "${POOL}${pkg}_${ver}_amd64.deb"
+        done
+        sudo apt-get install -y --no-install-recommends ./*.deb
+        echo "PATH=/usr/lib/ccache:$PATH" >> "$GITHUB_ENV"
+    - name: Compile
+      run: |
+        # Not -e: the errors are reported below before failing
+        set +e -uo pipefail
+        mkdir -p "$CCACHE_DIR" "$LTO_CACHE_DIR"
+        # dpkg-genbuildinfo takes minutes on GitHub runners
+        sudo ln -sf /bin/true /usr/bin/dpkg-genbuildinfo
+        export XEMU_BUILD_OPTIONS="--extra-ldflags=-Wl,--thinlto-cache-policy=cache_size_bytes=$LTO_CACHE_MAXSIZE -Db_lto=true -Db_lto_mode=thin -Db_thinlto_cache=true -Db_thinlto_cache_dir=$LTO_CACHE_DIR -Dx86_version=3"
+        (cd src && dpkg-buildpackage --no-sign -b) 2>&1 | tee full-build.log
+        status=${PIPESTATUS[0]}
+        if [ "$status" != 0 ]; then
+          grep -E -A4 '(^FAILED: | error: |fatal error|undefined reference)' full-build.log |
+              head -n 40 | cut -c 1-300 | while IFS= read -r line; do
+            echo "::error title=Linux build failed::$line"
+          done
+        fi
+        exit "$status"
+    - name: Make the app folder
+      run: |
+        set -euo pipefail
+        wget --no-verbose https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage
+        chmod +x linuxdeploy-x86_64.AppImage
+        mkdir deb app
+        (cd deb && ar x ../xemu_*.deb)
+        tar -C app -xf deb/data.tar*
+        # The host's GLib, as xemu's AppImage: libdecor's GTK plugin fails
+        # against an older bundled one. libusb too: linuxdeploy leaves it to
+        # the system, and not every system has it
+        ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run --appdir app \
+            --exclude-library 'libglib-2.0.so*' \
+            --library /usr/lib/x86_64-linux-gnu/libusb-1.0.so.0
+        ls -la app
+        test -x app/AppRun
+        test -f app/usr/lib/libusb-1.0.so.0
+        tar -czf xemu-linux-app.tar.gz app
+    - name: Upload build
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: xemu-linux
+        path: xemu-linux-app.tar.gz
+        compression-level: 0
+
+  linux-package:
+    name: Package the Linux app
+    needs: [prepare, linux]
+    runs-on: ubuntu-latest
+    env:
+      BUILD: ${{ needs.prepare.outputs.build }}
+      PUBLISH: ${{ needs.prepare.outputs.publish }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      UPSTREAM: ${{ needs.prepare.outputs.upstream }}
+      COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+    - name: Clone the setup script and package files
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      with:
+        ref: ${{ needs.prepare.outputs.commit }}
+        sparse-checkout: |
+          black-arrow-online/linux
+          black-arrow-online/package
+    - name: Download the Linux app
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: xemu-linux
+    - name: Download release notes
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: meta
+        path: meta
+    - name: Package
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        # Same top folder as the Windows package, so the full package made
+        # from this unpacks to BlackArrowOnline/ with system/ beside the app
+        pkg=BlackArrowOnline
+        mkdir -p "$pkg"
+        tar -xzf xemu-linux-app.tar.gz -C "$pkg"
+        cp black-arrow-online/linux/README.txt "$pkg/README.txt"
+        install -m 755 black-arrow-online/linux/setup.sh "$pkg/setup.sh"
+        cp black-arrow-online/package/shader-list.bin "$pkg/shader-list.bin"
+        # A test build has no build number, so the app takes any build over it
+        build=""
+        if [ "$PUBLISH" = true ]; then
+          build="$BUILD"
+        fi
+        notes=$(cat meta/notes.txt 2>/dev/null || true)
+        printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
+            "$build" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
+            > "$pkg/version.txt"
+        ls -la "$pkg"
+        # tar keeps the app's links and executable bits, which the artifact
+        # zip around it would not
+        tar -czf BlackArrowOnline-linux-update.tar.gz "$pkg"
+        cp "$pkg/version.txt" linux-version.txt
+        echo "sha256=$(sha256sum BlackArrowOnline-linux-update.tar.gz | cut -d' ' -f1)" >> linux-version.txt
+        cat linux-version.txt
+    - name: Upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      with:
+        name: BlackArrowOnline-linux
+        path: |
+          BlackArrowOnline-linux-update.tar.gz
+          linux-version.txt
+        compression-level: 0
+
+  linux-publish:
+    name: Add the Linux app to the release
+    needs: [prepare, release, linux-package, mac-publish]
+    # After the Mac app (or its failure), so the two never edit the notes at
+    # once
+    if: always() && needs.release.result == 'success' && needs.linux-package.result == 'success' && (needs.prepare.outputs.publish == 'true' || needs.prepare.outputs.draft == 'true')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Not the upstream remote, which gh would prefer
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+    - name: Download the Linux app
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+      with:
+        name: BlackArrowOnline-linux
+    - name: Add the Linux section to the release notes
+      if: needs.prepare.outputs.publish == 'true'
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        gh release view "$TAG" --json body --jq .body > notes.md
+        {
+          echo
+          echo "### Linux"
+          echo
+          echo "For 64-bit PCs and the Steam Deck with a Linux from 2022 or later (Ubuntu 22.04, Fedora 36, SteamOS 3...)."
+          echo
+          echo "**Already playing on Linux?** Black Arrow Online offers this build by itself a few seconds after it starts: click **Update now**. It closes, installs the build and opens again. Your console, Xbox Live sign-in, saves, settings and games are not touched."
+          echo
+          echo "To update by hand, download \`BlackArrowOnline-linux-update.tar.gz\`, unpack it and run \`bash setup.sh\` in its folder."
+          echo
+          echo "**New on Linux?** Get the full Linux package from where Black Arrow Online is shared. This download has no Xbox BIOS, dashboard or game files."
+          echo
+          echo "| File | What it is |"
+          echo "|---|---|"
+          echo "| \`BlackArrowOnline-linux-update.tar.gz\` | The Linux app, its setup script and the shader list |"
+          echo "| \`linux-version.txt\` | What the Linux app reads to find this build |"
+        } >> notes.md
+    - name: Publish
+      run: |
+        if ! out=$(gh release upload "$TAG" BlackArrowOnline-linux-update.tar.gz \
+            linux-version.txt 2>&1); then
           echo "::error::$(echo "$out" | tr '\n' ' ')"
           exit 1
         fi

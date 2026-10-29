@@ -69,6 +69,13 @@ static const char *const start_text[] = {
     "- Open Black Arrow Online from Applications. When macOS asks whether it "
     "may accept incoming network connections or find devices on your local "
     "network, click Allow: XB Online needs both.",
+#elif defined(__linux__)
+    "- Install with setup.sh (README.txt says how). It adds Black Arrow "
+    "Online to your applications menu and sets up your console.",
+    "- Copy your Black Arrow disc image (.iso) into the games folder that "
+    "opens (Open Games Folder below).",
+    "- Start Black Arrow Online from your applications menu. On a Steam Deck, "
+    "add it to Steam to play it in Game Mode (README.txt).",
 #else
     "- Copy your Black Arrow disc image (.iso) into the \"games\" folder.",
     "- Start Black Arrow Online. A setup window appears once: Start clean "
@@ -193,6 +200,9 @@ static const char *const trouble_text[] = {
     "both automatically in System Settings > General > Date & Time.",
     "- Local network: System Settings > Privacy & Security > Local Network "
     "must allow Black Arrow Online.",
+#elif defined(__linux__)
+    "- Clock: sign-in fails when the computer's clock or time zone is wrong. "
+    "Set both automatically in your system's Date & Time settings.",
 #else
     "- PC clock: sign-in fails when the Windows clock or time zone is wrong. "
     "Set both automatically in Windows Settings > Time.",
@@ -203,6 +213,9 @@ static const char *const trouble_text[] = {
 #if defined(__APPLE__)
     "- Still failing: double-click Black Arrow Report in Applications and "
     "send the zip it makes in Downloads to whoever shared the package.",
+#elif defined(__linux__)
+    "- Still failing: start Black Arrow Report from your applications menu "
+    "and send the file it makes to whoever shared the package.",
 #else
     "- Still failing: send system\\xemu.log to whoever shared the package.",
 #endif
@@ -235,6 +248,8 @@ static const char *const hosting_text[] = {
     "- Players on your own network (another Xbox or PC) can join as it is. "
 #if defined(__APPLE__)
     "Allow incoming connections when macOS asks.",
+#elif defined(__linux__)
+    "If you run a firewall (ufw, firewalld), allow UDP port 3074.",
 #else
     "Allow xemu through Windows Firewall when Windows asks.",
 #endif
@@ -253,13 +268,17 @@ static const char *const versions_text[] = {
     "When a newer build is out, a small panel in the top left says so a few "
     "seconds after the app starts. Update now downloads it, closes the app "
     "and opens it again on the new build within about a minute.",
+#elif defined(__linux__)
+    "When a newer build is out, a small panel in the top left says so a few "
+    "seconds after Black Arrow Online starts. Update now downloads it, closes "
+    "Black Arrow Online and opens it again on the new build.",
 #else
     "When a newer build is out, Black Arrow Online offers it when you start.",
 #endif
     "Help > Versions & Updates lists every build: install the newest, or go "
     "back to an earlier one if a new build gives you trouble. It asks first, "
     "then closes Black Arrow Online, installs the build and opens it again.",
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
     "An update replaces the app only. Your console, Xbox Live sign-in, saves, "
     "settings and games are kept.",
 #else
@@ -274,6 +293,11 @@ static const char *const versions_text[] = {
     "If an update cannot be installed, the app says why the next time it "
     "opens. To update by hand, download BlackArrowOnline-mac-update.zip from "
     "the releases page and run the Terminal line from README.txt.",
+#elif defined(__linux__)
+    "If an update cannot be installed, Black Arrow Online says why the next "
+    "time it opens. To update by hand, download "
+    "BlackArrowOnline-linux-update.tar.gz from the releases page, unpack it "
+    "and run its setup.sh.",
 #else
     "Builds before 15 do not have this window. To come back from one, choose "
     "Update now when the launcher offers the newest build at the start.",
@@ -301,6 +325,21 @@ static const char *const files_text[] = {
     "# Controller",
     "Pair it in Bluetooth settings before starting and it is used by itself. "
     "To change it: Machine > Settings... > Input.",
+#elif defined(__linux__)
+    "# Where things are",
+    "- Everything: ~/.local/share/Black Arrow Online (a hidden folder in your "
+    "home folder; Ctrl+H shows hidden folders in most file managers).",
+    "- Your console: its system folder. Your games: its games folder.",
+    "# Starting over",
+    "Run setup.sh with --start-over at the end. Your current console, with "
+    "its Xbox Live account and saves, is lost.",
+    "# Do not share",
+    "system/eeprom.bin and system/xbox_hdd.qcow2 belong to your console and "
+    "your account. Never send them to anyone. Share the original download "
+    "instead.",
+    "# Controller",
+    "Connect it before starting and it is used by itself. To change it: "
+    "Machine > Settings... > Input.",
 #else
     "# Starting over",
     "\"system\\Start over.bat\" removes the console in this folder. The next "

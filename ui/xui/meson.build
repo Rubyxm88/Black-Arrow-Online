@@ -35,6 +35,6 @@ if host_os == 'windows'
   xemu_ss.add(files('win32-dxgi-present.cc'))
 endif
 
-if host_os == 'darwin'
-  xemu_ss.add(files('mac-update.cc'))
+if host_os in ['darwin', 'linux']
+  xemu_ss.add(files('self-update.cc'))
 endif

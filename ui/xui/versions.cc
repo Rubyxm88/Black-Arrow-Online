@@ -14,8 +14,8 @@
 // On Windows the launcher next to the system folder does the work
 // (--install-build N --wait-pid P: it waits for xemu to close, downloads the
 // build's BlackArrowOnline-update.zip, checks it against the SHA-256 in that
-// build's version.txt, installs it and starts it). On a Mac the app's own
-// updater downloads the build's Mac update and runs its setup.sh.
+// build's version.txt, installs it and starts it). On a Mac and on Linux the
+// app's own updater downloads the build's update and runs its setup.sh.
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -29,8 +29,8 @@
 #include "font-manager.hh"
 #include "../xemu-settings.h"
 #include "../xemu-notifications.h"
-#if defined(__APPLE__)
-#include "mac-update.hh"
+#if defined(__APPLE__) || defined(__linux__)
+#include "self-update.hh"
 #endif
 
 extern "C" {
@@ -60,6 +60,8 @@ using json = nlohmann::json;
 
 #if defined(__APPLE__)
 #define PLATFORM_ASSET "BlackArrowOnline-mac-update.zip"
+#elif defined(__linux__)
+#define PLATFORM_ASSET "BlackArrowOnline-linux-update.tar.gz"
 #else
 #define PLATFORM_ASSET "BlackArrowOnline-update.zip"
 #endif
@@ -119,6 +121,7 @@ VersionsWindow versions_window;
 struct LocalVersion {
     int build;
     std::string xemu, date, commit;
+    std::string label;  // a beta's name, such as "24.1 Linux Beta"
 };
 
 static std::string Field(const std::string &text, const char *key)
@@ -160,6 +163,7 @@ static const LocalVersion &Installed()
             v.xemu = Field(t, "xemu");
             v.date = Field(t, "date");
             v.commit = Field(t, "commit").substr(0, 10);
+            v.label = Field(t, "label");
             g_free(text);
         }
         g_free(path);
@@ -556,10 +560,10 @@ void VersionsWindow::Install(int build)
             "install build %d\n", (unsigned long)pi.dwProcessId, build);
     m_installing = true;
     ActionShutdown();
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) || defined(__linux__)
     // The app's updater downloads it, then its setup.sh installs it once the
     // app closed
-    if (!mac_update_window.InstallBuild(build)) {
+    if (!self_update_window.InstallBuild(build)) {
         m_install_error = "An update is already being installed.";
         return;
     }
@@ -632,7 +636,7 @@ void VersionsWindow::DrawConfirm()
     if (build < FIRST_BUILD_WITH_VERSIONS) {
         ImGui::TextColored(update_color, "Build %d does not have this window "
                            "yet.", build);
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
         ImGui::TextWrapped("To come back to a newer build, choose Update now "
                            "when the app offers it after starting.");
 #else
@@ -689,7 +693,9 @@ void VersionsWindow::Draw()
     const LocalVersion &local = Installed();
     int newest = NewestBuild();
     ImGui::PushFont(g_font_mgr.m_menu_font_medium);
-    if (local.build > 0) {
+    if (!local.label.empty()) {
+        ImGui::Text("%s", local.label.c_str());
+    } else if (local.build > 0) {
         ImGui::Text("Build %d", local.build);
     } else {
         ImGui::Text("Test build");
@@ -883,8 +889,10 @@ void DrawBuildBadge()
     float fade = ImGui::GetStyleColorVec4(ImGuiCol_Text).w;
 
     // "BA Online" light, " - " dim, "Build N" green
-    char build_part[32];
-    if (local.build > 0) {
+    char build_part[48];
+    if (!local.label.empty()) {
+        snprintf(build_part, sizeof(build_part), "%s", local.label.c_str());
+    } else if (local.build > 0) {
         snprintf(build_part, sizeof(build_part), "Build %d", local.build);
     } else {
         snprintf(build_part, sizeof(build_part), "Test Build");
@@ -977,7 +985,9 @@ void DrawBuildBadge()
 
     if (hovered) {
         ImGui::BeginTooltip();
-        if (local.build > 0) {
+        if (!local.label.empty()) {
+            ImGui::Text("Black Arrow Online %s", local.label.c_str());
+        } else if (local.build > 0) {
             ImGui::Text("Black Arrow Online build %d", local.build);
         } else {
             ImGui::Text("Black Arrow Online test build");

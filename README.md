@@ -19,7 +19,7 @@ the map packs.
 | **The full Black Arrow Online package** | Shared in the community, complete and ready to run. The [releases](../../releases) here are updates for it, not the package itself. |
 | **Your own Black Arrow disc image** | An `.iso` of your game. It is not included. |
 | **An xb.live account** | Free, at [xb.live](https://xb.live). |
-| **A Windows PC** | Windows 10 or 11, 64-bit. A controller is recommended. |
+| **A PC** | Windows 10 or 11 (64-bit), a Mac, or a 64-bit Linux PC or Steam Deck with a Linux from 2022 or later (new, see [On Linux](#on-linux)). A controller is recommended. |
 
 ## Getting started
 
@@ -52,6 +52,16 @@ After that, starting `Black Arrow Online` goes straight to the game.
 <p align="center">
   <img src="black-arrow-online/docs/images/xbl-dashboard.png" width="480" alt="The XBL Dashboard on first start">
 </p>
+
+## On Linux
+
+New since build 25. Get the full Linux package from where Black Arrow Online
+is shared, unpack it, open a terminal in the `BlackArrowOnline` folder and
+run `bash setup.sh`. It installs into your home folder (no password), adds
+**Black Arrow Online** to your applications menu and opens the `games`
+folder for your disc image. Updates come in by themselves, like on Windows
+and Mac. The `README.txt` in the package has the Steam Deck steps. Linux is
+new, so please report what works and what does not.
 
 ## The XB Online menu
 
