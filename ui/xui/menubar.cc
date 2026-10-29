@@ -589,6 +589,16 @@ static void XbOnlineMenu(bool just_opened)
 
 static void SoundMenu()
 {
+    // The same setting as Settings > Audio > Limit output volume
+    MenuHeader("Volume");
+    int volume = (int)lroundf(g_config.audio.volume_limit * 100.0f);
+    MenuSlider("##volume", &volume, 0, 100, "%d%%",
+               "How loud all of the game's sound plays, the same setting as "
+               "Settings > Audio. 100% is full volume.");
+    if (volume != (int)lroundf(g_config.audio.volume_limit * 100.0f)) {
+        g_config.audio.volume_limit = volume / 100.0f;
+    }
+
     MenuHeader("Quality");
     ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
     const char *xbox_audio = NULL;

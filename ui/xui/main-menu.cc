@@ -841,7 +841,7 @@ void MainMenuAudioView::Draw()
     SectionTitle("Volume");
     char buf[32];
     snprintf(buf, sizeof(buf), "Limit output volume (%d%%)",
-             (int)(g_config.audio.volume_limit * 100));
+             (int)lroundf(g_config.audio.volume_limit * 100.0f));
     Slider("Output volume limit", &g_config.audio.volume_limit, buf);
 
     SectionTitle("Quality");
