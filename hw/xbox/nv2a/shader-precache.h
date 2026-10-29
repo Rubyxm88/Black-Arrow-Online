@@ -26,9 +26,17 @@ extern "C" {
 /* Shipped list of shaders, in the emulator's base folder */
 #define NV2A_SHADER_LIST_FILE "shader-list.bin"
 
+/* The shipped list was made from Black Arrow; Rainbow Six 3 shares its engine */
+#define NV2A_SHADER_TITLE_BLACK_ARROW 0x55530037u
+#define NV2A_SHADER_TITLE_RAINBOW_SIX_3 0x55530013u
+
 /*
- * This PC's own list, same format: every shader the game needed here.
- * Updates never replace it, and Clear Cache keeps it unless asked.
+ * This PC's own lists, same format: every shader a game needed here, one
+ * file per game (shader-list-mine-<title id>.bin). Updates never replace
+ * them, and Clear Cache keeps them unless asked.
+ *
+ * The one list of builds 21 to 24: since build 25 a copy of Black Arrow's,
+ * so a rollback to those builds keeps its shaders.
  */
 #define NV2A_SHADER_LEARNED_FILE "shader-list-mine-v2.bin"
 
@@ -58,7 +66,8 @@ typedef struct ShaderPrecacheStatus {
     int failed;          /* could not be built in this run */
     int disk_count;      /* shaders in the cache on disk */
     uint64_t disk_bytes; /* their size */
-    int learned_count;   /* shaders in this PC's own list */
+    uint32_t title;      /* the game the last run was for, 0 = none */
+    int learned_count;   /* shaders in this PC's list for the loaded game */
     int skipped_count;   /* shaders skipped since they crashed a precache */
     char gpu[128];       /* graphics card and maker */
     char driver[128];    /* driver version */
@@ -73,6 +82,12 @@ bool nv2a_shader_precache_start(void);
 
 /* Stop building after the current shader */
 void nv2a_shader_precache_stop(void);
+
+/*
+ * The game on the loaded disc (title id, 0 for none): shaders built from now
+ * on go in its list, and the next precache builds only its shaders.
+ */
+void nv2a_shader_precache_set_title(uint32_t title);
 
 void nv2a_shader_precache_get_status(ShaderPrecacheStatus *status);
 

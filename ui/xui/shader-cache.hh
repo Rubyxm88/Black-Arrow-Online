@@ -8,6 +8,7 @@
 //
 #pragma once
 
+#include <string>
 #include "hw/xbox/nv2a/shader-precache.h"
 
 class ShaderCacheWindow
@@ -25,6 +26,8 @@ private:
     bool   m_confirm_clear;  // Clear Cache was clicked once
     bool   m_forget_learned; // ...and this PC's own list goes too
     double m_cleared_time;   // when the cache was cleared, to say so
+    std::string m_disc_path; // disc the shaders were last set for
+    bool   m_disc_known;
 
 public:
     ShaderCacheWindow();
@@ -32,6 +35,7 @@ public:
     void Draw();
 
 private:
+    void CheckDisc();
     void CheckAuto();
     void DrawToast(const ShaderPrecacheStatus &status);
 };

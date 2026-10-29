@@ -17,6 +17,7 @@
 #include "notifications.hh"
 #include "viewport-manager.hh"
 #include "../xemu-settings.h"
+#include "../xemu-gamecache.h"
 #include "hw/xbox/nv2a/shader-precache.h"
 
 /* Seconds after starting before looking whether to precache by itself */
@@ -69,6 +70,7 @@ ShaderCacheWindow::ShaderCacheWindow()
     m_confirm_clear = false;
     m_forget_learned = false;
     m_cleared_time = -1;
+    m_disc_known = false;
 }
 
 void ShaderCacheWindow::Open()
@@ -82,8 +84,31 @@ void ShaderCacheWindow::Open()
 // Once per run, and again when the resolution scale changes: build in the
 // background whatever the list and this PC's own cache have that is not built
 // for this driver and the resolution scales the player uses yet
+// Each game has its own list of shaders: when another disc is loaded, the
+// shaders built from then on are that game's, and the precache looks again
+void ShaderCacheWindow::CheckDisc()
+{
+    const char *path = g_config.sys.files.dvd_path;
+    std::string now = path ? path : "";
+    if (m_disc_known && now == m_disc_path) {
+        return;
+    }
+    uint32_t title = 0;
+    if (!xemu_gamecache_disc_title(&title, NULL, 0)) {
+        title = 0;
+    }
+    nv2a_shader_precache_set_title(title);
+    if (m_disc_known) {
+        m_auto_checked = false;
+        m_scan_requested = false;
+    }
+    m_disc_path = now;
+    m_disc_known = true;
+}
+
 void ShaderCacheWindow::CheckAuto()
 {
+    CheckDisc();
     int scale = g_config.display.quality.surface_scale;
     if (scale != m_auto_scale) {
         if (m_auto_scale) {
@@ -105,6 +130,10 @@ void ShaderCacheWindow::CheckAuto()
         return;
     }
     if (!m_scan_requested) {
+        if (status.running) {
+            // The last game's run is stopping
+            return;
+        }
         nv2a_shader_precache_scan();
         m_scan_requested = true;
         return;
@@ -218,18 +247,26 @@ void ShaderCacheWindow::Draw()
             ImGui::Text("Shaders saved on this PC: %d (%.1f MB)",
                         status.disk_count, status.disk_bytes / 1048576.0);
             if (status.list_total < 0) {
-                ImGui::TextDisabled("No shader list in this package.");
+                ImGui::TextDisabled("No shader list for this game yet: its "
+                                    "shaders are kept as it plays.");
             } else if (!status.running) {
                 ImGui::Text("Shaders to have ready: %d, %d still to build",
                             status.list_total, status.list_missing);
                 ImGui::TextDisabled("The same shaders serve every "
                                     "resolution.");
-                ImGui::TextDisabled(g_config.perf.shader_precache_own ?
-                                    "From the Black Arrow list and the "
-                                    "shaders this PC has used." :
-                                    "From the Black Arrow list.");
+                bool shipped = status.title ==
+                                   NV2A_SHADER_TITLE_BLACK_ARROW ||
+                               status.title == NV2A_SHADER_TITLE_RAINBOW_SIX_3;
+                ImGui::TextDisabled(
+                    !shipped ? "From the shaders this PC has used in this "
+                               "game." :
+                    g_config.perf.shader_precache_own ?
+                               "From the Black Arrow list and the shaders "
+                               "this PC has used in this game." :
+                               "From the Black Arrow list.");
             }
-            ImGui::Text("Shaders this PC has used: %d", status.learned_count);
+            ImGui::Text("Shaders this PC has used in this game: %d",
+                        status.learned_count);
             if (status.skipped_count > 0) {
                 ImGui::TextDisabled("%d skipped: they crashed the graphics "
                                     "driver while precaching.",

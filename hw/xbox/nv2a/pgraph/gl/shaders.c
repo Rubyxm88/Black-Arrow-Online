@@ -1260,6 +1260,11 @@ void pgraph_gl_bind_shaders(PGRAPHState *pg)
             binding->cached = false;
         }
         if (loaded) {
+            /*
+             * Built before, maybe by another game sharing the cache: it goes
+             * in this game's list too, so the list has all its shaders
+             */
+            learned_add(&state);
             xemu_perf_end(XEMU_PERF_SHADER_LOAD, perf_start);
         } else if (async_supported && g_config.perf.shader_async) {
             nv2a_profile_inc_counter(NV2A_PROF_SHADER_GEN);
@@ -1363,6 +1368,7 @@ static struct {
     bool thread_started;
     bool build;              /* the thread builds, not only counts */
     bool stop;
+    uint32_t title;          /* the game this run builds for */
     ShaderPrecacheStatus status;
 } precache;
 
@@ -1816,25 +1822,53 @@ static void precache_add_own(GArray *states)
 }
 
 /*
- * This PC's own list (shader-list-mine.bin): every shader the game had to
- * build here, plus the states in this PC's cache files. It holds no compiled
- * code, so it works with any driver, and it survives Clear Cache and our
- * updates. Kept in memory and written in the background a few seconds after
- * it grew, through a temporary file so a crash cannot damage it.
+ * This PC's own lists: every shader a game had to build here, one file per
+ * game (shader-list-mine-<title id>.bin, "-other" while no game disc is in),
+ * so the precache builds only the loaded game's shaders. They hold no
+ * compiled code, so they work with any driver, and they survive Clear Cache
+ * and our updates. Kept in memory and written in the background a few
+ * seconds after they grew, through a temporary file so a crash cannot damage
+ * them. The compiled shaders stay in one cache folder that every game shares.
+ *
+ * Black Arrow's list is also written to NV2A_SHADER_LEARNED_FILE, the one
+ * list builds up to 24 use, so going back to one of them keeps every shader
+ * (on Macs that file is the only place they are kept). What such a build
+ * adds to it is merged back into Black Arrow's list at every start.
  */
 
 #define LEARNED_SAVE_DELAY_MS 5000
 
-static struct {
-    QemuMutex lock;          /* guards everything below but save_lock */
-    QemuMutex save_lock;     /* held while the file is written */
-    bool ready;
+typedef struct LearnedList {
+    uint32_t title;          /* 0: no game disc */
     GArray *states;          /* ShaderState, scale set to 1 */
     GHashTable *hashes;      /* their hashes */
     bool dirty;
-    bool saving;             /* a background save is running */
     int64_t dirty_since;
+} LearnedList;
+
+static struct {
+    QemuMutex lock;          /* guards everything below but save_lock */
+    QemuMutex save_lock;     /* held while files are written */
+    bool ready;
+    GPtrArray *lists;        /* LearnedList, loaded as games are seen */
+    LearnedList *current;    /* the loaded game's */
+    uint32_t title;          /* the loaded game's title id */
+    bool saving;             /* a background save is running */
+    bool migrate;            /* Black Arrow's list is new this start */
 } learned;
+
+/* Whether the shipped list (made from Black Arrow) is for this game */
+static bool shader_list_is_for(uint32_t title)
+{
+    return title == NV2A_SHADER_TITLE_BLACK_ARROW ||
+           title == NV2A_SHADER_TITLE_RAINBOW_SIX_3;
+}
+
+static char *learned_file(uint32_t title)
+{
+    return title ? g_strdup_printf("shader-list-mine-%08X.bin", title)
+                 : g_strdup("shader-list-mine-other.bin");
+}
 
 /* The state as kept in a list: the scale is set again when it is built */
 static uint64_t learned_key(const ShaderState *state, ShaderState *out)
@@ -1844,21 +1878,104 @@ static uint64_t learned_key(const ShaderState *state, ShaderState *out)
     return fast_hash((uint8_t *)out, sizeof(*out));
 }
 
-static void learned_insert_locked(const ShaderState *state)
+static void learned_mark_locked(LearnedList *l)
+{
+    if (!l->dirty) {
+        l->dirty = true;
+        l->dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    }
+}
+
+static bool learned_insert_locked(LearnedList *l, const ShaderState *state)
 {
     ShaderState s;
     uint64_t hash = learned_key(state, &s);
-    if (g_hash_table_contains(learned.hashes, &hash)) {
-        return;
+    if (g_hash_table_contains(l->hashes, &hash)) {
+        return false;
     }
     uint64_t *key = g_new(uint64_t, 1);
     *key = hash;
-    g_hash_table_add(learned.hashes, key);
-    g_array_append_val(learned.states, s);
-    if (!learned.dirty) {
-        learned.dirty = true;
-        learned.dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    g_hash_table_add(l->hashes, key);
+    g_array_append_val(l->states, s);
+    learned_mark_locked(l);
+    return true;
+}
+
+/*
+ * Add a list file's states. Returns how many were new, or -1 when there is
+ * no file. A file that does not match is set aside when set_aside is true.
+ */
+static int learned_merge_file_locked(LearnedList *l, const char *file,
+                                     bool set_aside)
+{
+    int count;
+    bool converted;
+    ShaderState *states = shader_list_load(file, &count, &converted);
+    if (count < 0) {
+        return -1;
     }
+    if (count == 0 && !states && set_aside) {
+        char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
+                                     file);
+        char *bad = g_strdup_printf("%s.bad", path);
+        g_remove(bad);
+        g_rename(path, bad);
+        xemu_diag_event("%s unreadable, set aside", file);
+        g_free(bad);
+        g_free(path);
+    }
+    int added = 0;
+    for (int i = 0; i < count; i++) {
+        added += learned_insert_locked(l, &states[i]);
+    }
+    g_free(states);
+    return added;
+}
+
+/* The list of a game, read from disk the first time it is asked for */
+static LearnedList *learned_get_locked(uint32_t title)
+{
+    for (guint i = 0; i < learned.lists->len; i++) {
+        LearnedList *l = g_ptr_array_index(learned.lists, i);
+        if (l->title == title) {
+            return l;
+        }
+    }
+
+    LearnedList *l = g_new0(LearnedList, 1);
+    l->title = title;
+    l->states = g_array_new(FALSE, FALSE, sizeof(ShaderState));
+    l->hashes = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free,
+                                      NULL);
+    g_ptr_array_add(learned.lists, l);
+
+    char *file = learned_file(title);
+    int own = learned_merge_file_locked(l, file, true);
+    l->dirty = false;
+
+    if (title == NV2A_SHADER_TITLE_BLACK_ARROW) {
+        /*
+         * The lists of older builds, read only: the first start of this
+         * build takes all of them, later starts what was played after a
+         * rollback. On the first start the cache files' states join too,
+         * once (the precache does it, off the render thread).
+         */
+        int added = MAX(learned_merge_file_locked(l, NV2A_SHADER_LEARNED_FILE,
+                                                  false), 0);
+        added += MAX(learned_merge_file_locked(l, NV2A_SHADER_LEARNED_V1_FILE,
+                                               false), 0);
+        if (own < 0) {
+            learned.migrate = true;
+            learned_mark_locked(l);
+        }
+        if (added > 0) {
+            fprintf(stderr, "nv2a: %d shaders added to %s from older "
+                    "builds' lists\n", added, file);
+        }
+    }
+    fprintf(stderr, "nv2a: %u shaders in %s\n", l->states->len, file);
+    g_free(file);
+    return l;
 }
 
 static void learned_init(void)
@@ -1868,54 +1985,23 @@ static void learned_init(void)
     }
     qemu_mutex_init(&learned.lock);
     qemu_mutex_init(&learned.save_lock);
-    learned.states = g_array_new(FALSE, FALSE, sizeof(ShaderState));
-    learned.hashes = g_hash_table_new_full(g_int64_hash, g_int64_equal,
-                                           g_free, NULL);
-
-    int count;
-    bool converted;
-    ShaderState *states = shader_list_load(NV2A_SHADER_LEARNED_FILE, &count,
-                                           &converted);
-    if (count == 0 && !states) {
-        /* A file that does not match: keep it aside, start a new one */
-        char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
-                                     NV2A_SHADER_LEARNED_FILE);
-        if (g_file_test(path, G_FILE_TEST_EXISTS)) {
-            char *bad = g_strdup_printf("%s.bad", path);
-            g_remove(bad);
-            g_rename(path, bad);
-            xemu_diag_event("%s unreadable, set aside", NV2A_SHADER_LEARNED_FILE);
-            g_free(bad);
-        }
-        g_free(path);
-    }
-    for (int i = 0; i < count; i++) {
-        learned_insert_locked(&states[i]);
-    }
-    g_free(states);
-    learned.dirty = false;
-
-    /*
-     * The list of builds up to 20, read only: the first start after the
-     * update takes all of it, later starts what was played after a rollback.
-     */
-    int old_count;
-    states = shader_list_load(NV2A_SHADER_LEARNED_V1_FILE, &old_count,
-                              &converted);
-    guint before = learned.states->len;
-    for (int i = 0; i < old_count; i++) {
-        learned_insert_locked(&states[i]);
-    }
-    g_free(states);
-    if (learned.states->len > before) {
-        fprintf(stderr, "nv2a: %u shaders added from %s\n",
-                learned.states->len - before, NV2A_SHADER_LEARNED_V1_FILE);
-        learned.dirty = true;
-        learned.dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
-    }
+    learned.lists = g_ptr_array_new();
+    qemu_mutex_lock(&learned.lock);
+    /* Always read: it takes in what a rolled back build added */
+    learned_get_locked(NV2A_SHADER_TITLE_BLACK_ARROW);
+    learned.current = learned_get_locked(learned.title);
     learned.ready = true;
-    fprintf(stderr, "nv2a: %d shaders in this PC's own list\n",
-            (int)learned.states->len);
+    qemu_mutex_unlock(&learned.lock);
+}
+
+/* Shaders built from now on are this game's */
+static void learned_set_title(uint32_t title)
+{
+    learned_init();
+    qemu_mutex_lock(&learned.lock);
+    learned.title = title;
+    learned.current = learned_get_locked(title);
+    qemu_mutex_unlock(&learned.lock);
 }
 
 static void learned_add(const ShaderState *state)
@@ -1924,31 +2010,44 @@ static void learned_add(const ShaderState *state)
         return;
     }
     qemu_mutex_lock(&learned.lock);
-    learned_insert_locked(state);
+    learned_insert_locked(learned.current, state);
     qemu_mutex_unlock(&learned.lock);
 }
 
-/* Write the list if it grew; waits for a background save still running */
-static void learned_save(void)
+/* A game's states, for the precache */
+static void learned_append(GArray *out, uint32_t title)
 {
-    if (!learned.ready) {
-        return;
-    }
-    qemu_mutex_lock(&learned.save_lock);
     qemu_mutex_lock(&learned.lock);
-    if (!learned.dirty) {
-        qemu_mutex_unlock(&learned.lock);
-        qemu_mutex_unlock(&learned.save_lock);
-        return;
-    }
-    guint count = learned.states->len;
-    ShaderState *copy = g_memdup2(learned.states->data,
-                                  count * sizeof(ShaderState));
-    learned.dirty = false;
+    LearnedList *l = learned_get_locked(title);
+    g_array_append_vals(out, l->states->data, l->states->len);
     qemu_mutex_unlock(&learned.lock);
+}
 
-    char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(),
-                                 NV2A_SHADER_LEARNED_FILE);
+/* Add states to Black Arrow's list */
+static void learned_add_main(const ShaderState *states, guint count)
+{
+    qemu_mutex_lock(&learned.lock);
+    LearnedList *l = learned_get_locked(NV2A_SHADER_TITLE_BLACK_ARROW);
+    for (guint i = 0; i < count; i++) {
+        learned_insert_locked(l, &states[i]);
+    }
+    qemu_mutex_unlock(&learned.lock);
+}
+
+/* True once, on the first start with this build */
+static bool learned_take_migrate(void)
+{
+    qemu_mutex_lock(&learned.lock);
+    bool m = learned.migrate;
+    learned.migrate = false;
+    qemu_mutex_unlock(&learned.lock);
+    return m;
+}
+
+static bool learned_write(const char *file, const ShaderState *states,
+                          guint count)
+{
+    char *path = g_strdup_printf("%s%s", xemu_settings_get_base_path(), file);
     char *tmp = g_strdup_printf("%s.tmp", path);
     FILE *f = qemu_fopen(tmp, "wb");
     uint8_t header[16];
@@ -1957,7 +2056,7 @@ static void learned_save(void)
     stl_le_p(header + 12, count);
     bool ok = f && fwrite(header, sizeof(header), 1, f) == 1 &&
               (count == 0 ||
-               fwrite(copy, sizeof(ShaderState), count, f) == count);
+               fwrite(states, sizeof(ShaderState), count, f) == count);
     if (f) {
         ok = fclose(f) == 0 && ok;
     }
@@ -1966,14 +2065,56 @@ static void learned_save(void)
     if (!ok) {
         fprintf(stderr, "nv2a: could not save %s\n", path);
         g_remove(tmp);
-        qemu_mutex_lock(&learned.lock);
-        learned.dirty = true;
-        learned.dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
-        qemu_mutex_unlock(&learned.lock);
     }
     g_free(tmp);
     g_free(path);
-    g_free(copy);
+    return ok;
+}
+
+/* Write the lists that grew; waits for a background save still running */
+static void learned_save(void)
+{
+    if (!learned.ready) {
+        return;
+    }
+    qemu_mutex_lock(&learned.save_lock);
+    for (;;) {
+        qemu_mutex_lock(&learned.lock);
+        LearnedList *l = NULL;
+        for (guint i = 0; i < learned.lists->len && !l; i++) {
+            LearnedList *c = g_ptr_array_index(learned.lists, i);
+            if (c->dirty) {
+                l = c;
+            }
+        }
+        if (!l) {
+            qemu_mutex_unlock(&learned.lock);
+            break;
+        }
+        uint32_t title = l->title;
+        guint count = l->states->len;
+        ShaderState *copy = g_memdup2(l->states->data,
+                                      MAX(count, 1) * sizeof(ShaderState));
+        l->dirty = false;
+        qemu_mutex_unlock(&learned.lock);
+
+        char *file = learned_file(title);
+        bool ok = learned_write(file, copy, count);
+        if (ok && title == NV2A_SHADER_TITLE_BLACK_ARROW) {
+            /* For a rollback to builds up to 24 */
+            ok = learned_write(NV2A_SHADER_LEARNED_FILE, copy, count);
+        }
+        g_free(file);
+        g_free(copy);
+        if (!ok) {
+            /* Try again at the next save */
+            qemu_mutex_lock(&learned.lock);
+            l->dirty = true;
+            l->dirty_since = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+            qemu_mutex_unlock(&learned.lock);
+            break;
+        }
+    }
     qemu_mutex_unlock(&learned.save_lock);
 }
 
@@ -1992,10 +2133,15 @@ static void learned_tick(void)
     if (!learned.ready) {
         return;
     }
+    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
     qemu_mutex_lock(&learned.lock);
-    bool go = learned.dirty && !learned.saving &&
-              qemu_clock_get_ms(QEMU_CLOCK_REALTIME) - learned.dirty_since >=
-                  LEARNED_SAVE_DELAY_MS;
+    bool go = false;
+    for (guint i = 0; i < learned.lists->len && !learned.saving; i++) {
+        LearnedList *l = g_ptr_array_index(learned.lists, i);
+        if (l->dirty && now - l->dirty_since >= LEARNED_SAVE_DELAY_MS) {
+            go = true;
+        }
+    }
     if (go) {
         learned.saving = true;
     }
@@ -2007,15 +2153,49 @@ static void learned_tick(void)
     }
 }
 
+/* Shaders in the loaded game's list */
 static int learned_count(void)
 {
     if (!learned.ready) {
         return 0;
     }
     qemu_mutex_lock(&learned.lock);
-    int n = learned.states->len;
+    int n = learned.current->states->len;
     qemu_mutex_unlock(&learned.lock);
     return n;
+}
+
+/* Clear Cache with "forget": every game's list, and older builds' lists */
+static void learned_forget_all(void)
+{
+    /* A save still running would write a list back */
+    qemu_mutex_lock(&learned.save_lock);
+    qemu_mutex_lock(&learned.lock);
+    for (guint i = 0; i < learned.lists->len; i++) {
+        LearnedList *l = g_ptr_array_index(learned.lists, i);
+        g_array_set_size(l->states, 0);
+        g_hash_table_remove_all(l->hashes);
+        l->dirty = false;
+    }
+    learned.migrate = false;
+    qemu_mutex_unlock(&learned.lock);
+
+    /* shader-list-mine.bin, -v2.bin and the per-game ones */
+    const char *base = xemu_settings_get_base_path();
+    GDir *dir = g_dir_open(base, 0, NULL);
+    const char *name;
+    while (dir && (name = g_dir_read_name(dir))) {
+        if (g_str_has_prefix(name, "shader-list-mine") &&
+            g_str_has_suffix(name, ".bin")) {
+            char *path = g_strdup_printf("%s%s", base, name);
+            g_remove(path);
+            g_free(path);
+        }
+    }
+    if (dir) {
+        g_dir_close(dir);
+    }
+    qemu_mutex_unlock(&learned.save_lock);
 }
 
 /*
@@ -2123,25 +2303,37 @@ static void *precache_thread(void *arg)
         pruned = true;
         shader_cache_prune_others(false);
     }
-    int list_count;
+    /* Only the loaded game's shaders: the title was taken at launch */
+    uint32_t title = precache.title;
+    int list_count = -1;
     bool list_converted;
-    ShaderState *list = shader_list_load(NV2A_SHADER_LIST_FILE, &list_count,
-                                         &list_converted);
+    ShaderState *list = NULL;
+    if (shader_list_is_for(title)) {
+        list = shader_list_load(NV2A_SHADER_LIST_FILE, &list_count,
+                                &list_converted);
+    }
     GArray *all = g_array_new(FALSE, FALSE, sizeof(ShaderState));
+
+    if (learned_take_migrate()) {
+        /*
+         * First start with per-game lists: the shaders in this PC's cache
+         * files are in no list yet (builds up to 16 had none, a crash can
+         * lose the last few). They were made by Black Arrow, so they go in
+         * its list, once.
+         */
+        GArray *own = g_array_new(FALSE, FALSE, sizeof(ShaderState));
+        precache_add_own(own);
+        learned_add_main((ShaderState *)own->data, own->len);
+        fprintf(stderr, "nv2a: %u cache file states checked for the Black "
+                "Arrow list\n", own->len);
+        g_array_free(own, TRUE);
+    }
 
     if (list && !shader_no_binaries) {
         g_array_append_vals(all, list, list_count);
     }
     if (g_config.perf.shader_precache_own) {
-        /* The cache files' states join this PC's own list too */
-        guint from = all->len;
-        precache_add_own(all);
-        qemu_mutex_lock(&learned.lock);
-        for (guint i = from; i < all->len; i++) {
-            learned_insert_locked(&g_array_index(all, ShaderState, i));
-        }
-        g_array_append_vals(all, learned.states->data, learned.states->len);
-        qemu_mutex_unlock(&learned.lock);
+        learned_append(all, title);
     }
     if (list && shader_no_binaries) {
         /* Built every session: the shaders this PC has used come first */
@@ -2259,6 +2451,8 @@ static bool precache_launch(bool build)
         qemu_thread_join(&precache.thread);
     }
     precache.build = build;
+    precache.title = learned.title;
+    precache.status.title = learned.title;
     precache.status.running = true;
     precache.status.building = build;
     if (build) {
@@ -2317,6 +2511,19 @@ void nv2a_shader_precache_stop(void)
     qatomic_set(&precache.stop, true);
 }
 
+void nv2a_shader_precache_set_title(uint32_t title)
+{
+    if (learned.ready && learned.title == title) {
+        return;
+    }
+    fprintf(stderr, "nv2a: shaders are now for title %08x\n", title);
+    learned_set_title(title);
+    if (precache.thread_started && precache.title != title) {
+        /* Building another game's shaders: the next run builds this one's */
+        qatomic_set(&precache.stop, true);
+    }
+}
+
 void nv2a_shader_precache_get_status(ShaderPrecacheStatus *status)
 {
     memset(status, 0, sizeof(*status));
@@ -2348,15 +2555,17 @@ bool nv2a_shader_cache_clear(bool forget_learned)
         return false;
     }
 
-    if (!forget_learned) {
-        /* The cache files' states move into the own list before they go */
+    /*
+     * Every shader built is in its game's list as soon as it is built, so
+     * the cache files can go without their states being copied out first:
+     * they hold no game, and would land in the wrong game's list. Only
+     * before the first precache with this build do they still go to Black
+     * Arrow's list (see precache_thread).
+     */
+    if (learned_take_migrate()) {
         GArray *own = g_array_new(FALSE, FALSE, sizeof(ShaderState));
         precache_add_own(own);
-        qemu_mutex_lock(&learned.lock);
-        for (guint i = 0; i < own->len; i++) {
-            learned_insert_locked(&g_array_index(own, ShaderState, i));
-        }
-        qemu_mutex_unlock(&learned.lock);
+        learned_add_main((ShaderState *)own->data, own->len);
         g_array_free(own, TRUE);
     }
 
@@ -2366,23 +2575,9 @@ bool nv2a_shader_cache_clear(bool forget_learned)
     shader_cache_prune_others(true);
 
     if (forget_learned) {
-        /* A save still running would write the list back */
-        qemu_mutex_lock(&learned.save_lock);
-        qemu_mutex_lock(&learned.lock);
-        g_array_set_size(learned.states, 0);
-        g_hash_table_remove_all(learned.hashes);
-        learned.dirty = false;
-        qemu_mutex_unlock(&learned.lock);
-        char *path = base_file(NV2A_SHADER_LEARNED_FILE);
-        g_remove(path);
-        g_free(path);
-        /* Or the next start would merge the old builds' list back in */
-        path = base_file(NV2A_SHADER_LEARNED_V1_FILE);
-        g_remove(path);
-        g_free(path);
-        qemu_mutex_unlock(&learned.save_lock);
+        learned_forget_all();
 
-        path = base_file(NV2A_SHADER_SKIP_FILE);
+        char *path = base_file(NV2A_SHADER_SKIP_FILE);
         g_remove(path);
         g_free(path);
         g_hash_table_remove_all(precache_skip);
