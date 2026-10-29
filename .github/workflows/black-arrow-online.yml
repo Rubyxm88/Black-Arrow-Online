@@ -274,14 +274,14 @@ jobs:
         zstd "${pkg_name}.tar"
     - name: Upload source package
       if: steps.plan.outputs.release == 'true'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: src
         path: xemu-${{ steps.merge.outputs.version }}.tar.zst
         compression-level: 0
     - name: Upload release notes
       if: steps.plan.outputs.release == 'true'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: meta
         path: meta
@@ -330,7 +330,7 @@ jobs:
             -Dx86_version=3 \
             --enable-whpx
     - name: Upload build
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: xemu
         path: dist
@@ -445,7 +445,7 @@ jobs:
         } > notes.md
     - name: Keep the test build
       if: needs.prepare.outputs.publish != 'true' && needs.prepare.outputs.draft != 'true'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: BlackArrowOnline-windows-test
         path: |
@@ -560,7 +560,7 @@ jobs:
         cd dist
         zip -qry ../xemu-macos-${{ matrix.arch }}.zip *
     - name: Upload build
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: xemu-macos-${{ matrix.arch }}
         path: xemu-macos-${{ matrix.arch }}.zip
@@ -589,7 +589,7 @@ jobs:
         codesign --force --deep --preserve-metadata=entitlements,requirements,flags,runtime --sign - xemu.app/Contents/MacOS/xemu
         zip -qry ../xemu-macos-universal.zip *
     - name: Upload
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: xemu-macos-universal-release
         path: xemu-macos-universal.zip
@@ -653,7 +653,7 @@ jobs:
         echo "sha256=$(sha256sum BlackArrowOnline-mac-update.zip | cut -d' ' -f1)" >> mac-version.txt
         cat mac-version.txt
     - name: Upload
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: BlackArrowOnline-mac
         path: |
@@ -809,7 +809,7 @@ jobs:
         test -f app/usr/lib/libusb-1.0.so.0
         tar -czf xemu-linux-app.tar.gz app
     - name: Upload build
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: xemu-linux
         path: xemu-linux-app.tar.gz
@@ -871,7 +871,7 @@ jobs:
         echo "sha256=$(sha256sum BlackArrowOnline-linux-update.tar.gz | cut -d' ' -f1)" >> linux-version.txt
         cat linux-version.txt
     - name: Upload
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
       with:
         name: BlackArrowOnline-linux
         path: |
