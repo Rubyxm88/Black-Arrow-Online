@@ -487,4 +487,6 @@ void pgraph_gl_flush_draw(NV2AState *d)
     } else {
         NV2A_GL_DPRINTF(true, "EMPTY NV097_SET_BEGIN_END");
     }
+
+    pgraph_gl_mactest_after_draw(d);
 }

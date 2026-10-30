@@ -463,3 +463,6 @@ perf:
   freeze_report:
     type: bool
     default: true
+  mac_test_pictures:  # Mac missing-text test; turned off at each start
+    type: bool
+    default: false

@@ -257,6 +257,7 @@ void pgraph_gl_bind_textures(NV2AState *d)
         if (filter & NV_PGRAPH_TEXFILTER0_BSIGNED) NV2A_UNIMPLEMENTED("NV_PGRAPH_TEXFILTER0_BSIGNED");
 
         TextureShape state = pgraph_get_texture_shape(pg, i);
+        pgraph_gl_mactest_texture(pg, i, &state);
         hwaddr texture_vram_offset, palette_vram_offset;
         size_t length, palette_length;
 

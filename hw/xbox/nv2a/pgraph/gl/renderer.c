@@ -90,6 +90,8 @@ static void pgraph_gl_init(NV2AState *d, Error **errp)
             r->supported_extensions.max_anisotropy = 1.0f;
         }
     }
+
+    pgraph_gl_mactest_selftest();
 }
 
 static void pgraph_gl_finalize(NV2AState *d)

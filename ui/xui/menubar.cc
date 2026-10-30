@@ -840,6 +840,12 @@ static void TroubleshootMenu()
     if (ImGui::MenuItem("Open Last Freeze Report")) {
         OpenFreezeReport();
     }
+#if defined(__APPLE__)
+    MenuToggle("Save Mac test pictures", &g_config.perf.mac_test_pictures,
+               "For the missing menu text on Macs: saves pictures of what "
+               "the game draws to a BlackArrow-mactest folder in Downloads "
+               "(up to 80 MB). Turns itself off when you close the app.");
+#endif
 
     MenuHeader("Caches");
     if (ImGui::MenuItem("Shader Cache...")) {
