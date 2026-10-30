@@ -265,6 +265,7 @@ static void write_package(FILE *f)
         for (char **l = lines; *l; l++) {
             g_strstrip(*l);
             if (g_str_has_prefix(*l, "build=") ||
+                g_str_has_prefix(*l, "sub=") ||
                 g_str_has_prefix(*l, "version=") ||
                 g_str_has_prefix(*l, "date=")) {
                 fprintf(f, " %s", *l);

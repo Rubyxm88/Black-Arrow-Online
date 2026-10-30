@@ -78,8 +78,8 @@ static class Launcher
         // or older) once xemu has closed
         string installBuild = Arg(args, "--install-build");
         if (installBuild != null) {
-            int build, pid;
-            int.TryParse(installBuild, out build);
+            int pid;
+            int build = UpdateInfo.CodeFromText(installBuild);
             int.TryParse(Arg(args, "--wait-pid") ?? "", out pid);
             using (var form = new InstallForm(build, pid)) {
                 Application.Run(form);
@@ -466,12 +466,37 @@ static class Launcher
     }
 }
 
+// A build is a whole number (26), or a sub build of it (26.1, 26.2...) that
+// updates only some systems. version.txt keeps "build=26", which launchers
+// before 26 read, and adds "sub=1"; the release tag is build-26.1. Code holds
+// both as one number, Build * 100 + Sub (2601 for 26.1), for comparing.
 class UpdateInfo
 {
-    public int Build;
+    public int Build, Sub;
     public string Xemu = "", Date = "", Sha256 = "", Notes = "";
     // Where its files are; empty for the newest build
     public string Url = "";
+
+    public int Code { get { return Build > 0 ? Build * 100 + Sub : 0; } }
+    // "26" or "26.1"
+    public string Text { get { return CodeText(Code); } }
+
+    public static string CodeText(int code)
+    {
+        return code % 100 != 0 ? (code / 100) + "." + (code % 100) : (code / 100).ToString();
+    }
+
+    // From "26" or "26.1"; 0 when it is neither
+    public static int CodeFromText(string text)
+    {
+        string[] parts = (text ?? "").Trim().Split('.');
+        int build, sub = 0;
+        if (parts.Length > 2 || !int.TryParse(parts[0], out build) || build <= 0 ||
+            (parts.Length == 2 && (!int.TryParse(parts[1], out sub) || sub < 0 || sub > 99))) {
+            return 0;
+        }
+        return build * 100 + sub;
+    }
 }
 
 // Looks for, downloads and installs newer builds from the releases page
@@ -515,6 +540,11 @@ static class Updater
             string key = line.Substring(0, eq).Trim(), value = line.Substring(eq + 1).Trim();
             if (key == "build") {
                 int.TryParse(value, out info.Build);
+            } else if (key == "sub") {
+                int.TryParse(value, out info.Sub);
+                if (info.Sub < 0 || info.Sub > 99) {
+                    info.Sub = 0;
+                }
             } else if (key == "xemu") {
                 info.Xemu = value;
             } else if (key == "date") {
@@ -586,16 +616,17 @@ static class Updater
 
         int skipped = 0;
         try {
-            int.TryParse(File.ReadAllText(InSystem("update-skip.txt")).Trim(), out skipped);
+            skipped = UpdateInfo.CodeFromText(File.ReadAllText(InSystem("update-skip.txt")));
         } catch (IOException) {
         }
-        return latest.Build > Installed().Build && latest.Build != skipped ? latest : null;
+        return latest.Code > Installed().Code && latest.Code != skipped ? latest : null;
     }
 
-    // A build by its number, newer or older than the installed one, as
-    // published on the releases page
-    public static UpdateInfo ForBuild(int build)
+    // A build by its number (UpdateInfo.Code), newer or older than the
+    // installed one, as published on the releases page
+    public static UpdateInfo ForBuild(int code)
     {
+        string build = UpdateInfo.CodeText(code);
         string url = ReleasesPage + "/download/build-" + build + "/";
         UpdateInfo info;
         try {
@@ -612,7 +643,7 @@ static class Updater
             throw new InvalidOperationException(
                 "Could not reach the releases page: " + e.Message);
         }
-        if (info.Build != build || info.Sha256.Length != 64) {
+        if (info.Code != code || info.Sha256.Length != 64) {
             throw new InvalidOperationException(
                 "The release of build " + build + " has no usable version.txt.");
         }
@@ -623,7 +654,7 @@ static class Updater
     public static void Skip(UpdateInfo update)
     {
         try {
-            File.WriteAllText(InSystem("update-skip.txt"), update.Build.ToString());
+            File.WriteAllText(InSystem("update-skip.txt"), update.Text);
         } catch (IOException) {
         }
     }
@@ -797,12 +828,12 @@ class UpdateForm : Form
         panel.SetBounds(24, 66, 512, 132);
         panel.BackColor = Theme.PanelBack;
         Controls.Add(panel);
-        Theme.AddLabel(panel, "Build " + update.Build +
+        Theme.AddLabel(panel, "Build " + update.Text +
                               (update.Date.Length > 0 ? "  -  " + update.Date : ""),
                        18, 12, 476, 26, 12F, true, Theme.Green);
         Theme.AddLabel(panel, (update.Xemu.Length > 0 ? "Based on xemu " + update.Xemu + ".  " : "") +
                               "You have " +
-                              (installed.Build > 0 ? "build " + installed.Build : "an earlier build") + ".",
+                              (installed.Build > 0 ? "build " + installed.Text : "an earlier build") + ".",
                        18, 42, 476, 22, 9F, false, Theme.Dim);
         Theme.AddLabel(panel, (update.Notes.Length > 0 ? update.Notes + "\n" : "") +
                               "Your console, Xbox Live sign-in, saves, settings and games " +
@@ -892,7 +923,7 @@ class InstallForm : Form
     {
         this.build = build;
         this.waitPid = waitPid;
-        Text = "Black Arrow Online - Install build " + build;
+        Text = "Black Arrow Online - Install build " + UpdateInfo.CodeText(build);
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(520, 210);
@@ -906,9 +937,9 @@ class InstallForm : Form
         Icon = Launcher.AppIcon();
 
         UpdateInfo installed = Updater.Installed();
-        Theme.AddLabel(this, "Installing build " + build, 24, 16, 472, 38, 18F, true,
+        Theme.AddLabel(this, "Installing build " + UpdateInfo.CodeText(build), 24, 16, 472, 38, 18F, true,
                        Theme.TextColor);
-        Theme.AddLabel(this, (installed.Build > 0 ? "Replacing build " + installed.Build + ". " : "") +
+        Theme.AddLabel(this, (installed.Build > 0 ? "Replacing build " + installed.Text + ". " : "") +
                              "Your console, Xbox Live sign-in, saves, settings and games " +
                              "are not touched.",
                        24, 60, 472, 44, 9F, false, Theme.Dim);
@@ -1111,7 +1142,7 @@ class SetupForm : Form
         status = AddLabel(this, IdleStatus, 26, 656, 630, 22, 9F, false, Dim);
         UpdateInfo installed = Updater.Installed();
         if (installed.Build > 0) {
-            Label build = AddLabel(this, "Build " + installed.Build, 668, 656, 320, 22, 9F,
+            Label build = AddLabel(this, "Build " + installed.Text, 668, 656, 320, 22, 9F,
                                    false, Dim);
             build.TextAlign = ContentAlignment.TopRight;
         }

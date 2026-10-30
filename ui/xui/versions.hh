@@ -15,11 +15,12 @@
 
 // A build on the releases page
 struct ReleaseBuild {
-    int         build;
+    int         build;   // build-number.hh number: 26.1 is 2601
     std::string date;    // YYYY-MM-DD
     std::string title;
     std::string notes;   // first line of the release notes
     std::string broken;  // why it must not be installed, or empty
+    std::string systems; // a sub build's systems ("mac linux"), or empty
     // Patch notes, one line each; "## " starts a heading, two spaces a
     // line that goes on from the one before
     std::vector<std::string> changes;
@@ -68,5 +69,5 @@ extern VersionsWindow versions_window;
 void DrawBuildBadge();
 
 // The build the player does not want to be offered (update-skip.txt, which
-// the launcher's "Skip this build" also writes), or 0
+// the launcher's "Skip this build" also writes), or 0 (a build-number.hh number)
 int SkippedBuild();

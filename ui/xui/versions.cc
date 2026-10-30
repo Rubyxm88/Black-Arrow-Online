@@ -8,7 +8,9 @@
 // and drafts are left out, so a build is withdrawn by ticking "Set as a
 // pre-release" on GitHub. A release whose notes have a line starting with
 // "Broken:" is shown greyed out with the rest of that line, and cannot be
-// installed.
+// installed. A sub build (26.1, see build-number.hh) that leaves this system
+// as it was, which its notes say in a "<!-- systems: mac -->" line, is left
+// out: its files for this system are the build before it, copied.
 //
 // Installing closes xemu, since its files cannot be replaced while it runs.
 // On Windows the launcher next to the system folder does the work
@@ -24,6 +26,7 @@
 //
 #include "common.hh"
 #include "versions.hh"
+#include "build-number.hh"
 #include "actions.hh"
 #include "viewport-manager.hh"
 #include "font-manager.hh"
@@ -60,10 +63,13 @@ using json = nlohmann::json;
 
 #if defined(__APPLE__)
 #define PLATFORM_ASSET "BlackArrowOnline-mac-update.zip"
+#define PLATFORM_SYSTEM "mac"
 #elif defined(__linux__)
 #define PLATFORM_ASSET "BlackArrowOnline-linux-update.tar.gz"
+#define PLATFORM_SYSTEM "linux"
 #else
 #define PLATFORM_ASSET "BlackArrowOnline-update.zip"
+#define PLATFORM_SYSTEM "windows"
 #endif
 
 #define LAUNCHER_NAME "Black Arrow Online.exe"
@@ -89,11 +95,16 @@ using json = nlohmann::json;
  */
 #define FIRST_BUILD_WITH_SURROUND 24
 
+/*
+ * Build numbers in this file are build-number.hh numbers (26.1 is 2601); the
+ * FIRST_BUILD_ ones above are whole builds.
+ */
+
 /* Whether installing a build first needs the Xbox's audio back on Stereo */
 static bool NeedsStereoFor(int build)
 {
     uint32_t now, booted;
-    return build < FIRST_BUILD_WITH_SURROUND &&
+    return BuildWhole(build) < FIRST_BUILD_WITH_SURROUND &&
            xbox_audio_setting_get(&now, &booted) &&
            xbox_audio_setting_is_dolby(now);
 }
@@ -102,7 +113,7 @@ static bool NeedsStereoFor(int build)
 static bool HoldsNewest(int build, int local, int newest)
 {
     return local > 0 && build < local && newest > build &&
-           build >= FIRST_BUILD_THAT_INSTALLS;
+           BuildWhole(build) >= FIRST_BUILD_THAT_INSTALLS;
 }
 
 /* Seconds after starting before looking for a newer build */
@@ -159,7 +170,7 @@ static const LocalVersion &Installed()
         gchar *text = NULL;
         if (g_file_get_contents(path, &text, NULL, NULL)) {
             std::string t(text);
-            v.build = atoi(Field(t, "build").c_str());
+            v.build = BuildFromFields(Field(t, "build"), Field(t, "sub"));
             v.xemu = Field(t, "xemu");
             v.date = Field(t, "date");
             v.commit = Field(t, "commit").substr(0, 10);
@@ -183,7 +194,7 @@ int SkippedBuild()
     gchar *text = NULL;
     int build = 0;
     if (g_file_get_contents(path, &text, NULL, NULL)) {
-        build = atoi(text);
+        build = BuildFromText(text);
         g_free(text);
     }
     g_free(path);
@@ -191,11 +202,12 @@ int SkippedBuild()
 }
 
 // After rolling back, the build left behind is not offered at every start;
-// the next newer one is. Every launcher since build 5 reads this file.
+// the next newer one is. Every launcher since build 5 reads this file (as a
+// whole number: a launcher before 26 does not hold back "26.1")
 static void SkipBuild(int build)
 {
     gchar *path = SkipFile();
-    gchar *text = g_strdup_printf("%d", build);
+    gchar *text = g_strdup(BuildText(build).c_str());
     if (!g_file_set_contents(path, text, -1, NULL)) {
         fprintf(stderr, "versions: could not write %s\n", path);
     }
@@ -263,13 +275,13 @@ void VersionsWindow::AutoCheck()
     // is in (or could not be had)
     static bool tested;
     const char *test = g_getenv("XEMU_TEST_INSTALL_BUILD");
-    if (m_auto_checked && !tested && test && atoi(test) > 0) {
+    if (m_auto_checked && !tested && test && BuildFromText(test) > 0) {
         g_mutex_lock(&m_lock);
         bool waiting = m_state == LOADING;
         g_mutex_unlock(&m_lock);
         if (!waiting) {
             tested = true;
-            Install(atoi(test));
+            Install(BuildFromText(test));
             if (!m_install_error.empty()) {
                 fprintf(stderr, "versions: %s\n", m_install_error.c_str());
             }
@@ -280,7 +292,7 @@ void VersionsWindow::AutoCheck()
         return;
     }
     m_auto_checked = true;
-    if (!UpdateChecksOff() || (test && atoi(test) > 0)) {
+    if (!UpdateChecksOff() || (test && BuildFromText(test) > 0)) {
         Load("start");
     }
 }
@@ -317,7 +329,9 @@ gpointer VersionsWindow::LoadThread(gpointer opaque)
     VersionsWindow *self = (VersionsWindow *)opaque;
     GByteArray *data = g_byte_array_new();
     Error *err = NULL;
-    int code = http_get(RELEASES_API, data, NULL, &err);
+    // XEMU_TEST_RELEASES_API points it at a test server's list
+    const char *api = g_getenv("XEMU_TEST_RELEASES_API");
+    int code = http_get(api && *api ? api : RELEASES_API, data, NULL, &err);
     std::vector<ReleaseBuild> builds;
     std::string error;
 
@@ -338,8 +352,8 @@ gpointer VersionsWindow::LoadThread(gpointer opaque)
                     tag.rfind("build-", 0) != 0) {
                     continue;
                 }
-                int build = atoi(tag.c_str() + 6);
-                if (build <= 0 || tag != "build-" + std::to_string(build)) {
+                int build = BuildFromText(tag.substr(6));
+                if (build <= 0 || tag != BuildTag(build)) {
                     continue;
                 }
                 bool has_asset = false;
@@ -361,6 +375,13 @@ gpointer VersionsWindow::LoadThread(gpointer opaque)
                                        ? r["body"].get<std::string>()
                                        : "";
                 ParseNotes(body, b);
+                // A sub build for other systems has this system's files of
+                // the build before it
+                if (build % BUILD_SUBS && !b.systems.empty() &&
+                    (" " + b.systems + " ").find(" " PLATFORM_SYSTEM " ") ==
+                        std::string::npos) {
+                    continue;
+                }
                 builds.push_back(b);
             }
             std::sort(builds.begin(), builds.end(),
@@ -379,8 +400,13 @@ gpointer VersionsWindow::LoadThread(gpointer opaque)
         error_free(err);
     }
 
-    fprintf(stderr, "versions: %d builds on the releases page%s%s\n",
-            (int)builds.size(), error.empty() ? "" : ": ", error.c_str());
+    std::string listed;
+    for (const ReleaseBuild &b : builds) {
+        listed += (listed.empty() ? " (" : " ") + BuildText(b.build);
+    }
+    fprintf(stderr, "versions: %d builds on the releases page%s%s%s\n",
+            (int)builds.size(), listed.empty() ? "" : (listed + ")").c_str(),
+            error.empty() ? "" : ": ", error.c_str());
     g_mutex_lock(&self->m_lock);
     if (error.empty()) {
         self->m_builds = builds;
@@ -443,6 +469,17 @@ static void ParseNotes(const std::string &body, ReleaseBuild &b)
             continue;
         }
         line = line.substr(first);
+        if (line.rfind("<!-- systems:", 0) == 0) {
+            size_t close = line.find("-->");
+            b.systems = line.substr(13, close == std::string::npos
+                                            ? std::string::npos
+                                            : close - 13);
+            while (!b.systems.empty() && b.systems.back() == ' ') {
+                b.systems.pop_back();
+            }
+            b.systems.erase(0, b.systems.find_first_not_of(' '));
+            continue;
+        }
 
         if (line[0] == '#') {
             std::string heading = PlainText(line.substr(
@@ -495,12 +532,13 @@ void VersionsWindow::Install(int build)
         g_config.audio.channels = CONFIG_AUDIO_CHANNELS_STEREO;
         xbox_audio_setting_set(XBOX_AUDIO_STEREO);
         fprintf(stderr, "versions: Xbox audio set back to Stereo before "
-                "installing build %d\n", build);
+                "installing build %s\n", BuildText(build).c_str());
     }
     if (HoldsNewest(build, local, newest)) {
         SkipBuild(newest);
-        fprintf(stderr, "versions: rolling back to build %d, build %d is not "
-                "offered at start any more\n", build, newest);
+        fprintf(stderr, "versions: rolling back to build %s, build %s is not "
+                "offered at start any more\n", BuildText(build).c_str(),
+                BuildText(newest).c_str());
     }
 #if defined(_WIN32)
     // The launcher next to the system folder installs it once xemu closed
@@ -523,8 +561,8 @@ void VersionsWindow::Install(int build)
     // CreateProcess, not g_spawn_async: on Windows GLib needs
     // gspawn-win64-helper.exe for that, which the package does not have, so
     // the launcher never started and going back did nothing
-    gchar *cmd = g_strdup_printf("\"%s\" --install-build %d --wait-pid %lu",
-                                 launcher, build,
+    gchar *cmd = g_strdup_printf("\"%s\" --install-build %s --wait-pid %lu",
+                                 launcher, BuildText(build).c_str(),
                                  (unsigned long)GetCurrentProcessId());
     gunichar2 *wcmd = g_utf8_to_utf16(cmd, -1, NULL, NULL, NULL);
     gunichar2 *wroot = g_utf8_to_utf16(root, -1, NULL, NULL, NULL);
@@ -557,7 +595,8 @@ void VersionsWindow::Install(int build)
     g_free(launcher);
     g_free(root);
     fprintf(stderr, "versions: launcher started (pid %lu), closing for it to "
-            "install build %d\n", (unsigned long)pi.dwProcessId, build);
+            "install build %s\n", (unsigned long)pi.dwProcessId,
+            BuildText(build).c_str());
     m_installing = true;
     ActionShutdown();
 #elif defined(__APPLE__) || defined(__linux__)
@@ -596,31 +635,31 @@ void VersionsWindow::DrawConfirm()
     bool rollback = local > 0 && build < local;
     int newest = NewestBuild();
     if (rollback) {
-        ImGui::Text("Roll back to build %d?", build);
+        ImGui::Text("Roll back to build %s?", BuildText(build).c_str());
     } else if (local > 0 && build == local) {
-        ImGui::Text("Install build %d again?", build);
+        ImGui::Text("Install build %s again?", BuildText(build).c_str());
     } else {
-        ImGui::Text("Update to build %d?", build);
+        ImGui::Text("Update to build %s?", BuildText(build).c_str());
     }
     ImGui::PopFont();
     ImGui::Spacing();
-    ImGui::TextWrapped("Black Arrow Online closes, installs build %d and "
+    ImGui::TextWrapped("Black Arrow Online closes, installs build %s and "
                        "opens again by itself. Your console, Xbox Live "
                        "sign-in, saves, settings and games are kept.",
-                       build);
+                       BuildText(build).c_str());
     if (HoldsNewest(build, local, newest)) {
         ImGui::Spacing();
-        ImGui::TextWrapped("Build %d is then not offered when you start. You "
-                           "are asked again when a build newer than %d is "
+        ImGui::TextWrapped("Build %s is then not offered when you start. You "
+                           "are asked again when a build newer than %s is "
                            "out, and can update from this window any time.",
-                           newest, newest);
+                           BuildText(newest).c_str(), BuildText(newest).c_str());
     } else if (rollback && newest > build &&
-               build >= FIRST_BUILD_WITH_VERSIONS) {
+               BuildWhole(build) >= FIRST_BUILD_WITH_VERSIONS) {
         ImGui::Spacing();
-        ImGui::TextWrapped("Build %d cannot install builds from this window. "
+        ImGui::TextWrapped("Build %s cannot install builds from this window. "
                            "To come back, choose Update now when the "
-                           "launcher offers build %d at the start.",
-                           build, newest);
+                           "launcher offers build %s at the start.",
+                           BuildText(build).c_str(), BuildText(newest).c_str());
     }
     if (NeedsStereoFor(build)) {
         ImGui::Spacing();
@@ -633,9 +672,9 @@ void VersionsWindow::DrawConfirm()
         ImGui::TextColored(problem_color, "A game is running: anything not "
                                           "saved in it is lost.");
     }
-    if (build < FIRST_BUILD_WITH_VERSIONS) {
-        ImGui::TextColored(update_color, "Build %d does not have this window "
-                           "yet.", build);
+    if (BuildWhole(build) < FIRST_BUILD_WITH_VERSIONS) {
+        ImGui::TextColored(update_color, "Build %s does not have this window "
+                           "yet.", BuildText(build).c_str());
 #if defined(__APPLE__) || defined(__linux__)
         ImGui::TextWrapped("To come back to a newer build, choose Update now "
                            "when the app offers it after starting.");
@@ -696,7 +735,7 @@ void VersionsWindow::Draw()
     if (!local.label.empty()) {
         ImGui::Text("%s", local.label.c_str());
     } else if (local.build > 0) {
-        ImGui::Text("Build %d", local.build);
+        ImGui::Text("Build %s", BuildText(local.build).c_str());
     } else {
         ImGui::Text("Test build");
     }
@@ -705,10 +744,11 @@ void VersionsWindow::Draw()
     bool held = newest > local.build && local.build > 0 &&
                 SkippedBuild() == newest;
     if (held) {
-        ImGui::TextDisabled("  Rolled back: build %d is not offered at start",
-                            newest);
+        ImGui::TextDisabled("  Rolled back: build %s is not offered at start",
+                            BuildText(newest).c_str());
     } else if (newest > local.build && local.build > 0) {
-        ImGui::TextColored(update_color, "  Build %d is out", newest);
+        ImGui::TextColored(update_color, "  Build %s is out",
+                           BuildText(newest).c_str());
     } else if (newest > 0 && newest == local.build) {
         ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.45f, 1.0f), "  Up to date");
     }
@@ -768,7 +808,8 @@ void VersionsWindow::Draw()
                                   ImGui::GetStyleColorVec4(
                                       ImGuiCol_TextDisabled));
         }
-        bool open = ImGui::TreeNodeEx("##build", flags, "Build %d", b.build);
+        bool open = ImGui::TreeNodeEx("##build", flags, "Build %s",
+                                      BuildText(b.build).c_str());
         if (broken) {
             ImGui::PopStyleColor();
         }
@@ -893,7 +934,8 @@ void DrawBuildBadge()
     if (!local.label.empty()) {
         snprintf(build_part, sizeof(build_part), "%s", local.label.c_str());
     } else if (local.build > 0) {
-        snprintf(build_part, sizeof(build_part), "Build %d", local.build);
+        snprintf(build_part, sizeof(build_part), "Build %s",
+                 BuildText(local.build).c_str());
     } else {
         snprintf(build_part, sizeof(build_part), "Test Build");
     }
@@ -988,7 +1030,8 @@ void DrawBuildBadge()
         if (!local.label.empty()) {
             ImGui::Text("Black Arrow Online %s", local.label.c_str());
         } else if (local.build > 0) {
-            ImGui::Text("Black Arrow Online build %d", local.build);
+            ImGui::Text("Black Arrow Online build %s",
+                        BuildText(local.build).c_str());
         } else {
             ImGui::Text("Black Arrow Online test build");
         }
@@ -999,9 +1042,11 @@ void DrawBuildBadge()
             ImGui::TextDisabled("Built %s", local.date.c_str());
         }
         if (update) {
-            ImGui::TextColored(update_color, "Build %d is out", newest);
+            ImGui::TextColored(update_color, "Build %s is out",
+                               BuildText(newest).c_str());
         } else if (skipped && newest > local.build && local.build > 0) {
-            ImGui::TextDisabled("Rolled back from build %d", newest);
+            ImGui::TextDisabled("Rolled back from build %s",
+                                BuildText(newest).c_str());
         }
         ImGui::TextDisabled("Click for versions and updates");
         ImGui::EndTooltip();

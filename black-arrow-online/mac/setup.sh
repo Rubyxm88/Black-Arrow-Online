@@ -318,6 +318,9 @@ if [ -n "$update_pid" ]; then
     # The app says "Updated to build N" once, then this folder (unpacked by
     # the app in a temporary folder) goes
     build="$({ grep -m 1 '^build=' "$here/version.txt" 2>/dev/null || true; } | cut -d= -f2-)"
+    # A sub build: 26.1 (build=26, sub=1)
+    sub="$({ grep -m 1 '^sub=' "$here/version.txt" 2>/dev/null || true; } | cut -d= -f2- | tr -d '\r')"
+    build="$(printf '%s' "$build" | tr -d '\r')${sub:+.$sub}"
     printf '%s\n' "${build:-0}" > "$system/update-done.txt"
     echo "Done: build ${build:-?} installed. Opening it."
     trap - ERR

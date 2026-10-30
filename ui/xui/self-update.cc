@@ -24,6 +24,7 @@
 #include "common.hh"
 #include "self-update.hh"
 #include "versions.hh"
+#include "build-number.hh"
 #include "actions.hh"
 #include "notifications.hh"
 #include "viewport-manager.hh"
@@ -111,10 +112,12 @@ static std::string ReadText(const std::string &path)
     return out;
 }
 
-// The installed build; 0 for a beta or test build, which any build replaces
+// The installed build (build-number.hh); 0 for a beta or test build, which
+// any build replaces
 static int LocalBuild()
 {
-    return atoi(Field(ReadText(ConsoleFile("version.txt")), "build").c_str());
+    std::string text = ReadText(ConsoleFile("version.txt"));
+    return BuildFromFields(Field(text, "build"), Field(text, "sub"));
 }
 
 static void PushGreenButtons()
@@ -291,7 +294,7 @@ gpointer SelfUpdateWindow::CheckThread(gpointer opaque)
     std::string text((const char *)data->data, data->len);
     g_byte_array_free(data, TRUE);
     int local = LocalBuild();
-    int build = atoi(Field(text, "build").c_str());
+    int build = BuildFromFields(Field(text, "build"), Field(text, "sub"));
     std::string sha256 = Field(text, "sha256");
 
     g_mutex_lock(&self->m_lock);
@@ -321,8 +324,9 @@ gpointer SelfUpdateWindow::CheckThread(gpointer opaque)
         self->m_state = UP_TO_DATE;
         self->m_build = build;
     }
-    fprintf(stderr, "update: installed build %d, newest %d (%s)\n", local,
-            build, self->m_error.empty() ? "ok" : self->m_error.c_str());
+    fprintf(stderr, "update: installed build %s, newest %s (%s)\n",
+            BuildText(local).c_str(), BuildText(build).c_str(),
+            self->m_error.empty() ? "ok" : self->m_error.c_str());
     g_mutex_unlock(&self->m_lock);
     if (err) {
         error_free(err);
@@ -358,8 +362,8 @@ gpointer SelfUpdateWindow::BuildInfoThread(gpointer opaque)
 
     GByteArray *data = g_byte_array_new();
     Error *err = NULL;
-    char *url = g_strdup_printf("%s/download/build-%d/" INFO_NAME,
-                                Releases().c_str(), build);
+    char *url = g_strdup_printf("%s/download/%s/" INFO_NAME,
+                                Releases().c_str(), BuildTag(build).c_str());
     int code = http_get(url, data, NULL, &err);
     g_free(url);
     std::string text((const char *)data->data, data->len);
@@ -371,17 +375,18 @@ gpointer SelfUpdateWindow::BuildInfoThread(gpointer opaque)
     bool ok = false;
     if (code == 404) {
         self->m_state = CHECK_FAILED;
-        self->m_error = "Build " + std::to_string(build) +
+        self->m_error = "Build " + BuildText(build) +
                         " has no " PLATFORM " version.";
     } else if (code != 200) {
         self->m_state = CHECK_FAILED;
         self->m_error = err ? error_get_pretty(err)
                             : "GitHub answered " + std::to_string(code) + ".";
-    } else if (atoi(Field(text, "build").c_str()) != build ||
+    } else if (BuildFromFields(Field(text, "build"), Field(text, "sub")) !=
+                   build ||
                sha256.size() != 64) {
         self->m_state = CHECK_FAILED;
         self->m_error = "Could not read " INFO_NAME " of build " +
-                        std::to_string(build) + ".";
+                        BuildText(build) + ".";
     } else {
         self->m_state = AVAILABLE;
         self->m_sha256 = sha256;
@@ -392,7 +397,7 @@ gpointer SelfUpdateWindow::BuildInfoThread(gpointer opaque)
     if (err) {
         error_free(err);
     }
-    fprintf(stderr, "update: build %d chosen: %s\n", build,
+    fprintf(stderr, "update: build %s chosen: %s\n", BuildText(build).c_str(),
             ok ? "downloading" : "not available");
     if (ok) {
         self->Download();
@@ -444,8 +449,8 @@ gpointer SelfUpdateWindow::DownloadThread(gpointer opaque)
     info.userptr = self;
     // The build named in its version file, not latest: a newer build
     // published meanwhile would not match the SHA-256
-    char *url = g_strdup_printf("%s/download/build-%d/" ZIP_NAME,
-                                Releases().c_str(), build);
+    char *url = g_strdup_printf("%s/download/%s/" ZIP_NAME,
+                                Releases().c_str(), BuildTag(build).c_str());
     int code = http_get(url, data, &info, &err);
     g_free(url);
 
@@ -528,7 +533,8 @@ gpointer SelfUpdateWindow::DownloadThread(gpointer opaque)
     }
     g_free(dir);
 
-    fprintf(stderr, "update: download of build %d: %s\n", build,
+    fprintf(stderr, "update: download of build %s: %s\n",
+            BuildText(build).c_str(),
             cancelled ? "cancelled" : error.empty() ? "ready" : error.c_str());
     g_mutex_lock(&self->m_lock);
     if (cancelled) {
@@ -636,7 +642,8 @@ void SelfUpdateWindow::Restart()
         m_restarting = false;
         return;
     }
-    fprintf(stderr, "update: closing to install build %d\n", m_build);
+    fprintf(stderr, "update: closing to install build %s\n",
+            BuildText(m_build).c_str());
     ActionShutdown();
 }
 
@@ -659,10 +666,11 @@ void SelfUpdateWindow::ShowLastResult()
         m_auto_checked = true;
     }
     if (g_file_test(done_path.c_str(), G_FILE_TEST_EXISTS)) {
-        int build = atoi(ReadText(done_path).c_str());
+        int build = BuildFromText(ReadText(done_path));
         g_unlink(done_path.c_str());
         if (build > 0) {
-            char *msg = g_strdup_printf("Updated to build %d", build);
+            char *msg = g_strdup_printf("Updated to build %s",
+                                        BuildText(build).c_str());
             xemu_queue_notification(msg);
             g_free(msg);
         }
@@ -688,7 +696,8 @@ void SelfUpdateWindow::DrawContents(State state)
         break;
     case UP_TO_DATE:
         if (local > 0) {
-            ImGui::Text("You have the newest build (build %d).", local);
+            ImGui::Text("You have the newest build (build %s).",
+                        BuildText(local).c_str());
         } else {
             ImGui::Text("You have the newest build.");
         }
@@ -699,7 +708,8 @@ void SelfUpdateWindow::DrawContents(State state)
         break;
     case AVAILABLE:
     case DOWNLOAD_FAILED:
-        ImGui::Text("Black Arrow Online build %d is ready", build);
+        ImGui::Text("Black Arrow Online build %s is ready",
+                    BuildText(build).c_str());
         if (!notes.empty()) {
             ImGui::TextDisabled("%s", notes.c_str());
         }
@@ -711,7 +721,7 @@ void SelfUpdateWindow::DrawContents(State state)
                            "sign-in, saves, settings and games are kept.");
         break;
     case DOWNLOADING: {
-        ImGui::Text("Downloading build %d", build);
+        ImGui::Text("Downloading build %s", BuildText(build).c_str());
         char label[48];
         snprintf(label, sizeof(label), "%.0f / %.0f MB", dlnow / 1048576.0,
                  dltotal / 1048576.0);
@@ -722,8 +732,8 @@ void SelfUpdateWindow::DrawContents(State state)
         break;
     }
     case READY:
-        ImGui::Text("Closing to install build %d. It opens again by itself.",
-                    build);
+        ImGui::Text("Closing to install build %s. It opens again by itself.",
+                    BuildText(build).c_str());
         break;
     case INSTALL_FAILED:
         ImGui::TextColored(problem_color,

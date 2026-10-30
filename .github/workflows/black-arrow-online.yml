@@ -25,6 +25,16 @@ name: Black Arrow Online release
 #
 # A push to mac-build or linux-build runs everything without publishing: the
 # would-be release files are kept as downloads on the run's page (Artifacts).
+#
+# Sub builds: a head commit whose message has a line "Release-Sub: mac" (or
+# "mac linux", "windows"...) makes a sub build of the newest release, such as
+# 26.1 after 26, that builds only those systems. Its version files say
+# build=26 and sub=1 (launchers and apps before 26 read build=26 only), its
+# tag is build-26.1, and it is marked latest, so it carries every system's
+# files: the systems it leaves out get the newest release's files, copied
+# unchanged, and see nothing new. Its notes say which systems it is for in a
+# "<!-- systems: mac -->" line, which the Versions window reads. The next push
+# without that line makes the next whole build (27).
 
 on:
   push:
@@ -63,6 +73,10 @@ jobs:
       publish: ${{ steps.plan.outputs.publish }}
       draft: ${{ steps.plan.outputs.draft }}
       build: ${{ steps.plan.outputs.build }}
+      sub: ${{ steps.plan.outputs.sub }}
+      label: ${{ steps.plan.outputs.label }}
+      systems: ${{ steps.plan.outputs.systems }}
+      prev_tag: ${{ steps.plan.outputs.prev_tag }}
       tag: ${{ steps.plan.outputs.tag }}
       version: ${{ steps.merge.outputs.version }}
       upstream: ${{ steps.merge.outputs.upstream }}
@@ -193,6 +207,10 @@ jobs:
         set -euo pipefail
         trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         mkdir -p prev meta
+        {
+          echo "sub=0"
+          echo "systems=windows mac linux"
+        } >> "$GITHUB_OUTPUT"
         if [ "$MODE" = none ]; then
           echo "release=false" >> "$GITHUB_OUTPUT"
           exit 0
@@ -207,18 +225,50 @@ jobs:
             echo "publish=false"
             echo "draft=true"
             echo "build="
+            echo "label="
             echo "tag=xemu-$UPSTREAM-test"
           } >> "$GITHUB_OUTPUT"
           exit 0
         fi
         echo "draft=false" >> "$GITHUB_OUTPUT"
-        gh release download --pattern version.txt --dir prev 2>/dev/null || true
+        # The newest release; its tag numbers this one (build-26, build-26.1)
+        prev_tag=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+        gh release download ${prev_tag:+"$prev_tag"} --pattern version.txt --dir prev 2>/dev/null || true
         field() {
           { grep -m 1 "^$1=" prev/version.txt 2>/dev/null || true; } | cut -d= -f2- | tr -d '\r'
         }
         prev_build=$(field build)
         prev_commit=$(field commit)
         prev_upstream=$(field upstream)
+        prev_sub=0
+        # A sub build's version.txt may be the build before it, copied: its
+        # number and commit come from the tag
+        case "$prev_tag" in
+          build-*.*)
+            prev_build=${prev_tag#build-}
+            prev_sub=${prev_build#*.}
+            prev_build=${prev_build%%.*}
+            prev_commit=$(git rev-list -n 1 "$prev_tag" 2>/dev/null || echo "$prev_commit")
+            ;;
+        esac
+        echo "prev_tag=$prev_tag" >> "$GITHUB_OUTPUT"
+
+        # "Release-Sub: mac linux" in the head commit's message: a sub build
+        # for those systems
+        systems=$(git log -1 --format=%B "$COMMIT" |
+                  sed -n 's/^Release-Sub:[[:space:]]*//Ip' | head -n 1 |
+                  tr 'A-Z,' 'a-z ' | xargs || true)
+        for s in $systems; do
+          case "$s" in
+            windows|mac|linux) ;;
+            *) echo "::error title=Unknown system in Release-Sub::$s (use windows, mac or linux)"
+               exit 1 ;;
+          esac
+        done
+        if [ -n "$systems" ] && [ -z "$prev_build" ]; then
+          echo "::error title=No build to make a sub build of::Release-Sub needs a published build first"
+          exit 1
+        fi
 
         if [ "$prev_commit" = "$COMMIT" ] && [ "$prev_upstream" = "$UPSTREAM" ] &&
            [ "$FORCE" != "true" ]; then
@@ -247,9 +297,24 @@ jobs:
         head -n 1 meta/changes.md | cut -c 3- > meta/notes.txt
 
         echo "release=true" >> "$GITHUB_OUTPUT"
-        build=$(( ${prev_build:-0} + 1 ))
-        echo "build=$build" >> "$GITHUB_OUTPUT"
-        echo "tag=build-$build" >> "$GITHUB_OUTPUT"
+        if [ -n "$systems" ]; then
+          build=$prev_build
+          sub=$(( prev_sub + 1 ))
+          label="$build.$sub"
+          echo "Sub build $label for: $systems (the rest copied from $prev_tag)"
+        else
+          build=$(( ${prev_build:-0} + 1 ))
+          sub=0
+          label=$build
+          systems="windows mac linux"
+        fi
+        {
+          echo "build=$build"
+          echo "sub=$sub"
+          echo "label=$label"
+          echo "systems=$systems"
+          echo "tag=build-$label"
+        } >> "$GITHUB_OUTPUT"
         # Only main publishes; other branches are test runs
         if [ "$GITHUB_REF" = refs/heads/main ]; then
           echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -289,7 +354,7 @@ jobs:
   build:
     name: Build xemu.exe
     needs: prepare
-    if: needs.prepare.outputs.release == 'true'
+    if: needs.prepare.outputs.release == 'true' && contains(needs.prepare.outputs.systems, 'windows')
     runs-on: ubuntu-latest
     container:
       image: ${{ needs.prepare.outputs.image }}
@@ -338,12 +403,18 @@ jobs:
   release:
     name: Package and release
     needs: [prepare, build]
+    # Also when a sub build leaves Windows out (no xemu.exe built)
+    if: always() && needs.prepare.outputs.release == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
       # Not the upstream remote, which gh would prefer
       GH_REPO: ${{ github.repository }}
       BUILD: ${{ needs.prepare.outputs.build }}
+      SUB: ${{ needs.prepare.outputs.sub }}
+      LABEL: ${{ needs.prepare.outputs.label }}
+      SYSTEMS: ${{ needs.prepare.outputs.systems }}
+      PREV_TAG: ${{ needs.prepare.outputs.prev_tag }}
       TAG: ${{ needs.prepare.outputs.tag }}
       VERSION: ${{ needs.prepare.outputs.version }}
       UPSTREAM: ${{ needs.prepare.outputs.upstream }}
@@ -357,6 +428,7 @@ jobs:
           black-arrow-online
           ui/icons
     - name: Download xemu.exe
+      if: contains(needs.prepare.outputs.systems, 'windows')
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
       with:
         name: xemu
@@ -372,6 +444,7 @@ jobs:
         name: meta
         path: meta
     - name: Build the launcher
+      if: contains(needs.prepare.outputs.systems, 'windows')
       shell: pwsh
       run: |
         & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
@@ -381,6 +454,7 @@ jobs:
             black-arrow-online\package\Launcher.cs
         if ($LASTEXITCODE) { exit 1 }
     - name: Package
+      if: contains(needs.prepare.outputs.systems, 'windows')
       shell: bash
       run: |
         set -euo pipefail
@@ -393,9 +467,23 @@ jobs:
         printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
             "$BUILD" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
             > pkg/system/version.txt
+        if [ "${SUB:-0}" != 0 ]; then
+          echo "sub=$SUB" >> pkg/system/version.txt
+        fi
         (cd pkg && 7z a -tzip -bso0 ../BlackArrowOnline-update.zip .)
         cp pkg/system/version.txt version.txt
         echo "sha256=$(sha256sum BlackArrowOnline-update.zip | cut -d' ' -f1)" >> version.txt
+        mv src/*.tar.zst "BlackArrowOnline-source-$TAG.tar.zst"
+        cat version.txt
+    # A sub build without Windows: the newest release's Windows files, so
+    # Windows players see no new build
+    - name: Copy the Windows files of the build before
+      if: "!contains(needs.prepare.outputs.systems, 'windows')"
+      shell: bash
+      run: |
+        set -euo pipefail
+        trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
+        gh release download "$PREV_TAG" --pattern version.txt --pattern BlackArrowOnline-update.zip
         mv src/*.tar.zst "BlackArrowOnline-source-$TAG.tar.zst"
         cat version.txt
     - name: Write the draft's notes
@@ -417,8 +505,13 @@ jobs:
         trap 'echo "::error::line $LINENO: $BASH_COMMAND"' ERR
         images="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${COMMIT}/black-arrow-online/docs/images"
         {
-          echo "Build $BUILD of Black Arrow Online, based on xemu ${UPSTREAM#v} (source version $VERSION)."
+          echo "Build $LABEL of Black Arrow Online, based on xemu ${UPSTREAM#v} (source version $VERSION)."
           echo
+          if [ "${SUB:-0}" != 0 ]; then
+            echo "<!-- systems: $SYSTEMS -->"
+            echo "A sub build for $(echo "$SYSTEMS" | sed 's/windows/Windows/; s/mac/Mac/; s/linux/Linux/; s/ /, /g') only. Other systems keep the files of ${PREV_TAG#build-} (build ${PREV_TAG#build-}) and are not offered anything."
+            echo
+          fi
           if [ -s meta/changes.md ]; then
             echo "### What changed"
             echo
@@ -458,7 +551,7 @@ jobs:
       shell: bash
       run: |
         if ! out=$(gh release create "$TAG" --target "$COMMIT" --latest \
-            --title "Build $BUILD (xemu ${UPSTREAM#v})" --notes-file notes.md \
+            --title "Build $LABEL (xemu ${UPSTREAM#v})" --notes-file notes.md \
             BlackArrowOnline-update.zip version.txt \
             "BlackArrowOnline-source-$TAG.tar.zst" 2>&1); then
           echo "::error::$(echo "$out" | tr '\n' ' ')"
@@ -486,7 +579,7 @@ jobs:
   mac:
     name: Build for Mac (${{ matrix.arch }})
     needs: prepare
-    if: needs.prepare.outputs.release == 'true'
+    if: needs.prepare.outputs.release == 'true' && contains(needs.prepare.outputs.systems, 'mac')
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -601,6 +694,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD: ${{ needs.prepare.outputs.build }}
+      SUB: ${{ needs.prepare.outputs.sub }}
       PUBLISH: ${{ needs.prepare.outputs.publish }}
       VERSION: ${{ needs.prepare.outputs.version }}
       UPSTREAM: ${{ needs.prepare.outputs.upstream }}
@@ -645,6 +739,9 @@ jobs:
         printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
             "$build" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
             > "$pkg/version.txt"
+        if [ -n "$build" ] && [ "${SUB:-0}" != 0 ]; then
+          echo "sub=$SUB" >> "$pkg/version.txt"
+        fi
         ls -la "$pkg"
         # zip keeps the app's links and executable bits, which the artifact
         # zip around it would not
@@ -664,18 +761,25 @@ jobs:
   mac-publish:
     name: Add the Mac app to the release
     needs: [prepare, release, mac-package]
-    if: needs.prepare.outputs.publish == 'true' || needs.prepare.outputs.draft == 'true'
+    # A sub build without the Mac copies the newest release's Mac files
+    if: always() && needs.release.result == 'success' && (needs.mac-package.result == 'success' || !contains(needs.prepare.outputs.systems, 'mac')) && (needs.prepare.outputs.publish == 'true' || needs.prepare.outputs.draft == 'true')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       # Not the upstream remote, which gh would prefer
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.prepare.outputs.tag }}
+      PREV_TAG: ${{ needs.prepare.outputs.prev_tag }}
+      COPIED: ${{ !contains(needs.prepare.outputs.systems, 'mac') }}
     steps:
     - name: Download the Mac app
+      if: contains(needs.prepare.outputs.systems, 'mac')
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
       with:
         name: BlackArrowOnline-mac
+    - name: Copy the Mac files of the build before
+      if: "!contains(needs.prepare.outputs.systems, 'mac')"
+      run: gh release download "$PREV_TAG" --pattern mac-version.txt --pattern BlackArrowOnline-mac-update.zip
     - name: Add the Mac section to the release notes
       if: needs.prepare.outputs.publish == 'true'
       run: |
@@ -686,6 +790,10 @@ jobs:
           echo
           echo "### Mac"
           echo
+          if [ "$COPIED" = true ]; then
+            echo "Unchanged: the Mac files of build ${PREV_TAG#build-}, so Macs are not offered anything new."
+            echo
+          fi
           echo "For Apple Silicon Macs with macOS 14 or newer and Intel Macs with macOS 11 or newer."
           echo
           echo "**Already playing on a Mac?** Black Arrow Online offers this build by itself a few seconds after it starts: click **Update now**. It closes, installs the build and opens again. Your console, Xbox Live sign-in, saves, settings and games are not touched."
@@ -718,7 +826,7 @@ jobs:
   linux:
     name: Build for Linux
     needs: prepare
-    if: needs.prepare.outputs.release == 'true'
+    if: needs.prepare.outputs.release == 'true' && contains(needs.prepare.outputs.systems, 'linux')
     runs-on: ubuntu-22.04
     env:
       CCACHE_DIR: /tmp/xemu-ccache
@@ -821,6 +929,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD: ${{ needs.prepare.outputs.build }}
+      SUB: ${{ needs.prepare.outputs.sub }}
       PUBLISH: ${{ needs.prepare.outputs.publish }}
       VERSION: ${{ needs.prepare.outputs.version }}
       UPSTREAM: ${{ needs.prepare.outputs.upstream }}
@@ -863,6 +972,9 @@ jobs:
         printf 'build=%s\nxemu=%s\nversion=%s\ndate=%s\ncommit=%s\nupstream=%s\nnotes=%s\n' \
             "$build" "${UPSTREAM#v}" "$VERSION" "$(date -u +%Y-%m-%d)" "$COMMIT" "$UPSTREAM" "$notes" \
             > "$pkg/version.txt"
+        if [ -n "$build" ] && [ "${SUB:-0}" != 0 ]; then
+          echo "sub=$SUB" >> "$pkg/version.txt"
+        fi
         ls -la "$pkg"
         # tar keeps the app's links and executable bits, which the artifact
         # zip around it would not
@@ -884,18 +996,25 @@ jobs:
     needs: [prepare, release, linux-package, mac-publish]
     # After the Mac app (or its failure), so the two never edit the notes at
     # once
-    if: always() && needs.release.result == 'success' && needs.linux-package.result == 'success' && (needs.prepare.outputs.publish == 'true' || needs.prepare.outputs.draft == 'true')
+    # A sub build without Linux copies the newest release's Linux files
+    if: always() && needs.release.result == 'success' && (needs.linux-package.result == 'success' || !contains(needs.prepare.outputs.systems, 'linux')) && (needs.prepare.outputs.publish == 'true' || needs.prepare.outputs.draft == 'true')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       # Not the upstream remote, which gh would prefer
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.prepare.outputs.tag }}
+      PREV_TAG: ${{ needs.prepare.outputs.prev_tag }}
+      COPIED: ${{ !contains(needs.prepare.outputs.systems, 'linux') }}
     steps:
     - name: Download the Linux app
+      if: contains(needs.prepare.outputs.systems, 'linux')
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
       with:
         name: BlackArrowOnline-linux
+    - name: Copy the Linux files of the build before
+      if: "!contains(needs.prepare.outputs.systems, 'linux')"
+      run: gh release download "$PREV_TAG" --pattern linux-version.txt --pattern BlackArrowOnline-linux-update.tar.gz
     - name: Add the Linux section to the release notes
       if: needs.prepare.outputs.publish == 'true'
       run: |
@@ -906,6 +1025,10 @@ jobs:
           echo
           echo "### Linux"
           echo
+          if [ "$COPIED" = true ]; then
+            echo "Unchanged: the Linux files of build ${PREV_TAG#build-}, so Linux players are not offered anything new."
+            echo
+          fi
           echo "For 64-bit PCs and the Steam Deck with a Linux from 2022 or later (Ubuntu 22.04, Fedora 36, SteamOS 3...)."
           echo
           echo "**Already playing on Linux?** Black Arrow Online offers this build by itself a few seconds after it starts: click **Update now**. It closes, installs the build and opens again. Your console, Xbox Live sign-in, saves, settings and games are not touched."
