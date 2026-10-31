@@ -49,6 +49,7 @@
 #include "xemu-version.h"
 #include "xemu-os-utils.h"
 #include "xemu-gamecache.h"
+#include "xemu-diag.h"
 
 #include "data/xemu_64x64.png.h"
 
@@ -850,6 +851,7 @@ static void gl_render_frame(struct xemu_console *scon)
         return;
     }
 
+    int64_t present_start_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
     first_frame_step("start");
     SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
     first_frame_step("window ready");
@@ -935,6 +937,7 @@ static void gl_render_frame(struct xemu_console *scon)
     ASSERT_NO_GL_ERROR();
     first_frame_step("shown");
     first_frame_done = true;
+    xemu_diag_present(present_start_us, qemu_clock_get_us(QEMU_CLOCK_REALTIME));
 
     qatomic_set(&rendering, false);
 

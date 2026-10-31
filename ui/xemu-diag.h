@@ -94,6 +94,12 @@ void xemu_diag_frame(int64_t now_us, int64_t gap_us, bool slow,
                      const int64_t *ns, const int64_t *max_ns, const int *gpu,
                      int gpu_n);
 
+/*
+ * From the window, after each picture is put on screen: when drawing it
+ * started and when it was shown
+ */
+void xemu_diag_present(int64_t start_us, int64_t end_us);
+
 const char *xemu_diag_cause_name(XemuDiagCause cause);
 
 /* Seconds since this run wrote a freeze report, or -1 if it has not */

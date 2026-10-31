@@ -48,6 +48,9 @@
 
 #define LOGS_DIR "logs"
 
+/* A picture held this long while game frames kept coming is a stall */
+#define SCREEN_STALL_US 60000
+
 /* The worst frames listed in the summary */
 #define WORST_FRAMES 10
 
@@ -130,9 +133,19 @@ static struct {
     int64_t count[XEMU_PERF__COUNT], ns[XEMU_PERF__COUNT],
             max_ns[XEMU_PERF__COUNT];
     int gpu[NV2A_PROF__COUNT];
+    /* The window: pictures put on screen, how many had a new game frame,
+       the longest a picture stayed up and the longest one took to show */
+    int presents, new_presents;
+    int64_t max_hold, max_present;
 } sec;
 static int64_t last_frame_us;
 static bool frames_seen;
+
+/* Game frames so far, to tell which pictures on screen were new */
+static uint64_t game_flips;
+/* Screen stalls for the summary: count and longest */
+static int screen_stall_count;
+static int64_t screen_stall_max;
 
 /*
  * XEMU_FREEZE_TEST=S: frames from S to S + FREEZE_TEST_SECONDS seconds
@@ -222,6 +235,48 @@ static const char *const perf_names[XEMU_PERF__COUNT] = {
     [XEMU_PERF_CODE_FLUSH] = "code_flush",
     [XEMU_PERF_IO_RECOMPILE] = "io_recompile",
 };
+
+static void add_line(int64_t us, const char *kind, const char *text);
+
+void xemu_diag_present(int64_t start_us, int64_t end_us)
+{
+    static uint64_t shown_flips;
+    static int64_t shown_us;
+
+    if (!xemu_diag_recording()) {
+        shown_us = 0;
+        return;
+    }
+    g_mutex_lock(&lock);
+    uint64_t flips = game_flips;
+    int64_t hold = shown_us ? end_us - shown_us : 0;
+    sec.presents++;
+    sec.max_present = MAX(sec.max_present, end_us - start_us);
+    if (flips == shown_flips) {
+        g_mutex_unlock(&lock);
+        return;
+    }
+    /* A new game frame is on screen. More than one came while the last
+       picture was up: the screen stopped, not the game */
+    uint64_t came = flips - shown_flips;
+    bool stall = shown_us && hold >= SCREEN_STALL_US && came > 1;
+    sec.new_presents++;
+    sec.max_hold = MAX(sec.max_hold, hold);
+    if (stall && log_file) {
+        screen_stall_count++;
+        screen_stall_max = MAX(screen_stall_max, hold);
+    }
+    shown_flips = flips;
+    shown_us = end_us;
+    g_mutex_unlock(&lock);
+    if (stall) {
+        char *text = g_strdup_printf("held_ms=%.1f game_frames=%" PRIu64
+                                     " present_ms=%.1f", hold / 1e3, came,
+                                     (end_us - start_us) / 1e3);
+        add_line(end_us, "SCREEN", text);
+        g_free(text);
+    }
+}
 
 const char *xemu_diag_cause_name(XemuDiagCause cause)
 {
@@ -406,6 +461,9 @@ static const char lines_help[] =
     "ms), GPU counters\n"
     "#   SLOW      a frame of 50 ms or more, with its likely cause, how "
     "busy the emulated CPU was (game_cpu) and the work done during it\n"
+    "#   SCREEN    a picture stayed on screen 60 ms or more while the "
+    "game kept making new ones (held_ms, game frames meanwhile, how long "
+    "the last picture took to draw and show)\n"
     "#   MARK      the player pressed F9\n"
     "#   EVENT     focus, disc, connection check, shader cache, freeze, "
     "other programs using the PC\n";
@@ -550,6 +608,8 @@ static void reset_summary(void)
     memset(slow_ms, 0, sizeof(slow_ms));
     second_count = low_second_count = mark_count = 0;
     worst_count = 0;
+    screen_stall_count = 0;
+    screen_stall_max = 0;
 }
 
 /* With the lock held */
@@ -575,6 +635,9 @@ static void write_summary(void)
                     cause_text[i], slow_count[i], slow_ms[i]);
         }
     }
+    fprintf(log_file, "SUMMARY screen stalls (60 ms or more while the game "
+            "kept going): %d, longest %.0f ms\n", screen_stall_count,
+            screen_stall_max / 1e3);
     fprintf(log_file, "SUMMARY markers: %d\n", mark_count);
     print_code_top(log_file, "code translated", code_translated, true);
     print_code_top(log_file, "code pages written", code_written, false);
@@ -974,6 +1037,7 @@ void xemu_diag_frame(int64_t now, int64_t gap_us, bool slow,
 
     g_mutex_lock(&lock);
     sec.frames++;
+    game_flips++;
     sec.max_gap = MAX(sec.max_gap, gap_us);
     for (int i = 0; i < XEMU_PERF__COUNT; i++) {
         sec.count[i] += count[i];
@@ -1388,10 +1452,13 @@ static void tick(void *opaque)
     /* Paused: nothing happens that is worth a line */
     if (running) {
         GString *s = g_string_new(NULL);
-        g_string_append_printf(s, "frames=%d slow=%d max_gap_ms=%d%s",
+        g_string_append_printf(s, "frames=%d slow=%d max_gap_ms=%d "
+                               "screen=%d/%d hold_ms=%d present_ms=%.1f%s",
                                last.frames, last.slow,
                                (int)(MAX(last.max_gap, since_frame) / 1000),
-                               system->str);
+                               last.new_presents, last.presents,
+                               (int)(last.max_hold / 1000),
+                               last.max_present / 1e3, system->str);
         print_work(s, last.count, last.ns, last.max_ns);
         print_gpu(s, last.gpu);
         add_line(now, NULL, s->str);
