@@ -23,6 +23,9 @@
 #include "exec/helper-proto.h"
 #include "exec/cputlb.h"
 #include "helper-tcg.h"
+#ifdef XBOX
+#include "qemu/xemu-perf.h"
+#endif
 
 /*
  * NOTE: the translator must set DisasContext.cc_op to CC_OP_EFLAGS
@@ -73,6 +76,21 @@ void helper_rdtsc(CPUX86State *env)
     val = cpu_get_tsc(env) + env->tsc_offset;
     env->regs[R_EAX] = (uint32_t)(val);
     env->regs[R_EDX] = (uint32_t)(val >> 32);
+
+#ifdef XBOX
+    if (qatomic_read(&xemu_perf_clock_enabled)) {
+        uint32_t site = env->eip;
+        uint32_t caller;
+        /* KeQueryPerformanceCounter is rdtsc; ret: the game's call is the
+           return address */
+        if (site >= 0x80000000 &&
+            cpu_memory_rw_debug(env_cpu(env), env->regs[R_ESP], &caller,
+                                sizeof(caller), false) == 0) {
+            site = caller;
+        }
+        xemu_perf_clock_read(site, val);
+    }
+#endif
 }
 
 G_NORETURN void helper_rdpmc(CPUX86State *env)

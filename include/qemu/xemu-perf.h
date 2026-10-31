@@ -72,6 +72,15 @@ static inline void xemu_perf_end(enum XemuPerfKind kind, int64_t start)
 void xemu_perf_code_translated(uint64_t pc, uint64_t ram_page);
 void xemu_perf_code_written(uint64_t ram_page);
 
+/*
+ * While a log records: the game read the CPU time stamp counter, tsc, at
+ * site, the code address that asked (for a read inside the kernel, its
+ * caller). The log compares the time the game saw from frame to frame with
+ * how long each picture stayed on screen.
+ */
+extern bool xemu_perf_clock_enabled;
+void xemu_perf_clock_read(uint32_t site, uint64_t tsc);
+
 /* Count something that has no duration */
 static inline void xemu_perf_event(enum XemuPerfKind kind)
 {

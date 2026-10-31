@@ -136,13 +136,49 @@ static struct {
     /* The window: pictures put on screen, how many had a new game frame,
        the longest a picture stayed up and the longest one took to show */
     int presents, new_presents;
-    int64_t max_hold, max_present;
+    int64_t max_hold, min_hold, max_present;
+    /* Game time against screen time for the pictures shown */
+    int pace_frames, pace_bad;
+    int64_t pace_err_max;
 } sec;
 static int64_t last_frame_us;
 static bool frames_seen;
 
 /* Game frames so far, to tell which pictures on screen were new */
 static uint64_t game_flips;
+
+/*
+ * The game's clock: each place in game code that reads the CPU time stamp
+ * counter, and the time it saw from one game frame to the next. A game moves
+ * its world by that time. When it differs from how long the last picture
+ * stayed on screen, movement looks uneven even at a steady frame rate.
+ */
+#define CLOCK_SLOTS 64
+#define CLOCK_TSC_PER_US 733.333333
+#define CLOCK_SHOWN 3
+#define FRAME_RING 16
+/* A frame whose game time and screen time differ this much is counted,
+   twice this much gets a PACE line */
+#define PACE_ERROR_US 8000
+typedef struct ClockSlot {
+    uint32_t site;              /* 0: free */
+    uint64_t reads, last_tsc;   /* written by the game's CPU thread */
+    /* At the last game frame, with the lock held */
+    uint64_t frame_reads, frame_tsc;
+    bool have_frame;
+    /* This second, with the lock held */
+    int frames_read;
+    int64_t calls, dt_min, dt_max;
+} ClockSlot;
+static ClockSlot clock_slots[CLOCK_SLOTS];
+bool xemu_perf_clock_enabled;
+/* The slot read in the most frames last second: the game's frame clock */
+static int clock_main = -1;
+/* Its game time for each frame, by frame number; -1 when not read */
+static int64_t frame_dt[FRAME_RING];
+/* Summary: frames compared and how many differed, matching each picture
+   with its own frame's clock read (0) or the one before (1) */
+static int64_t pace_frames, pace_bad[2], pace_err_sum[2], pace_err_max[2];
 /* Screen stalls for the summary: count and longest */
 static int screen_stall_count;
 static int64_t screen_stall_max;
@@ -262,6 +298,35 @@ void xemu_diag_present(int64_t start_us, int64_t end_us)
     bool stall = shown_us && hold >= SCREEN_STALL_US && came > 1;
     sec.new_presents++;
     sec.max_hold = MAX(sec.max_hold, hold);
+    if (hold && (!sec.min_hold || hold < sec.min_hold)) {
+        sec.min_hold = hold;
+    }
+    int64_t pace_err = 0, pace_dt = 0;
+    bool pace_line = false;
+    if (shown_us && came == 1 && qatomic_read(&xemu_perf_clock_enabled)) {
+        int64_t dt[2] = { frame_dt[flips % FRAME_RING],
+                          frame_dt[(flips - 1) % FRAME_RING] };
+        if (dt[0] > 0 && dt[1] > 0) {
+            sec.pace_frames++;
+            pace_frames++;
+            for (int i = 0; i < 2; i++) {
+                int64_t err = llabs(dt[i] - hold);
+                pace_err_sum[i] += err;
+                pace_err_max[i] = MAX(pace_err_max[i], err);
+                if (err >= PACE_ERROR_US) {
+                    pace_bad[i]++;
+                }
+            }
+            pace_dt = dt[0];
+            pace_err = dt[0] - hold;
+            if (llabs(pace_err) >= PACE_ERROR_US) {
+                sec.pace_bad++;
+            }
+            sec.pace_err_max = MAX(sec.pace_err_max, llabs(pace_err));
+            pace_line = llabs(pace_err) >= 2 * PACE_ERROR_US &&
+                        llabs(dt[1] - hold) >= 2 * PACE_ERROR_US;
+        }
+    }
     if (stall && log_file) {
         screen_stall_count++;
         screen_stall_max = MAX(screen_stall_max, hold);
@@ -269,6 +334,13 @@ void xemu_diag_present(int64_t start_us, int64_t end_us)
     shown_flips = flips;
     shown_us = end_us;
     g_mutex_unlock(&lock);
+    if (pace_line) {
+        char *text = g_strdup_printf("game_ms=%.1f screen_ms=%.1f "
+                                     "off_ms=%+.1f", pace_dt / 1e3,
+                                     hold / 1e3, pace_err / 1e3);
+        add_line(end_us, "PACE", text);
+        g_free(text);
+    }
     if (stall) {
         char *text = g_strdup_printf("held_ms=%.1f game_frames=%" PRIu64
                                      " present_ms=%.1f", hold / 1e3, came,
@@ -465,6 +537,9 @@ static const char lines_help[] =
     "#   SCREEN    a picture stayed on screen 60 ms or more while the "
     "game kept making new ones (held_ms, game frames meanwhile, how long "
     "the last picture took to draw and show)\n"
+    "#   PACE      the game moved its world by a different time than the "
+    "last picture stayed on screen, by 16 ms or more (game_ms, screen_ms, "
+    "off_ms): movement looks uneven\n"
     "#   MARK      the player pressed F9\n"
     "#   EVENT     focus, disc, connection check, shader cache, freeze, "
     "other programs using the PC\n";
@@ -611,6 +686,10 @@ static void reset_summary(void)
     worst_count = 0;
     screen_stall_count = 0;
     screen_stall_max = 0;
+    pace_frames = 0;
+    memset(pace_bad, 0, sizeof(pace_bad));
+    memset(pace_err_sum, 0, sizeof(pace_err_sum));
+    memset(pace_err_max, 0, sizeof(pace_err_max));
 }
 
 /* With the lock held */
@@ -639,6 +718,18 @@ static void write_summary(void)
     fprintf(log_file, "SUMMARY screen stalls (60 ms or more while the game "
             "kept going): %d, longest %.0f ms\n", screen_stall_count,
             screen_stall_max / 1e3);
+    if (pace_frames) {
+        int b = pace_err_sum[1] < pace_err_sum[0];
+        fprintf(log_file, "SUMMARY game clock: frames whose game time and "
+                "screen time differ %d ms or more: %" PRId64 " of %" PRId64
+                " (%.1f%%), average difference %.1f ms, biggest %.0f ms "
+                "(matched with the %s clock read; the other way: %" PRId64
+                ", average %.1f ms)\n", PACE_ERROR_US / 1000, pace_bad[b],
+                pace_frames, 100.0 * pace_bad[b] / pace_frames,
+                pace_err_sum[b] / 1e3 / pace_frames, pace_err_max[b] / 1e3,
+                b ? "previous frame's" : "same frame's", pace_bad[!b],
+                pace_err_sum[!b] / 1e3 / pace_frames);
+    }
     fprintf(log_file, "SUMMARY markers: %d\n", mark_count);
     print_code_top(log_file, "code translated", code_translated, true);
     print_code_top(log_file, "code pages written", code_written, false);
@@ -702,6 +793,7 @@ bool xemu_diag_start_path(const char *path)
 
     qatomic_set(&capturing, 1);
     qatomic_set(&xemu_perf_enabled, true);
+    qatomic_set(&xemu_perf_clock_enabled, true);
     start_tick();
     xemu_diag_write_check();
 
@@ -745,6 +837,7 @@ void xemu_diag_stop(void)
         fclose(log_file);
         log_file = NULL;
     }
+    qatomic_set(&xemu_perf_clock_enabled, false);
     qatomic_set(&active, false);
     g_mutex_unlock(&lock);
 }
@@ -986,6 +1079,102 @@ void xemu_diag_poll(void)
     }
 }
 
+void xemu_perf_clock_read(uint32_t site, uint64_t tsc)
+{
+    if (!site) {
+        return;
+    }
+    unsigned h = (site * 2654435761u) >> 26;
+    for (int i = 0; i < CLOCK_SLOTS; i++) {
+        ClockSlot *c = &clock_slots[(h + i) % CLOCK_SLOTS];
+        uint32_t s = qatomic_read(&c->site);
+        if (!s) {
+            s = qatomic_cmpxchg(&c->site, 0, site);
+            s = s ? s : site;
+        }
+        if (s == site) {
+            qatomic_set(&c->last_tsc, tsc);
+            qatomic_inc(&c->reads);
+            return;
+        }
+    }
+}
+
+/* With the lock held, at each game frame: what each clock read saw since
+   the frame before */
+static void clock_frame(void)
+{
+    frame_dt[game_flips % FRAME_RING] = -1;
+    for (int i = 0; i < CLOCK_SLOTS; i++) {
+        ClockSlot *c = &clock_slots[i];
+        if (!qatomic_read(&c->site)) {
+            continue;
+        }
+        uint64_t reads = qatomic_read(&c->reads);
+        uint64_t tsc = qatomic_read(&c->last_tsc);
+        if (reads == c->frame_reads) {
+            continue;
+        }
+        c->calls += reads - c->frame_reads;
+        if (c->have_frame) {
+            int64_t dt = (int64_t)((tsc - c->frame_tsc) / CLOCK_TSC_PER_US);
+            if (!c->frames_read++ || dt < c->dt_min) {
+                c->dt_min = dt;
+            }
+            c->dt_max = MAX(c->dt_max, dt);
+            if (i == clock_main) {
+                frame_dt[game_flips % FRAME_RING] = dt;
+            }
+        }
+        c->frame_reads = reads;
+        c->frame_tsc = tsc;
+        c->have_frame = true;
+    }
+}
+
+/* With the lock held, once a second: " clock=site:calls/frames:min-max_ms"
+   for the reads seen in the most frames. The first is the frame clock from
+   now on */
+static void clock_second(GString *s)
+{
+    int order[CLOCK_SHOWN];
+    int n = 0;
+    for (int i = 0; i < CLOCK_SLOTS; i++) {
+        ClockSlot *c = &clock_slots[i];
+        if (!c->frames_read) {
+            continue;
+        }
+        int j = n < CLOCK_SHOWN ? n++ : CLOCK_SHOWN;
+        while (j > 0) {
+            ClockSlot *o = &clock_slots[order[j - 1]];
+            if (o->frames_read > c->frames_read ||
+                (o->frames_read == c->frames_read && o->calls <= c->calls)) {
+                break;
+            }
+            if (j < CLOCK_SHOWN) {
+                order[j] = order[j - 1];
+            }
+            j--;
+        }
+        if (j < CLOCK_SHOWN) {
+            order[j] = i;
+        }
+    }
+    clock_main = n ? order[0] : -1;
+    for (int k = 0; k < n; k++) {
+        ClockSlot *c = &clock_slots[order[k]];
+        g_string_append_printf(s, "%s%08x:%" PRId64 "/%d:%.1f-%.1f",
+                               k ? "," : " clock=", c->site, c->calls,
+                               c->frames_read, c->dt_min / 1e3,
+                               c->dt_max / 1e3);
+    }
+    for (int i = 0; i < CLOCK_SLOTS; i++) {
+        clock_slots[i].frames_read = 0;
+        clock_slots[i].calls = 0;
+        clock_slots[i].dt_min = clock_slots[i].dt_max = 0;
+    }
+}
+
 /* With the lock held */
 static void count_frame(int64_t now, int64_t gap_us, bool slow,
                         XemuDiagCause cause)
@@ -1039,6 +1228,9 @@ void xemu_diag_frame(int64_t now, int64_t gap_us, bool slow,
     g_mutex_lock(&lock);
     sec.frames++;
     game_flips++;
+    if (qatomic_read(&xemu_perf_clock_enabled)) {
+        clock_frame();
+    }
     sec.max_gap = MAX(sec.max_gap, gap_us);
     for (int i = 0; i < XEMU_PERF__COUNT; i++) {
         sec.count[i] += count[i];
@@ -1438,9 +1630,13 @@ static void tick(void *opaque)
         }
     }
 
+    GString *clock = g_string_new(NULL);
     g_mutex_lock(&lock);
     typeof(sec) last = sec;
     memset(&sec, 0, sizeof(sec));
+    if (qatomic_read(&xemu_perf_clock_enabled)) {
+        clock_second(clock);
+    }
     int64_t since_frame = frames_seen ? now - last_frame_us : 0;
     if (log_file && running) {
         second_count++;
@@ -1454,12 +1650,20 @@ static void tick(void *opaque)
     if (running) {
         GString *s = g_string_new(NULL);
         g_string_append_printf(s, "frames=%d slow=%d max_gap_ms=%d "
-                               "screen=%d/%d hold_ms=%d present_ms=%.1f%s",
+                               "screen=%d/%d hold_ms=%d-%d "
+                               "present_ms=%.1f%s",
                                last.frames, last.slow,
                                (int)(MAX(last.max_gap, since_frame) / 1000),
                                last.new_presents, last.presents,
+                               (int)(last.min_hold / 1000),
                                (int)(last.max_hold / 1000),
-                               last.max_present / 1e3, system->str);
+                               last.max_present / 1e3, clock->str);
+        if (last.pace_frames) {
+            g_string_append_printf(s, " pace_off_ms=%.1f pace_bad=%d/%d",
+                                   last.pace_err_max / 1e3, last.pace_bad,
+                                   last.pace_frames);
+        }
+        g_string_append(s, system->str);
         print_work(s, last.count, last.ns, last.max_ns);
         print_gpu(s, last.gpu);
         add_line(now, NULL, s->str);
@@ -1467,6 +1671,7 @@ static void tick(void *opaque)
         watch_freeze(now, last.frames, loading);
     }
     g_string_free(system, true);
+    g_string_free(clock, true);
 }
 
 static void tick_start_bh(void *opaque)
