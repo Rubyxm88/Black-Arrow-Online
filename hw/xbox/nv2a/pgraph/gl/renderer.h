@@ -222,6 +222,13 @@ typedef struct PGRAPHGLState {
         GLuint tex_loc, surface_size_loc;
     } s2t_rndr;
 
+    /* A colour surface at its unscaled size, to read back scaled ones */
+    struct shrink_target {
+        GLuint fbo, tex;
+        GLint internal_format;
+        unsigned int width, height;
+    } shrink;
+
     struct disp_rndr {
         GLuint fbo, vao, vbo, prog;
         GLuint display_size_loc;

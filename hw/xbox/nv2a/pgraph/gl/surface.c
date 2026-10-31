@@ -788,6 +788,56 @@ static void surface_copy_shrink_row(uint8_t *out, uint8_t *in,
     }
 }
 
+/*
+ * Copies the scaled colour surface bound to the framebuffer to the shrink
+ * target at its unscaled size, one pixel of each block (the CPU shrink takes
+ * the first one, this the one nearest the block's middle), and leaves the
+ * shrink target bound for reading
+ */
+static void shrink_surface_on_gpu(NV2AState *d, SurfaceBinding *surface)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHGLState *r = pg->gl_renderer_state;
+    unsigned int factor = pg->surface_scale_factor;
+    unsigned int width = surface->width, height = surface->height;
+
+    if (!r->shrink.fbo) {
+        glGenFramebuffers(1, &r->shrink.fbo);
+        glGenTextures(1, &r->shrink.tex);
+    }
+    if (r->shrink.internal_format != surface->fmt.gl_internal_format ||
+        r->shrink.width != width || r->shrink.height != height) {
+        GLint last_texture_binding;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture_binding);
+        glBindTexture(GL_TEXTURE_2D, r->shrink.tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, surface->fmt.gl_internal_format, width,
+                     height, 0, surface->fmt.gl_format, surface->fmt.gl_type,
+                     NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        glBindTexture(GL_TEXTURE_2D, last_texture_binding);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, r->shrink.fbo);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, r->shrink.tex, 0);
+        r->shrink.internal_format = surface->fmt.gl_internal_format;
+        r->shrink.width = width;
+        r->shrink.height = height;
+    }
+
+    /* The scissor test applies to blits too */
+    GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->gl_framebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, r->shrink.fbo);
+    glBlitFramebuffer(0, 0, width * factor, height * factor, 0, 0, width,
+                      height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (scissor) {
+        glEnable(GL_SCISSOR_TEST);
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->shrink.fbo);
+}
+
 static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
                                        bool swizzle, bool flip, bool downscale,
                                        uint8_t *pixels)
@@ -832,20 +882,35 @@ static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
         gl_read_buf = swizzle_buf;
     }
 
-    if (downscale) {
-        pg->scale_buf = (uint8_t *)g_realloc(
-            pg->scale_buf, pg->surface_scale_factor * pg->surface_scale_factor *
-                               surface->size);
-        gl_read_buf = pg->scale_buf;
+    if (downscale && surface->color) {
+        /*
+         * A colour surface is shrunk on the GPU and read at its own size:
+         * reading the scaled copy moved 4 times the data (at 2x) and shrank
+         * it on the CPU, which was most of every frame on Intel graphics
+         */
+        shrink_surface_on_gpu(d, surface);
+        glo_readpixels(surface->fmt.gl_format, surface->fmt.gl_type,
+                       surface->fmt.bytes_per_pixel, surface->pitch,
+                       surface->width, surface->height, flip, swizzle_buf);
+        glBindFramebuffer(GL_FRAMEBUFFER, pg->gl_renderer_state->gl_framebuffer);
+        downscale = false;
+    } else {
+        if (downscale) {
+            pg->scale_buf = (uint8_t *)g_realloc(
+                pg->scale_buf, pg->surface_scale_factor *
+                                   pg->surface_scale_factor * surface->size);
+            gl_read_buf = pg->scale_buf;
+        }
+
+        glo_readpixels(
+            surface->fmt.gl_format, surface->fmt.gl_type,
+            surface->fmt.bytes_per_pixel,
+            pg->surface_scale_factor * surface->pitch,
+            pg->surface_scale_factor * surface->width,
+            pg->surface_scale_factor * surface->height, flip, gl_read_buf);
     }
 
-    glo_readpixels(
-        surface->fmt.gl_format, surface->fmt.gl_type, surface->fmt.bytes_per_pixel,
-        pg->surface_scale_factor * surface->pitch,
-        pg->surface_scale_factor * surface->width,
-        pg->surface_scale_factor * surface->height, flip, gl_read_buf);
-
-    /* FIXME: Replace this with a hw accelerated version */
+    /* Depth and stencil: shrunk on the CPU */
     if (downscale) {
         assert(surface->pitch >= (surface->width * surface->fmt.bytes_per_pixel));
         uint8_t *out = swizzle_buf, *in = pg->scale_buf;
@@ -1574,6 +1639,11 @@ void pgraph_gl_finalize_surfaces(PGRAPHState *pg)
     flush_surfaces(d);
     glDeleteFramebuffers(1, &r->gl_framebuffer);
     r->gl_framebuffer = 0;
+    if (r->shrink.fbo) {
+        glDeleteFramebuffers(1, &r->shrink.fbo);
+        glDeleteTextures(1, &r->shrink.tex);
+        memset(&r->shrink, 0, sizeof(r->shrink));
+    }
 
     finalize_render_to_texture(pg);
 }
