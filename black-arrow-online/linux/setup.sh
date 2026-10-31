@@ -166,33 +166,49 @@ report_tool() {
 data="${XDG_DATA_HOME:-$HOME/.local/share}/Black Arrow Online"
 runlog="$data/system/report-run.log"
 mkdir -p "$data/system" 2>/dev/null
+NL=$'\n'
 
-# From the applications menu there is no terminal: open one and run again in
-# it. The copy in /tmp has no spaces in its path, which some terminals' -e
-# split on. With no terminal the report is still made; the Downloads folder
-# opens and a notice shows when it is done.
-if [ ! -t 1 ] && [ -z "${BA_REPORT_IN_TERMINAL:-}" ]; then
-    export BA_REPORT_IN_TERMINAL=1
-    copy="$(mktemp /tmp/black-arrow-report-XXXXXX.sh)" && cp "$0" "$copy"
-    for term in x-terminal-emulator gnome-terminal kgx ptyxis konsole \
-            xfce4-terminal mate-terminal lxterminal tilix xterm; do
-        [ -n "$copy" ] && command -v "$term" >/dev/null 2>&1 || continue
-        echo "$(date '+%F %T') opening $term" >> "$runlog"
-        case "$term" in
-            gnome-terminal|kgx|ptyxis|tilix) "$term" -- bash "$copy" ;;
-            xfce4-terminal) "$term" -x bash "$copy" ;;
-            *) "$term" -e bash "$copy" ;;
-        esac && exit 0
-        echo "$(date '+%F %T') $term did not start" >> "$runlog"
-    done
-    rm -f "$copy"
-    echo "$(date '+%F %T') no terminal, making the report without one" >> "$runlog"
+# The last runs are kept in report-run.log, to send when the report itself
+# does not work
+if [ -f "$runlog" ]; then
+    tail -n 200 "$runlog" > "$runlog.tmp" 2>/dev/null && mv -f "$runlog.tmp" "$runlog"
+fi
+log() {
+    echo "$(date '+%F %T') $*" >> "$runlog" 2>/dev/null
+}
+
+# Started from the applications menu (no terminal) or from the app's
+# Troubleshoot menu (BA_REPORT_FROM_APP, which shows its own notices). No
+# terminal is opened: a small window shows while it works and says where the
+# file is when it is done; what it prints goes to the run log.
+on_tty=false
+[ -t 1 ] && on_tty=true
+from_app="${BA_REPORT_FROM_APP:-}"
+log "report started (terminal: $on_tty, from the app: ${from_app:-no}," \
+    "display: ${WAYLAND_DISPLAY:+wayland $WAYLAND_DISPLAY }${DISPLAY:-none}," \
+    "desktop: ${XDG_CURRENT_DESKTOP:-?})"
+show_window=false
+if ! $on_tty && [ -z "$from_app" ]; then
+    show_window=true
     exec >> "$runlog" 2>&1 </dev/null
 fi
-echo "$(date '+%F %T') report started (terminal: $([ -t 1 ] && echo yes || echo no))" >> "$runlog"
+working=""
+if $show_window; then
+    if command -v zenity >/dev/null 2>&1; then
+        exec 3> >(zenity --progress --pulsate --no-cancel --auto-close \
+            --title="Black Arrow Report" \
+            --text="Making a Black Arrow Online report. This takes about 15 seconds..." \
+            >/dev/null 2>&1)
+        working=$!
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send "Black Arrow Report" "Making a report. This takes about 15 seconds..." >/dev/null 2>&1
+    fi
+fi
 stamp="$(date +%Y-%m-%d_%H%M%S)"
 downloads="$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
-[ -n "$downloads" ] && [ -d "$downloads" ] || downloads="$HOME/Downloads"
+# (it answers the home folder when there is no Downloads folder set)
+[ -n "$downloads" ] && [ -d "$downloads" ] && [ "${downloads%/}" != "${HOME%/}" ] ||
+    downloads="$HOME/Downloads"
 mkdir -p "$downloads" 2>/dev/null || downloads="$HOME"
 name="BlackArrow-report-$stamp"
 out="$(mktemp -d)/$name"
@@ -234,11 +250,11 @@ fi
     free -h
     echo
     lspci 2>/dev/null | grep -Ei 'vga|3d|display'
-    command -v glxinfo >/dev/null 2>&1 && glxinfo -B
-    command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary
+    command -v glxinfo >/dev/null 2>&1 && timeout 20 glxinfo -B
+    command -v vulkaninfo >/dev/null 2>&1 && timeout 20 vulkaninfo --summary
 } > "$out/linux.txt" 2>&1
 
-for file in xemu.log version.txt xemu.toml update.log; do
+for file in xemu.log version.txt xemu.toml update.log report-run.log; do
     if [ -f "$data/system/$file" ]; then
         cp "$data/system/$file" "$out/"
     fi
@@ -255,17 +271,46 @@ if command -v coredumpctl >/dev/null 2>&1; then
         grep -Ei 'xemu|AppRun' > "$out/crashes.txt" || rm -f "$out/crashes.txt"
 fi
 
-tar -czf "$downloads/$name.tar.gz" -C "$(dirname "$out")" "$name" && rm -rf "$(dirname "$out")"
+file="$downloads/$name.tar.gz"
+if tar -czf "$file" -C "$(dirname "$out")" "$name"; then
+    done_text="Done: $name.tar.gz is in $downloads."
+    log "report done: $file"
+else
+    done_text="The report could not be saved in $downloads."
+    file=""
+    log "report failed: tar could not write $downloads/$name.tar.gz"
+fi
+rm -rf "$(dirname "$out")"
+if [ -n "$working" ]; then
+    echo 100 >&3
+    exec 3>&-
+    kill "$working" 2>/dev/null
+fi
 echo
-echo "Done: $name.tar.gz is in $downloads."
-echo "Send it to whoever shared the package. You can close this window."
-echo "$(date '+%F %T') report done: $downloads/$name.tar.gz" >> "$runlog"
-xdg-open "$downloads" >/dev/null 2>&1 &
-command -v notify-send >/dev/null 2>&1 &&
-    notify-send "Black Arrow Report" "$name.tar.gz is in $downloads" >/dev/null 2>&1
-[ -n "${BA_REPORT_IN_TERMINAL:-}" ] && [ "$0" != "${0#/tmp/black-arrow-report-}" ] && rm -f "$0"
-sleep 1
-read -r -p "Press Enter to close. " _ || true
+echo "$done_text"
+if [ -n "$file" ]; then
+    echo "Send it to whoever shared the package."
+    xdg-open "$downloads" >/dev/null 2>&1 &
+fi
+echo "What the report did each time: $runlog"
+if $show_window; then
+    text="$done_text"
+    [ -n "$file" ] && text="$text${NL}Send it to whoever shared the package."
+    text="$text${NL}${NL}If something is missing, send report-run.log too:${NL}$runlog"
+    if command -v zenity >/dev/null 2>&1; then
+        setsid zenity --info --title="Black Arrow Report" --no-markup \
+            --text="$text" >/dev/null 2>&1 &
+    elif command -v kdialog >/dev/null 2>&1; then
+        setsid kdialog --title "Black Arrow Report" --msgbox "$text" >/dev/null 2>&1 &
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send "Black Arrow Report" "$text" >/dev/null 2>&1
+    fi
+fi
+if $on_tty; then
+    sleep 1
+    read -r -p "Press Enter to close. " _ || true
+fi
+[ -n "$file" ]
 REPORT
 }
 
