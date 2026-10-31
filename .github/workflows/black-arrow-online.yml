@@ -290,9 +290,16 @@ jobs:
         if [ -n "$prev_commit" ] && git cat-file -e "$prev_commit^{commit}" 2>/dev/null; then
           # Only player-facing lines: subjects that start with a lowercase
           # code area ("ci:", "nv2a:", "i386/tcg:", "make-package.py:") are
-          # for developers. "Mac:" lines stay.
-          git log --no-merges --first-parent --format='- %s' "$prev_commit..$COMMIT" |
-              { grep -Ev '^- [a-z0-9][A-Za-z0-9/._-]*: ' || true; } | head -n 20 >> meta/changes.md
+          # for developers. "Mac:" lines stay. A "Change: ..." line in a
+          # commit's message adds a line of its own, to say more than the
+          # subject does.
+          git log --no-merges --first-parent --format='%H' "$prev_commit..$COMMIT" |
+              while read -r c; do
+                git log -1 --format='- %s' "$c" |
+                    { grep -Ev '^- [a-z0-9][A-Za-z0-9/._-]*: ' || true; }
+                git log -1 --format='%(trailers:key=Change,valueonly)' "$c" |
+                    sed '/^[[:space:]]*$/d; s/^/- /'
+              done | head -n 20 >> meta/changes.md
         fi
         head -n 1 meta/changes.md | cut -c 3- > meta/notes.txt
 
@@ -470,6 +477,8 @@ jobs:
         if [ "${SUB:-0}" != 0 ]; then
           echo "sub=$SUB" >> pkg/system/version.txt
         fi
+        # Every line of "What changed", which the app shows after an update
+        { sed -n 's/^- /change=/p' meta/changes.md 2>/dev/null || true; } >> pkg/system/version.txt
         (cd pkg && 7z a -tzip -bso0 ../BlackArrowOnline-update.zip .)
         cp pkg/system/version.txt version.txt
         echo "sha256=$(sha256sum BlackArrowOnline-update.zip | cut -d' ' -f1)" >> version.txt
@@ -742,6 +751,7 @@ jobs:
         if [ -n "$build" ] && [ "${SUB:-0}" != 0 ]; then
           echo "sub=$SUB" >> "$pkg/version.txt"
         fi
+        { sed -n 's/^- /change=/p' meta/changes.md 2>/dev/null || true; } >> "$pkg/version.txt"
         ls -la "$pkg"
         # zip keeps the app's links and executable bits, which the artifact
         # zip around it would not
@@ -975,6 +985,7 @@ jobs:
         if [ -n "$build" ] && [ "${SUB:-0}" != 0 ]; then
           echo "sub=$SUB" >> "$pkg/version.txt"
         fi
+        { sed -n 's/^- /change=/p' meta/changes.md 2>/dev/null || true; } >> "$pkg/version.txt"
         ls -la "$pkg"
         # tar keeps the app's links and executable bits, which the artifact
         # zip around it would not
