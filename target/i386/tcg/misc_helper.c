@@ -74,6 +74,20 @@ void helper_rdtsc(CPUX86State *env)
     cpu_svm_check_intercept_param(env, SVM_EXIT_RDTSC, 0, GETPC());
 
     val = cpu_get_tsc(env) + env->tsc_offset;
+#ifdef XBOX
+    if (env->eip == XEMU_GAME_CLOCK_SITE) {
+        /* Only Black Arrow Revived's main loop: rdtsc; mov ebx, eax; rdtsc;
+           mov [esp+0x10], eax */
+        static const uint8_t loop[] = { 0x0f, 0x31, 0x8b, 0xd8, 0x0f, 0x31,
+                                        0x89, 0x44, 0x24, 0x10 };
+        uint8_t code[sizeof(loop)];
+        if (cpu_memory_rw_debug(env_cpu(env), XEMU_GAME_CLOCK_SITE - 4, code,
+                                sizeof(code), false) == 0 &&
+            !memcmp(code, loop, sizeof(loop))) {
+            val = xemu_game_clock(val);
+        }
+    }
+#endif
     env->regs[R_EAX] = (uint32_t)(val);
     env->regs[R_EDX] = (uint32_t)(val >> 32);
 

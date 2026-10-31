@@ -81,6 +81,14 @@ void xemu_perf_code_written(uint64_t ram_page);
 extern bool xemu_perf_clock_enabled;
 void xemu_perf_clock_read(uint32_t site, uint64_t tsc);
 
+/*
+ * Black Arrow's main loop reads the time stamp counter at this address to
+ * find how far to move the world. xemu_game_clock(tsc) is the time to give
+ * it instead (see perf.smooth_game_time).
+ */
+#define XEMU_GAME_CLOCK_SITE 0x0037364b
+uint64_t xemu_game_clock(uint64_t tsc);
+
 /* Count something that has no duration */
 static inline void xemu_perf_event(enum XemuPerfKind kind)
 {

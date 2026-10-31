@@ -114,6 +114,13 @@ void xemu_diag_vblank(int64_t late_ns);
  */
 void xemu_diag_shown(int vblanks, bool held);
 
+/*
+ * From Black Arrow's main loop, each frame, in time stamp counter ticks: how
+ * far real time moved since the frame before, how far the game was told it
+ * moved, and the usual step at its frame rate
+ */
+void xemu_diag_world_step(uint64_t real, uint64_t given, uint64_t usual);
+
 const char *xemu_diag_cause_name(XemuDiagCause cause);
 
 /* Seconds since this run wrote a freeze report, or -1 if it has not */

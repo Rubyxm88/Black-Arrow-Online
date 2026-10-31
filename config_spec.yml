@@ -473,6 +473,10 @@ perf:
                  # the console's vblank schedule, so pictures change evenly
     type: bool
     default: false
+  smooth_game_time:  # Experimental: Black Arrow's world moves by whole
+                     # vblanks each frame, as on a console
+    type: bool
+    default: false
   mac_test_pictures:  # Mac missing-text test; turned off at each start
     type: bool
     default: false

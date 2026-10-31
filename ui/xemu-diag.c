@@ -148,6 +148,9 @@ static struct {
     /* New pictures shown by vblanks since the one before (0-3+), and how
        many the frame pacer held back */
     int shown_vblanks[4], shown_held;
+    /* World steps, and how many were off the usual by WORLD_OFF_US or more
+       in real time and in the time given to the game */
+    int world_steps, world_off_real, world_off_given;
 } sec;
 static int64_t last_frame_us;
 static bool frames_seen;
@@ -207,6 +210,8 @@ static int vblanks_since_flip;
 static int64_t vblank_total, vblank_late_total, vblank_late_most;
 static int64_t flip_vblanks[4];
 static int64_t shown_vblanks[4], shown_held;
+static int64_t world_steps, world_off_real, world_off_given;
+#define WORLD_OFF_US 4000
 /* Screen stalls for the summary: count and longest */
 static int screen_stall_count;
 static int64_t screen_stall_max;
@@ -723,6 +728,7 @@ static void reset_summary(void)
     memset(flip_vblanks, 0, sizeof(flip_vblanks));
     memset(shown_vblanks, 0, sizeof(shown_vblanks));
     shown_held = 0;
+    world_steps = world_off_real = world_off_given = 0;
     present_tsc = 0;
     for (int i = 0; i < 4; i++) {
         qatomic_set(&present_vblanks_sec[i], 0);
@@ -785,6 +791,14 @@ static void write_summary(void)
                 vblank_total, vblank_late_total, VBLANK_LATE_US / 1000,
                 vblank_late_most / 1e3, flip_vblanks[0], flip_vblanks[1],
                 flip_vblanks[2], flip_vblanks[3]);
+    }
+    if (world_steps) {
+        fprintf(log_file, "SUMMARY world: steps of Black Arrow's world: %"
+                PRId64 ", off the usual by %d ms or more: real time %" PRId64
+                " (%.1f%%), time given to the game %" PRId64 " (%.1f%%)\n",
+                world_steps, WORLD_OFF_US / 1000, world_off_real,
+                100.0 * world_off_real / world_steps, world_off_given,
+                100.0 * world_off_given / world_steps);
     }
     if (shown_vblanks[2]) {
         fprintf(log_file, "SUMMARY screen: new pictures by vblanks since "
@@ -1163,6 +1177,25 @@ void xemu_diag_shown(int vblanks, bool held)
         sec.shown_held++;
         shown_held++;
     }
+    g_mutex_unlock(&lock);
+}
+
+void xemu_diag_world_step(uint64_t real, uint64_t given, uint64_t usual)
+{
+    if (!qatomic_read(&xemu_perf_clock_enabled)) {
+        return;
+    }
+    bool real_off = llabs((int64_t)(real - usual)) / CLOCK_TSC_PER_US >=
+                    WORLD_OFF_US;
+    bool given_off = llabs((int64_t)(given - usual)) / CLOCK_TSC_PER_US >=
+                     WORLD_OFF_US;
+    g_mutex_lock(&lock);
+    sec.world_steps++;
+    world_steps++;
+    sec.world_off_real += real_off;
+    world_off_real += real_off;
+    sec.world_off_given += given_off;
+    world_off_given += given_off;
     g_mutex_unlock(&lock);
 }
 
@@ -1800,6 +1833,11 @@ static void tick(void *opaque)
         if (pv[0] + pv[1] + pv[2] + pv[3]) {
             g_string_append_printf(s, " game_vblanks=%d/%d/%d/%d", pv[0],
                                    pv[1], pv[2], pv[3]);
+        }
+        if (last.world_steps) {
+            g_string_append_printf(s, " world_off=%d/%d/%d",
+                                   last.world_off_real, last.world_off_given,
+                                   last.world_steps);
         }
         if (last.shown_vblanks[0] + last.shown_vblanks[1] +
             last.shown_vblanks[2] + last.shown_vblanks[3]) {
