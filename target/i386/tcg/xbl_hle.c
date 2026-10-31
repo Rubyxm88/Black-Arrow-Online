@@ -25,6 +25,7 @@
 #include "exec/target_page.h"
 #include "exec/tb-flush.h"
 #include "helper-tcg.h"
+#include "hw/xbox/xbl-yuv.h"
 
 #define YUV_PC 0x4bd0e0u
 
@@ -72,6 +73,8 @@ bool xbl_yuv_hle_match(CPUX86State *env, target_ulong pc)
     }
     return true;
 }
+
+__thread uint32_t xbl_yuv_row_bytes;
 
 /* A guest range reached through host pointers, one per page */
 typedef struct Span {
@@ -328,8 +331,20 @@ static uint32_t yuv_row_any(Yuv *y, bool fast, const Span *dst,
 }
 
 /* Called instead of the routine at YUV_PC: does it and returns to the caller */
+/* A row about to be written: tells the GPU code how wide it is */
+static bool span_probe_store_row(CPUX86State *env, Span *s, uint32_t start,
+                                 uint32_t len, int mmu_idx, uintptr_t ra)
+{
+    xbl_yuv_row_bytes = len;
+    bool ok = span_probe(env, s, start, len, MMU_DATA_STORE, mmu_idx, ra);
+    xbl_yuv_row_bytes = 0;
+    return ok;
+}
+
 void helper_xbl_yuv_hle(CPUX86State *env)
 {
+    /* A fault in an earlier probe left it set */
+    xbl_yuv_row_bytes = 0;
     uintptr_t ra = GETPC();
     int mmu_idx = cpu_mmu_index(env_cpu(env), false);
     uint32_t ds = env->segs[R_DS].base, ss = env->segs[R_SS].base;
@@ -359,8 +374,8 @@ void helper_xbl_yuv_hle(CPUX86State *env)
         span_probe(env, &sy1, y1, k * 4, MMU_DATA_LOAD, mmu_idx, ra) &&
         span_probe(env, &su, u, k * 2, MMU_DATA_LOAD, mmu_idx, ra) &&
         span_probe(env, &sv, v, k * 2, MMU_DATA_LOAD, mmu_idx, ra) &&
-        span_probe(env, &sd0, dst0, k * 16, MMU_DATA_STORE, mmu_idx, ra) &&
-        span_probe(env, &sd1, dst1, k * 16, MMU_DATA_STORE, mmu_idx, ra);
+        span_probe_store_row(env, &sd0, dst0, k * 16, mmu_idx, ra) &&
+        span_probe_store_row(env, &sd1, dst1, k * 16, mmu_idx, ra);
     if (!fast) {
         /*
          * Unusual pointers (MMIO, a huge or wrapping row): run the game's

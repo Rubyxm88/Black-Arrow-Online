@@ -220,6 +220,7 @@ typedef struct PGRAPHGLState {
     struct s2t_rndr {
         GLuint fbo, vao, vbo, prog;
         GLuint tex_loc, surface_size_loc;
+        GLuint zprog_depth, zprog_stencil;
     } s2t_rndr;
 
     /* A colour surface at its unscaled size, to read back scaled ones */
@@ -310,6 +311,9 @@ static inline void pgraph_gl_surface_download_if_dirty_why(
     pgraph_gl_download_reason = 0;
 }
 SurfaceBinding *pgraph_gl_surface_get(NV2AState *d, hwaddr addr);
+SurfaceBinding *pgraph_gl_surface_get_for_texture(NV2AState *d, hwaddr addr,
+                                                  hwaddr len,
+                                                  const TextureShape *shape);
 SurfaceBinding *pgraph_gl_surface_get_within(NV2AState *d, hwaddr addr);
 void pgraph_gl_surface_invalidate(NV2AState *d, SurfaceBinding *e);
 void pgraph_gl_unbind_surface(NV2AState *d, bool color);

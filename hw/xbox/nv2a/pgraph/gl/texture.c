@@ -273,7 +273,8 @@ void pgraph_gl_bind_textures(NV2AState *d)
         bool possibly_dirty = false;
         bool possibly_dirty_checked = false;
 
-        SurfaceBinding *surface = pgraph_gl_surface_get(d, texture_vram_offset);
+        SurfaceBinding *surface = pgraph_gl_surface_get_for_texture(
+            d, texture_vram_offset, length, &state);
         bool surf_to_tex = false;
         if (surface != NULL) {
             surf_to_tex = pgraph_gl_check_surface_to_texture_compatibility(

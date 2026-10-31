@@ -22,6 +22,7 @@
 #include "hw/xbox/nv2a/pgraph/pgraph.h"
 #include "ui/xemu-settings.h"
 #include "qemu/xemu-perf.h"
+#include "hw/xbox/xbl-yuv.h"
 #include "hw/xbox/nv2a/debug_gl.h"
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "hw/xbox/nv2a/pgraph/swizzle.h"
@@ -183,6 +184,30 @@ static void init_render_to_texture(PGRAPHState *pg)
 
     r->s2t_rndr.prog = pgraph_gl_compile_shader(vs, fs);
     r->s2t_rndr.tex_loc = glGetUniformLocation(r->s2t_rndr.prog, "tex");
+
+    /* Depth and stencil to colour bytes: see render_zeta_to() */
+    const char *zfs_depth =
+        "#version 330\n"
+        "uniform sampler2D tex;\n"
+        "layout(location = 0) out vec4 out_Color;\n"
+        "void main()\n"
+        "{\n"
+        "    float z = texelFetch(tex, ivec2(gl_FragCoord.xy), 0).r;\n"
+        "    uint d = uint(z * 16777215.0 + 0.5);\n"
+        "    out_Color = vec4(float(d & 0xffu), float((d >> 8) & 0xffu),\n"
+        "                     float(d >> 16), 0.0) / 255.0;\n"
+        "}\n";
+    const char *zfs_stencil =
+        "#version 330\n"
+        "uniform usampler2D tex;\n"
+        "layout(location = 0) out vec4 out_Color;\n"
+        "void main()\n"
+        "{\n"
+        "    uint s = texelFetch(tex, ivec2(gl_FragCoord.xy), 0).r;\n"
+        "    out_Color = vec4(0.0, 0.0, 0.0, float(s & 0xffu) / 255.0);\n"
+        "}\n";
+    r->s2t_rndr.zprog_depth = pgraph_gl_compile_shader(vs, zfs_depth);
+    r->s2t_rndr.zprog_stencil = pgraph_gl_compile_shader(vs, zfs_stencil);
     r->s2t_rndr.surface_size_loc = glGetUniformLocation(r->s2t_rndr.prog,
                                                     "surface_size");
 
@@ -200,6 +225,10 @@ static void finalize_render_to_texture(PGRAPHState *pg)
 
     glDeleteProgram(r->s2t_rndr.prog);
     r->s2t_rndr.prog = 0;
+    glDeleteProgram(r->s2t_rndr.zprog_depth);
+    r->s2t_rndr.zprog_depth = 0;
+    glDeleteProgram(r->s2t_rndr.zprog_stencil);
+    r->s2t_rndr.zprog_stencil = 0;
 
     glDeleteVertexArrays(1, &r->s2t_rndr.vao);
     r->s2t_rndr.vao = 0;
@@ -211,6 +240,26 @@ static void finalize_render_to_texture(PGRAPHState *pg)
     r->s2t_rndr.fbo = 0;
 }
 
+/*
+ * The menus read a Z24S8 depth buffer as a B8G8R8A8 texture every frame,
+ * which copied it to Xbox RAM and back each time. Each pixel is the word
+ * depth << 8 | stencil, read as 8_8_8_8 BGRA: depth bits 16-23 in blue, 8-15
+ * in green, 0-7 in red and the stencil in alpha. render_zeta_to() makes that
+ * on the GPU; it needs stencil texturing (GL 4.3).
+ */
+static bool zeta_to_texture_compatible(const SurfaceBinding *surface,
+                                       int texture_fmt)
+{
+    static int stencil_texturing = -1;
+    if (stencil_texturing < 0) {
+        stencil_texturing = epoxy_gl_version() >= 43 ||
+                            epoxy_has_gl_extension("GL_ARB_stencil_texturing");
+    }
+    return stencil_texturing &&
+           surface->shape.zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 &&
+           texture_fmt == NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_B8G8R8A8;
+}
+
 static bool surface_to_texture_can_fastpath(SurfaceBinding *surface,
                                             TextureShape *shape)
 {
@@ -220,8 +269,7 @@ static bool surface_to_texture_can_fastpath(SurfaceBinding *surface,
     int texture_fmt = shape->color_format;
 
     if (!surface->color) {
-        // FIXME: Support zeta to color
-        return false;
+        return zeta_to_texture_compatible(surface, texture_fmt);
     }
 
     switch (surface_fmt) {
@@ -256,6 +304,79 @@ static bool surface_to_texture_can_fastpath(SurfaceBinding *surface,
     trace_nv2a_pgraph_surface_texture_compat_failed(
         surface_fmt, texture_fmt);
     return false;
+}
+
+/*
+ * Two passes into the texture: the depth as three colour bytes, then the
+ * stencil as the fourth (a depth-stencil texture gives one or the other)
+ */
+static void render_zeta_to(NV2AState *d, SurfaceBinding *surface,
+                           int texture_unit, GLuint gl_target,
+                           GLuint gl_texture, unsigned int width,
+                           unsigned int height)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHGLState *r = pg->gl_renderer_state;
+
+    glActiveTexture(GL_TEXTURE0 + texture_unit);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->s2t_rndr.fbo);
+
+    GLenum draw_buffers[1] = { GL_COLOR_ATTACHMENT0 };
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gl_target,
+                           gl_texture, 0);
+    glDrawBuffers(1, draw_buffers);
+    ASSERT_FRAMEBUFFER_COMPLETE();
+    ASSERT_NO_GL_ERROR();
+
+    /* An integer (stencil) texture must use nearest filtering */
+    glBindTexture(GL_TEXTURE_2D, surface->gl_buffer);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+
+    glBindVertexArray(r->s2t_rndr.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r->s2t_rndr.vbo);
+
+    glViewport(0, 0, width, height);
+    glDisable(GL_DITHER);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                    GL_DEPTH_COMPONENT);
+    glUseProgram(r->s2t_rndr.zprog_depth);
+    glProgramUniform1i(r->s2t_rndr.zprog_depth,
+                       glGetUniformLocation(r->s2t_rndr.zprog_depth, "tex"),
+                       texture_unit);
+    glColorMask(true, true, true, false);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                    GL_STENCIL_INDEX);
+    glUseProgram(r->s2t_rndr.zprog_stencil);
+    glProgramUniform1i(r->s2t_rndr.zprog_stencil,
+                       glGetUniformLocation(r->s2t_rndr.zprog_stencil, "tex"),
+                       texture_unit);
+    glColorMask(false, false, false, true);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glColorMask(true, true, true, true);
+    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                    GL_DEPTH_COMPONENT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gl_target, 0,
+                           0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->gl_framebuffer);
+    glBindVertexArray(r->gl_vertex_array);
+    glBindTexture(gl_target, gl_texture);
+    glUseProgram(
+        r->shader_binding ? r->shader_binding->gl_program : 0);
 }
 
 static void render_surface_to(NV2AState *d, SurfaceBinding *surface,
@@ -381,8 +502,13 @@ void pgraph_gl_render_surface_to_texture(NV2AState *d, SurfaceBinding *surface,
     glTexImage2D(texture->gl_target, 0, f->gl_internal_format, width, height, 0,
                  f->gl_format, f->gl_type, NULL);
     glBindTexture(texture->gl_target, 0);
-    render_surface_to(d, surface, texture_unit, texture->gl_target,
-                             texture->gl_texture, width, height);
+    if (surface->color) {
+        render_surface_to(d, surface, texture_unit, texture->gl_target,
+                          texture->gl_texture, width, height);
+    } else {
+        render_zeta_to(d, surface, texture_unit, texture->gl_target,
+                       texture->gl_texture, width, height);
+    }
     glBindTexture(texture->gl_target, texture->gl_texture);
     glUseProgram(
         r->shader_binding ? r->shader_binding->gl_program : 0);
@@ -403,8 +529,8 @@ bool pgraph_gl_check_surface_to_texture_compatibility(
     int surface_fmt = surface->shape.color_format;
     int texture_fmt = shape->color_format;
 
-    if (!surface->color) {
-        // FIXME: Support zeta to color
+    if (!surface->color &&
+        !zeta_to_texture_compatible(surface, texture_fmt)) {
         return false;
     }
 
@@ -482,6 +608,19 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
             trace_nv2a_pgraph_surface_cpu_write(surface->vram_addr, offset);
         } else {
             trace_nv2a_pgraph_surface_cpu_read(surface->vram_addr, offset);
+        }
+
+        /*
+         * The menu video writing a full-width first or last row replaces the
+         * picture the GPU drew there: drop it instead of copying it back
+         */
+        if (surface->draw_dirty && write && xbl_yuv_row_bytes && len > 16 &&
+            g_config.display.quality.skip_reuse_copyback &&
+            xbl_yuv_row_bytes == surface->pitch &&
+            (offset == 0 || offset + surface->pitch == surface->size)) {
+            nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_SKIPPED);
+            surface->draw_dirty = false;
+            surface->download_pending = false;
         }
 
         if (surface->draw_dirty) {
@@ -600,6 +739,32 @@ static SurfaceBinding *surface_put(NV2AState *d, hwaddr addr,
     QTAILQ_INSERT_TAIL(&r->surfaces, surface_out, entry);
 
     return surface_out;
+}
+
+/*
+ * Two render targets can start at the same address (the menus put a colour
+ * target over a depth buffer). A texture there shows the one drawn last: use
+ * it when it can be turned into the texture on the GPU, else the first one.
+ */
+SurfaceBinding *pgraph_gl_surface_get_for_texture(NV2AState *d, hwaddr addr,
+                                                  hwaddr len,
+                                                  const TextureShape *shape)
+{
+    PGRAPHGLState *r = d->pgraph.gl_renderer_state;
+    SurfaceBinding *first = pgraph_gl_surface_get(d, addr);
+    SurfaceBinding *newest = NULL, *surface;
+
+    QTAILQ_FOREACH (surface, &r->surfaces, entry) {
+        if (check_surface_overlaps_range(surface, addr, len) &&
+            (!newest || surface->draw_time > newest->draw_time)) {
+            newest = surface;
+        }
+    }
+    if (newest && newest != first && newest->vram_addr == addr &&
+        pgraph_gl_check_surface_to_texture_compatibility(newest, shape)) {
+        return newest;
+    }
+    return first;
 }
 
 SurfaceBinding *pgraph_gl_surface_get(NV2AState *d, hwaddr addr)
