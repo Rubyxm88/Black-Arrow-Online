@@ -220,6 +220,7 @@ typedef struct PGRAPHGLState {
     struct s2t_rndr {
         GLuint fbo, vao, vbo, prog;
         GLuint tex_loc, surface_size_loc;
+        GLuint zprog_depth, zprog_stencil;
     } s2t_rndr;
 
     struct disp_rndr {
