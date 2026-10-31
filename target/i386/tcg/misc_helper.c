@@ -81,9 +81,12 @@ void helper_rdtsc(CPUX86State *env)
     if (qatomic_read(&xemu_perf_clock_enabled)) {
         uint32_t site = env->eip;
         uint32_t caller;
-        /* KeQueryPerformanceCounter is rdtsc; ret: the game's call is the
-           return address */
-        if (site >= 0x80000000 &&
+        uint8_t next = 0;
+        /* KeQueryPerformanceCounter is rdtsc; ret, and games have helpers
+           like it: for those the call is the return address */
+        if ((site >= 0x80000000 ||
+             (cpu_memory_rw_debug(env_cpu(env), site + 2, &next, 1,
+                                  false) == 0 && next == 0xc3)) &&
             cpu_memory_rw_debug(env_cpu(env), env->regs[R_ESP], &caller,
                                 sizeof(caller), false) == 0) {
             site = caller;

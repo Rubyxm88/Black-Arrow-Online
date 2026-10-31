@@ -184,6 +184,18 @@ static int64_t frame_dt[FRAME_RING];
 /* Summary: frames compared and how many differed, matching each picture
    with its own frame's clock read (0) or the one before (1) */
 static int64_t pace_frames, pace_bad[2], pace_err_sum[2], pace_err_max[2];
+/*
+ * Black Arrow's Direct3D Present reads the clock from here once a frame,
+ * after waiting for its vblank: the time between two is how long a frame
+ * took on the game's side, in vblanks (2 is on time at 30 fps). Counts for
+ * 0, 1, 2, 3 or more vblanks, this second and in all; written by the
+ * game's CPU thread
+ */
+#define PRESENT_SITE 0x0044eb55
+#define VBLANK_US 16683
+static uint64_t present_tsc;
+static int present_vblanks_sec[4];
+static int64_t present_vblanks[4];
 /* A vblank this late against its schedule is counted */
 #define VBLANK_LATE_US 2000
 /* Vblanks since the last game frame; for the summary: vblanks, late ones,
@@ -705,6 +717,11 @@ static void reset_summary(void)
     vblanks_since_flip = 0;
     vblank_total = vblank_late_total = vblank_late_most = 0;
     memset(flip_vblanks, 0, sizeof(flip_vblanks));
+    present_tsc = 0;
+    for (int i = 0; i < 4; i++) {
+        qatomic_set(&present_vblanks_sec[i], 0);
+        qatomic_set(&present_vblanks[i], 0);
+    }
     /* Clock reads from before this recording would give one frame the
        time since then */
     for (int i = 0; i < CLOCK_SLOTS; i++) {
@@ -762,6 +779,13 @@ static void write_summary(void)
                 vblank_total, vblank_late_total, VBLANK_LATE_US / 1000,
                 vblank_late_most / 1e3, flip_vblanks[0], flip_vblanks[1],
                 flip_vblanks[2], flip_vblanks[3]);
+    }
+    if (present_vblanks[2]) {
+        fprintf(log_file, "SUMMARY game side: frames by vblanks since the "
+                "frame before (2 is on time): 0: %" PRId64 ", 1: %" PRId64
+                ", 2: %" PRId64 ", 3 or more: %" PRId64 "\n",
+                present_vblanks[0], present_vblanks[1], present_vblanks[2],
+                present_vblanks[3]);
     }
     fprintf(log_file, "SUMMARY markers: %d\n", mark_count);
     print_code_top(log_file, "code translated", code_translated, true);
@@ -1135,6 +1159,15 @@ void xemu_perf_clock_read(uint32_t site, uint64_t tsc)
 {
     if (!site) {
         return;
+    }
+    if (site == PRESENT_SITE) {
+        if (present_tsc && tsc > present_tsc) {
+            int64_t us = (int64_t)((tsc - present_tsc) / CLOCK_TSC_PER_US);
+            int v = MIN((us + VBLANK_US / 2) / VBLANK_US, 3);
+            qatomic_inc(&present_vblanks_sec[v]);
+            qatomic_inc(&present_vblanks[v]);
+        }
+        present_tsc = tsc;
     }
     unsigned h = (site * 2654435761u) >> 26;
     for (int i = 0; i < CLOCK_SLOTS; i++) {
@@ -1729,6 +1762,14 @@ static void tick(void *opaque)
             g_string_append_printf(s, " pace_off_ms=%.1f pace_bad=%d/%d",
                                    last.pace_err_max / 1e3, last.pace_bad,
                                    last.pace_frames);
+        }
+        int pv[4];
+        for (int i = 0; i < 4; i++) {
+            pv[i] = qatomic_xchg(&present_vblanks_sec[i], 0);
+        }
+        if (pv[0] + pv[1] + pv[2] + pv[3]) {
+            g_string_append_printf(s, " game_vblanks=%d/%d/%d/%d", pv[0],
+                                   pv[1], pv[2], pv[3]);
         }
         if (last.vblanks) {
             g_string_append_printf(s, " vblank=%d late=%d late_ms=%.1f "
