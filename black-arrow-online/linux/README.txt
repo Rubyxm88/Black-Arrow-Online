@@ -158,11 +158,16 @@ firewalld), allow UDP port 3074 too.
 REPORTING A PROBLEM
 -------------------
 
-The easy way: start "Black Arrow Report" from your applications menu. If the
-game is stuck, do it while the game is still open. It makes a
-BlackArrow-report-....tar.gz in Downloads with the logs, your computer's
-details and, if the game is open, what it is doing. Send that file and a
-few words on what happened to whoever shared the package.
+The easy way: in the app, Troubleshoot > Make a Full Report, or start
+"Black Arrow Report" from your applications menu. If the game is stuck, do
+it while the game is still open. It makes a BlackArrow-report-....tar.gz in
+Downloads with the logs, your computer's details and, if the game is open,
+what it is doing. A small window says where the file is when it is done.
+Send that file and a few words on what happened to whoever shared the
+package.
+
+If no file appears, send system/report-run.log from the folder above: it
+says what the report did each time it ran.
 
 By hand instead, send:
 - Your Linux (name and version) and your graphics card.

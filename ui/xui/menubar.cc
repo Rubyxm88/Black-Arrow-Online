@@ -34,6 +34,9 @@
 #include "viewport-manager.hh"
 #include "notifications.hh"
 #include "perf-overlay.hh"
+#if defined(__APPLE__) || defined(__linux__)
+#include "full-report.hh"
+#endif
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-xbcheck.h"
@@ -860,6 +863,15 @@ static void TroubleshootMenu()
                  "different disc of the same game; this empties them now.");
 
     MenuHeader("Files");
+#if defined(__APPLE__) || defined(__linux__)
+    if (ImGui::MenuItem(FullReportRunning() ? "Making a Full Report..."
+                                            : "Make a Full Report",
+                        NULL, false, !FullReportRunning())) {
+        FullReportStart();
+    }
+    MenuItemHelp("Puts the logs, settings and what the app is doing in one "
+                 "file in Downloads, to send when something goes wrong.");
+#endif
     if (ImGui::MenuItem("Open Logs Folder")) {
         xemu_diag_open_folder();
     }
