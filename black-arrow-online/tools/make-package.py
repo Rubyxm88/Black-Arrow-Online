@@ -22,7 +22,9 @@ import datetime
 import filecmp
 import hashlib
 import os
+import re
 import shutil
+import struct
 import sys
 import zipfile
 
@@ -32,11 +34,69 @@ PACKAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
 # Package path -> file name in --content-root. Taken from BASE when the
 # content root does not have it.
 CONTENT_DISCS = [
+    # Black Arrow - Install Game Updates: the Revived v1 install disc. A new
+    # disc here needs its title update hash in ui/xemu-xbonline.h (checked
+    # below), so it ships with an xemu that knows it.
     ('system/Black Arrow Update and Maps.iso',
-     'Black Arrow Update and Maps.iso'),
+     'BLACK_ARROW_REVIVED_v1_INSTALL_DISC.iso'),
     # Old Bow - Install Game Updates (Rainbow Six 3 title updates and maps)
     ('system/Rainbow Six 3 Update and Maps.iso', 'Rainbow Six 3 DLC.iso'),
 ]
+
+UPDATE_DISC = 'system/Black Arrow Update and Maps.iso'
+XBONLINE_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
+                          '..', 'ui', 'xemu-xbonline.h')
+
+
+def xiso_file(iso, path):
+    """Bytes of a file on an Xbox disc image, None when it is not there"""
+    with open(iso, 'rb') as f:
+        for base in (0, 0x18300000, 0x1040000, 0xFD90000):
+            f.seek(base + 32 * 2048)
+            vd = f.read(28)
+            if vd[:20] == b'MICROSOFT*XBOX*MEDIA':
+                break
+        else:
+            return None
+        sector, size = struct.unpack_from('<II', vd, 20)
+        for part in path.split('/'):
+            f.seek(base + sector * 2048)
+            table = f.read(size)
+            found = None
+            pos = 0
+            while pos + 14 <= len(table):
+                left, right, sec, sz, attr, n = struct.unpack_from(
+                    '<HHIIBB', table, pos)
+                if left == 0xffff:      # padding up to the next sector
+                    pos = (pos // 2048 + 1) * 2048
+                    continue
+                name = table[pos + 14:pos + 14 + n].decode('latin-1')
+                if name.lower() == part.lower():
+                    found = (sec, sz)
+                    break
+                pos = (pos + 14 + n + 3) & ~3
+            if not found:
+                return None
+            sector, size = found
+        f.seek(base + sector * 2048)
+        return f.read(size)
+
+
+def check_update_disc(iso):
+    """The title update on the update disc is the one xemu's check knows"""
+    with open(XBONLINE_H) as f:
+        want = re.search(r'TITLE_UPDATE_SHA256 \\\s*"([0-9a-f]{64})"',
+                         f.read()).group(1)
+    xbe = xiso_file(iso, 'content/u/default.xbe')
+    if xbe is None:
+        sys.exit('%s has no content/u/default.xbe' % iso)
+    have = hashlib.sha256(xbe[:struct.unpack_from('<I', xbe, 0x108)[0]])
+    if have.hexdigest() != want:
+        sys.exit('the title update on %s (headers %s) is not the one in '
+                 'ui/xemu-xbonline.h (%s): put its hash there, in the same '
+                 'release' % (iso, have.hexdigest(), want))
+    print('update disc title update matches xemu-xbonline.h')
+
 
 # Same files as the release workflow, rooted at the package folder
 UPDATE_FILES = ['Black Arrow Online.exe', 'README.txt', 'system/xemu.exe',

@@ -390,6 +390,14 @@ static bool xbe_certificate(const uint8_t *xbe, size_t len, XbOnlineXbe *out)
         }
     }
     out->name[39] = 0;
+    out->header_sha256[0] = 0;
+    uint32_t headers = ldl_le_p(xbe + 0x108);
+    if (headers >= 0x180 && headers <= len) {
+        char *sum = g_compute_checksum_for_data(G_CHECKSUM_SHA256, xbe,
+                                                headers);
+        g_strlcpy(out->header_sha256, sum, sizeof(out->header_sha256));
+        g_free(sum);
+    }
     return true;
 }
 

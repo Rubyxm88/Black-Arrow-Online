@@ -529,8 +529,9 @@ static void PlayMenu()
         if (ImGui::MenuItem("Black Arrow - Install Game Updates")) {
             ActionPlayDiscFile(XEMU_XBONLINE_UPDATE_DISC);
         }
-        MenuItemHelp("Installs the Black Arrow title update and map packs on "
-                     "this console. Then play Black Arrow from Games.");
+        MenuItemHelp("Installs the " XEMU_XBONLINE_TITLE_UPDATE_NAME
+                     " update and map packs on this console. Then play "
+                     "Black Arrow from Games.");
     }
     if (rs3_updates) {
         if (ImGui::MenuItem("Old Bow - Install Game Updates")) {

@@ -69,6 +69,18 @@ int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
 /* Title update version 2.01, installed by the update disc */
 #define XEMU_XBONLINE_TITLE_UPDATE_VERSION 0x201
 
+/*
+ * The update disc's title update, told apart by the SHA-256 of its
+ * default.xbe headers (XbOnlineXbe.header_sha256): the original 2.01 update
+ * and Black Arrow Revived v1 both say version 201. A new update disc in the
+ * package needs its hash here, in the same release.
+ */
+#define XEMU_XBONLINE_TITLE_UPDATE_NAME "Black Arrow Revived v1"
+#define XEMU_XBONLINE_TITLE_UPDATE_SHA256 \
+    "4ce68b84dc4f1a93e9d55249aed88dcf85102b9cb4264ac7f961b06e4b84cf54"
+#define XEMU_XBONLINE_TITLE_UPDATE_OLD_SHA256 \
+    "abb36ddd48b5aa75d20473f3ce5682ea66c99d1af7b88affc420892218e11b87"
+
 /* Title ID of Rainbow Six 3 */
 #define XEMU_XBONLINE_RS3_TITLE_ID 0x55530013
 
@@ -87,6 +99,8 @@ typedef struct XbOnlineXbe {
     uint32_t title_id;
     uint32_t version;
     char name[40];
+    /* SHA-256 of the headers (hex), "" when they were not all read */
+    char header_sha256[65];
 } XbOnlineXbe;
 
 /*

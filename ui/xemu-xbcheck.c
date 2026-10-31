@@ -615,11 +615,26 @@ static void check_title_update(void)
                  "Updates.");
     } else if (xbe.version < XEMU_XBONLINE_TITLE_UPDATE_VERSION) {
         item_set(i, XBCHECK_FAIL,
-                 "An older title update (version %x) is installed. Menu: XB "
-                 "Online > Black Arrow - Install Game Updates.", xbe.version);
+                 "An older title update (version %x) is installed. Menu: "
+                 "Play > Black Arrow - Install Game Updates.", xbe.version);
+    } else if (!strcmp(xbe.header_sha256,
+                       XEMU_XBONLINE_TITLE_UPDATE_SHA256)) {
+        item_set(i, XBCHECK_OK, "%s update installed, %d map pack%s.",
+                 XEMU_XBONLINE_TITLE_UPDATE_NAME, maps, maps == 1 ? "" : "s");
+    } else if (!strcmp(xbe.header_sha256,
+                       XEMU_XBONLINE_TITLE_UPDATE_OLD_SHA256)) {
+        item_set(i, XBCHECK_FAIL,
+                 "The original title update %x is installed, not the %s "
+                 "update the other players have. Menu: Play > Black Arrow - "
+                 "Install Game Updates.", xbe.version,
+                 XEMU_XBONLINE_TITLE_UPDATE_NAME);
     } else {
-        item_set(i, XBCHECK_OK, "Title update %x installed, %d map pack%s.",
-                 xbe.version, maps, maps == 1 ? "" : "s");
+        item_set(i, XBCHECK_WARN,
+                 "A title update this build does not know (version %x) is "
+                 "installed, %d map pack%s. If players can't join you, "
+                 "install the %s update: Play > Black Arrow - Install Game "
+                 "Updates.", xbe.version, maps, maps == 1 ? "" : "s",
+                 XEMU_XBONLINE_TITLE_UPDATE_NAME);
     }
 }
 
