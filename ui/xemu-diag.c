@@ -412,7 +412,7 @@ static void write_settings(FILE *f)
 
     fprintf(f, "# settings: renderer=%s surface_scale=%d vsync=%d "
             "skip_reuse_copyback=%d use_dsp=%d use_dsp_jit=%d hrtf=%d "
-            "voice_workers=%d hard_fpu=%d "
+            "voice_workers=%d hard_fpu=%d hard_sse=%d prelight=%d "
             "cache_shaders=%d shader_async=%d precache_auto=%d "
             "precache_own=%d\n",
             renderer < 3 ? renderers[renderer] : "?",
@@ -424,7 +424,8 @@ static void write_settings(FILE *f)
             /* 0 in the settings means auto, as vp.c does */
             g_config.audio.vp.num_workers ?:
                 MIN(AUTO_VOICE_WORKERS, SDL_GetNumLogicalCPUCores()),
-            g_config.perf.hard_fpu, g_config.perf.cache_shaders,
+            g_config.perf.hard_fpu, g_config.perf.hard_sse,
+            g_config.perf.prelight, g_config.perf.cache_shaders,
             g_config.perf.shader_async, g_config.perf.shader_precache_auto,
             g_config.perf.shader_precache_own);
     char sound[160];

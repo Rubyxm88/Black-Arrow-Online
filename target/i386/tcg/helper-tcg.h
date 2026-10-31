@@ -58,6 +58,10 @@ static inline target_long lshift(target_long x, int n)
 
 /* translate.c */
 void tcg_x86_init(void);
+#if defined(XBOX) && defined(__x86_64__)
+/* Single float SSE math on the host's SSE (perf.hard_sse), fpu_helper.c */
+void x86_hard_sse_init(bool on);
+#endif
 void x86_translate_code(CPUState *cs, TranslationBlock *tb,
                         int *max_insns, vaddr pc, void *host_pc);
 
@@ -131,5 +135,6 @@ static inline void do_end_instruction(CPUX86State *env)
 /* xbl_hle.c (test only): native versions of hot Black Arrow routines */
 bool xbl_yuv_hle_enabled(void);
 bool xbl_yuv_hle_match(CPUX86State *env, target_ulong pc);
+bool xbl_prelight_match(CPUX86State *env, target_ulong pc);
 
 #endif /* I386_HELPER_TCG_H */

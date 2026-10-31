@@ -25,6 +25,7 @@
 #include "exec/target_page.h"
 #include "exec/tb-flush.h"
 #include "helper-tcg.h"
+#include "ui/xemu-settings.h"
 
 #define YUV_PC 0x4bd0e0u
 
@@ -423,4 +424,84 @@ void helper_xbl_yuv_hle(CPUX86State *env)
     }
     env->regs[R_ESP] = esp + 8;
     env->eip = ret - env->segs[R_CS].base;
+}
+
+/*
+ * Pre-light: the game lights each static mesh the first frame it is drawn
+ * (0x3cacb0 -> 0x3c9da0), so the world freezes when many new meshes come
+ * into view (the spawn view, the first look down a street). At the first
+ * pass through the once-per-frame pad read, the routine in
+ * xbl_prelight.inc (tools/freeze/prelight_asm.py) is put in the title image
+ * section, unused in play, and the pad read's call is pointed at it. Each
+ * frame it lights the level's not yet lit meshes with the game's own
+ * function for up to 8 ms of guest time (perf.prelight off: none; lab:
+ * XEMU_PRELIGHT_MS, 0 = off), then goes on to the pad read. A game restart
+ * loads the original code again, so it is put back in whenever the call is
+ * found pointing at the pad read.
+ */
+#include "xbl_prelight.inc"
+
+#define PRELIGHT_PC 0x001a6bb4u
+#define PRELIGHT_PAD_READ 0x004c6dbau
+#define BA_TIMESTAMP_VA 0x00010114u
+#define BA_TIMESTAMP 0x4145b5c5u
+#define XBOX_TSC_PER_MS 733333u
+
+static int prelight_state; /* 0 not looked at, 1 on, -1 off */
+static uint32_t prelight_cycles; /* guest TSC cycles a frame */
+
+static uint32_t prelight_budget(void)
+{
+    const char *e = getenv("XEMU_PRELIGHT_MS");
+    double ms = e && *e ? atof(e) : g_config.perf.prelight ? 8.0 : 0;
+    if (ms <= 0) {
+        return 0;
+    }
+    return ms * XBOX_TSC_PER_MS > 0xfffffff0u ? 0xfffffff0u
+                                              : (uint32_t)(ms * XBOX_TSC_PER_MS);
+}
+
+bool xbl_prelight_match(CPUX86State *env, target_ulong pc)
+{
+    return pc == PRELIGHT_PC && prelight_state >= 0;
+}
+
+static bool prelight_put(CPUState *cs, uint32_t va, const void *p, int n)
+{
+    return cpu_memory_rw_debug(cs, va, (void *)p, n, true) == 0;
+}
+
+void helper_xbl_prelight(CPUX86State *env)
+{
+    CPUState *cs = env_cpu(env);
+    uint8_t call[5];
+    uint32_t stamp = 0, budget, rel;
+    static uint8_t zero[PRELIGHT_DATA_SIZE];
+
+    /* Runs each time the call's block runs: most often it is in already */
+    if (prelight_state == 0) {
+        prelight_cycles = prelight_budget();
+        prelight_state = prelight_cycles ? 1 : -1;
+    }
+    if (prelight_state < 0) {
+        return;
+    }
+    budget = prelight_cycles;
+    rel = PRELIGHT_PAD_READ - (PRELIGHT_PC + 5);
+    if (cpu_memory_rw_debug(cs, BA_TIMESTAMP_VA, &stamp, 4, false) ||
+        le32_to_cpu(stamp) != BA_TIMESTAMP ||
+        cpu_memory_rw_debug(cs, PRELIGHT_PC, call, 5, false) ||
+        call[0] != 0xe8 || ldl_le_p(call + 1) != rel) {
+        return;
+    }
+    budget = cpu_to_le32(budget);
+    rel = cpu_to_le32(PRELIGHT_CAVE - (PRELIGHT_PC + 5));
+    if (!prelight_put(cs, PRELIGHT_LEVEL, zero, sizeof(zero)) ||
+        !prelight_put(cs, PRELIGHT_BUDGET, &budget, 4) ||
+        !prelight_put(cs, PRELIGHT_CAVE, prelight_code, sizeof(prelight_code)) ||
+        !prelight_put(cs, PRELIGHT_PC + 1, &rel, 4)) {
+        return;
+    }
+    fprintf(stderr, "prelight: installed, %u cycles a frame\n",
+            le32_to_cpu(budget));
 }

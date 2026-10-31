@@ -445,6 +445,12 @@ perf:
   hard_fpu:
     type: bool
     default: true
+  hard_sse:
+    type: bool
+    default: true
+  prelight:
+    type: bool
+    default: true
   cache_shaders:
     type: bool
     default: true
