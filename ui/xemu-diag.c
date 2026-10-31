@@ -1133,8 +1133,9 @@ static void clock_frame(void)
 }
 
 /* With the lock held, once a second: " clock=site:calls/frames:min-max_ms"
-   for the reads seen in the most frames. The first is the frame clock from
-   now on */
+   for the reads seen in the most frames, then the most reads: the game's
+   frame cap reads the clock several times a frame while it waits. The first
+   is the frame clock from now on */
 static void clock_second(GString *s)
 {
     int order[CLOCK_SHOWN];
@@ -1148,7 +1149,7 @@ static void clock_second(GString *s)
         while (j > 0) {
             ClockSlot *o = &clock_slots[order[j - 1]];
             if (o->frames_read > c->frames_read ||
-                (o->frames_read == c->frames_read && o->calls <= c->calls)) {
+                (o->frames_read == c->frames_read && o->calls >= c->calls)) {
                 break;
             }
             if (j < CLOCK_SHOWN) {
