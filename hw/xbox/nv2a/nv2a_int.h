@@ -130,6 +130,9 @@ typedef struct NV2AState {
         uint32_t enabled_interrupts;
         hwaddr start;
         uint32_t raster;
+        /* Vblanks raised, and the vblank at which the GPU last finished a
+           frame (FLIP_STALL) with a count of those frames */
+        uint32_t vblanks, flip_vblank, flips;
     } pcrtc;
 
     struct {

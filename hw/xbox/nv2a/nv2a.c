@@ -240,10 +240,20 @@ static void nv2a_vga_gfx_update(void *opaque)
     vga->hw_ops->gfx_update(vga);
 
     NV2AState *d = container_of(vga, NV2AState, vga);
+    qatomic_inc(&d->pcrtc.vblanks);
     d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
     d->pcrtc.raster = 0;
 
     nv2a_update_irq(d);
+}
+
+void nv2a_get_flips(uint32_t *vblanks, uint32_t *flip_vblank,
+                    uint32_t *flips)
+{
+    NV2AState *d = g_nv2a;
+    *flips = qatomic_read(&d->pcrtc.flips);
+    *flip_vblank = qatomic_read(&d->pcrtc.flip_vblank);
+    *vblanks = qatomic_read(&d->pcrtc.vblanks);
 }
 
 static void nv2a_init_memory(NV2AState *d, MemoryRegion *ram)

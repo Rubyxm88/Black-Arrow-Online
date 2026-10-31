@@ -469,6 +469,10 @@ perf:
   freeze_report:
     type: bool
     default: true
+  frame_pacing:  # Experimental: a game's new picture waits for its slot on
+                 # the console's vblank schedule, so pictures change evenly
+    type: bool
+    default: false
   mac_test_pictures:  # Mac missing-text test; turned off at each start
     type: bool
     default: false

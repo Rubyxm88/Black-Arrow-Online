@@ -30,6 +30,13 @@ unsigned int nv2a_get_surface_scale_factor(void);
 const uint8_t *nv2a_get_dac_palette(void);
 int nv2a_get_screen_off(void);
 
+/*
+ * Vblanks raised so far, the vblank at which the GPU last finished a frame
+ * for the screen, and how many it has finished
+ */
+void nv2a_get_flips(uint32_t *vblanks, uint32_t *flip_vblank,
+                    uint32_t *flips);
+
 /* What the GPU is doing, for a freeze report (ui/xemu-diag.c) */
 void nv2a_freeze_state(GString *out);
 

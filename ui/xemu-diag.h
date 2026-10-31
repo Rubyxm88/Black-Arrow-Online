@@ -107,6 +107,13 @@ void xemu_diag_present(int64_t start_us, int64_t end_us);
  */
 void xemu_diag_vblank(int64_t late_ns);
 
+/*
+ * From the window, when it starts showing a new picture from the console:
+ * how many vblanks since it started showing the one before, and whether the
+ * frame pacer held it back
+ */
+void xemu_diag_shown(int vblanks, bool held);
+
 const char *xemu_diag_cause_name(XemuDiagCause cause);
 
 /* Seconds since this run wrote a freeze report, or -1 if it has not */

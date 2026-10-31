@@ -836,6 +836,51 @@ static void first_frame_step(const char *step)
  * Renders the main interface. Usually called from the main thread,
  * but may sometimes be called from another thread.
  */
+/*
+ * Frame pacing (perf.frame_pacing). A game at 30 fps changes its picture
+ * every second vblank, but when the emulated GPU finishes a frame a little
+ * late, the change slips to the next vblank and the next frame's comes one
+ * early: pictures stay up 50 ms, then 17. The pacer finds the vblank parity
+ * the late changes land on and keeps showing the old picture until a vblank
+ * of that parity, so every picture stays up 33 ms, one vblank later at most.
+ * Games that change their picture at other rates are left alone.
+ */
+#define PACE_HISTORY 16
+static uint32_t pace_flips, pace_vblank_at[PACE_HISTORY];
+static int pace_n;
+
+/* True: keep showing the last picture for now */
+static bool frame_pacer_hold(uint32_t vblanks, uint32_t flip_vblank,
+                             uint32_t flips)
+{
+    if (flips != pace_flips) {
+        pace_vblank_at[pace_n++ % PACE_HISTORY] = flip_vblank;
+        pace_flips = flips;
+    }
+    if (pace_n < PACE_HISTORY) {
+        return false;
+    }
+    /* 30 fps: the last changes average two vblanks apart */
+    uint32_t newest = pace_vblank_at[(pace_n - 1) % PACE_HISTORY];
+    uint32_t oldest = pace_vblank_at[pace_n % PACE_HISTORY];
+    uint32_t span = newest - oldest;
+    if (span < 2 * (PACE_HISTORY - 1) - 3 ||
+        span > 2 * (PACE_HISTORY - 1) + 3) {
+        return false;
+    }
+    /* The parity fewer changes land on is where the late ones land; with
+       none late, the pictures are already even */
+    int odd = 0;
+    for (int i = 0; i < PACE_HISTORY; i++) {
+        odd += pace_vblank_at[i] & 1;
+    }
+    if (odd == 0 || odd == PACE_HISTORY) {
+        return false;
+    }
+    uint32_t slot = odd < PACE_HISTORY - odd ? 1 : 0;
+    return (vblanks & 1) != slot && vblanks - flip_vblank < 2;
+}
+
 static void gl_render_frame(struct xemu_console *scon)
 {
     /*
@@ -872,8 +917,31 @@ static void gl_render_frame(struct xemu_console *scon)
      * the guest code isn't using HW accelerated rendering, but just blitting
      * to the framebuffer, fall back to the VGA path.
      */
+    /* A new picture from the console: how many vblanks since the last one
+       shown, and whether the frame pacer holds it back for now */
+    static uint32_t shown_flips, shown_vblank;
+    static GLuint last_tex;
+    uint32_t vblanks, flip_vblank, flips;
+    nv2a_get_flips(&vblanks, &flip_vblank, &flips);
+    static bool was_held;
+    bool hold = flips != shown_flips && last_tex &&
+                g_config.perf.frame_pacing &&
+                g_config.display.renderer == CONFIG_DISPLAY_RENDERER_OPENGL &&
+                frame_pacer_hold(vblanks, flip_vblank, flips);
+    if (hold) {
+        was_held = true;
+    } else if (flips != shown_flips) {
+        xemu_diag_shown(vblanks - shown_vblank, was_held);
+        was_held = false;
+        shown_flips = flips;
+        shown_vblank = vblanks;
+    }
+
     first_frame_step("getting the console's picture");
-    GLuint tex = nv2a_get_framebuffer_surface();
+    GLuint tex = hold ? last_tex : nv2a_get_framebuffer_surface();
+    if (!hold) {
+        last_tex = tex;
+    }
     first_frame_step(tex ? "got the console's picture" : "no console picture yet");
 
     ASSERT_NO_GL_ERROR();
@@ -918,7 +986,9 @@ static void gl_render_frame(struct xemu_console *scon)
         glDeleteTextures(1, &tex);
     }
 
-    nv2a_release_framebuffer_surface();
+    if (!hold) {
+        nv2a_release_framebuffer_surface();
+    }
 
 #ifdef _WIN32
     if (win32_dxgi_present_is_active()) {

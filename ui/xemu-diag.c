@@ -145,6 +145,9 @@ static struct {
     int vblanks, vblank_late;
     int64_t vblank_late_max;
     int flip_vblanks[4];
+    /* New pictures shown by vblanks since the one before (0-3+), and how
+       many the frame pacer held back */
+    int shown_vblanks[4], shown_held;
 } sec;
 static int64_t last_frame_us;
 static bool frames_seen;
@@ -203,6 +206,7 @@ static int64_t present_vblanks[4];
 static int vblanks_since_flip;
 static int64_t vblank_total, vblank_late_total, vblank_late_most;
 static int64_t flip_vblanks[4];
+static int64_t shown_vblanks[4], shown_held;
 /* Screen stalls for the summary: count and longest */
 static int screen_stall_count;
 static int64_t screen_stall_max;
@@ -717,6 +721,8 @@ static void reset_summary(void)
     vblanks_since_flip = 0;
     vblank_total = vblank_late_total = vblank_late_most = 0;
     memset(flip_vblanks, 0, sizeof(flip_vblanks));
+    memset(shown_vblanks, 0, sizeof(shown_vblanks));
+    shown_held = 0;
     present_tsc = 0;
     for (int i = 0; i < 4; i++) {
         qatomic_set(&present_vblanks_sec[i], 0);
@@ -779,6 +785,14 @@ static void write_summary(void)
                 vblank_total, vblank_late_total, VBLANK_LATE_US / 1000,
                 vblank_late_most / 1e3, flip_vblanks[0], flip_vblanks[1],
                 flip_vblanks[2], flip_vblanks[3]);
+    }
+    if (shown_vblanks[2]) {
+        fprintf(log_file, "SUMMARY screen: new pictures by vblanks since "
+                "the one before (2 is even at 30 fps): 0: %" PRId64 ", 1: %"
+                PRId64 ", 2: %" PRId64 ", 3 or more: %" PRId64 "; held "
+                "for their slot by frame pacing: %" PRId64 "\n",
+                shown_vblanks[0], shown_vblanks[1], shown_vblanks[2],
+                shown_vblanks[3], shown_held);
     }
     if (present_vblanks[2]) {
         fprintf(log_file, "SUMMARY game side: frames by vblanks since the "
@@ -1134,6 +1148,22 @@ void xemu_diag_poll(void)
                             status.list_total, status.list_missing);
         }
     }
+}
+
+void xemu_diag_shown(int vblanks, bool held)
+{
+    if (!qatomic_read(&xemu_perf_clock_enabled)) {
+        return;
+    }
+    int v = MIN(MAX(vblanks, 0), 3);
+    g_mutex_lock(&lock);
+    sec.shown_vblanks[v]++;
+    shown_vblanks[v]++;
+    if (held) {
+        sec.shown_held++;
+        shown_held++;
+    }
+    g_mutex_unlock(&lock);
 }
 
 void xemu_diag_vblank(int64_t late_ns)
@@ -1770,6 +1800,14 @@ static void tick(void *opaque)
         if (pv[0] + pv[1] + pv[2] + pv[3]) {
             g_string_append_printf(s, " game_vblanks=%d/%d/%d/%d", pv[0],
                                    pv[1], pv[2], pv[3]);
+        }
+        if (last.shown_vblanks[0] + last.shown_vblanks[1] +
+            last.shown_vblanks[2] + last.shown_vblanks[3]) {
+            g_string_append_printf(s, " shown_vblanks=%d/%d/%d/%d held=%d",
+                                   last.shown_vblanks[0],
+                                   last.shown_vblanks[1],
+                                   last.shown_vblanks[2],
+                                   last.shown_vblanks[3], last.shown_held);
         }
         if (last.vblanks) {
             g_string_append_printf(s, " vblank=%d late=%d late_ms=%.1f "

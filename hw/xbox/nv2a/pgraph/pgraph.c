@@ -924,6 +924,8 @@ DEF_METHOD(NV097, FLIP_STALL)
     d->pgraph.renderer->ops.surface_update(d, false, true, true);
     d->pgraph.renderer->ops.flip_stall(d);
     nv2a_profile_flip_stall();
+    qatomic_set(&d->pcrtc.flip_vblank, qatomic_read(&d->pcrtc.vblanks));
+    qatomic_inc(&d->pcrtc.flips);
     pg->waiting_for_flip = true;
 }
 
