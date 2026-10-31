@@ -498,6 +498,278 @@ void xemu_diag_programs_summary(GString *s)
     g_mutex_unlock(&lock);
 }
 
+#elif defined(__linux__)
+
+/*
+ * Linux: the threads are the entries of /proc/self/task, named by their comm
+ * (15 characters at most, so "nv2a.pfifo_thre"). Busy time comes from each
+ * thread's CPU clock, in nanoseconds. Other programs are not sampled.
+ */
+#include <dirent.h>
+#include <sys/syscall.h>
+#include <time.h>
+
+enum {
+    G_GAME_CPU, G_GPU, G_UI, G_AUDIO, G_VOICES, G_MAIN_LOOP, G_OTHER,
+    G__COUNT
+};
+
+static const char *const group_names[G__COUNT] = {
+    [G_GAME_CPU] = "game_cpu",   [G_GPU] = "gpu",
+    [G_UI] = "ui",               [G_AUDIO] = "audio",
+    [G_VOICES] = "voices",       [G_MAIN_LOOP] = "main_loop",
+    [G_OTHER] = "other",
+};
+
+typedef struct ThreadInfo {
+    pid_t tid;
+    char *name;
+    int group;
+    int64_t last_ns;
+} ThreadInfo;
+
+static GMutex lock;
+static GArray *threads;
+static int64_t last_wall_ns;
+static pid_t ui_tid;
+static pid_t game_cpu_tid;
+static bool scan_busy;
+
+static double group_sum[G__COUNT], group_peak[G__COUNT];
+static int sample_count;
+
+static int64_t wall_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+/* Another thread's CPU time: its CPU clock, as glibc makes it for a tid */
+static bool thread_ns(pid_t tid, int64_t *ns)
+{
+    clockid_t clock = (clockid_t)((~(unsigned)tid << 3) | 4 | 2);
+    struct timespec ts;
+    if (clock_gettime(clock, &ts)) {
+        return false;
+    }
+    *ns = ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    return true;
+}
+
+static char *thread_name(pid_t tid)
+{
+    char *path = g_strdup_printf("/proc/self/task/%d/comm", (int)tid);
+    char *name = NULL;
+    if (g_file_get_contents(path, &name, NULL, NULL)) {
+        g_strstrip(name);
+        /* One word, so the line stays easy to split */
+        g_strdelimit(name, " ,:=/", '_');
+    }
+    g_free(path);
+    return name;
+}
+
+static int classify(pid_t tid, const char *name)
+{
+    if (tid == qatomic_read(&ui_tid)) {
+        return G_UI;
+    }
+    if (!name || !name[0]) {
+        return G_OTHER;
+    }
+    if (g_str_has_prefix(name, "CPU_") || g_str_has_prefix(name, "ALL_CPUs")) {
+        return G_GAME_CPU;
+    }
+    if (g_str_has_prefix(name, "nv2a.pfifo")) {
+        return G_GPU;
+    }
+    if (!strcmp(name, "mcpx.apu_thread")) {
+        return G_AUDIO;
+    }
+    if (g_str_has_prefix(name, "mcpx.voice")) {
+        return G_VOICES;
+    }
+    if (!strcmp(name, "qemu_main")) {
+        return G_MAIN_LOOP;
+    }
+    return G_OTHER;
+}
+
+static ThreadInfo *find_thread(pid_t tid)
+{
+    for (guint i = 0; i < threads->len; i++) {
+        ThreadInfo *t = &g_array_index(threads, ThreadInfo, i);
+        if (t->tid == tid) {
+            return t;
+        }
+    }
+    return NULL;
+}
+
+/* Scan thread: add the threads of this process not known yet */
+static void scan_threads(void)
+{
+    DIR *dir = opendir("/proc/self/task");
+    if (!dir) {
+        return;
+    }
+    GArray *tids = g_array_new(false, false, sizeof(pid_t));
+    struct dirent *e;
+    while ((e = readdir(dir))) {
+        pid_t tid = atoi(e->d_name);
+        if (tid > 0) {
+            g_array_append_val(tids, tid);
+        }
+    }
+    closedir(dir);
+
+    g_mutex_lock(&lock);
+    if (!threads) {
+        threads = g_array_new(false, false, sizeof(ThreadInfo));
+    }
+    for (guint i = 0; i < tids->len; i++) {
+        pid_t tid = g_array_index(tids, pid_t, i);
+        ThreadInfo *known = find_thread(tid);
+        if (known) {
+            /* Named after it started, or the window thread marked since */
+            g_free(known->name);
+            known->name = thread_name(tid);
+            known->group = classify(tid, known->name);
+            continue;
+        }
+        ThreadInfo t = { .tid = tid };
+        if (!thread_ns(tid, &t.last_ns)) {
+            continue;
+        }
+        t.name = thread_name(tid);
+        t.group = classify(tid, t.name);
+        g_array_append_val(threads, t);
+        if (t.group == G_GAME_CPU && !qatomic_read(&game_cpu_tid)) {
+            qatomic_set(&game_cpu_tid, tid);
+        }
+    }
+    g_mutex_unlock(&lock);
+    g_array_free(tids, true);
+}
+
+void xemu_diag_threads_reset(void)
+{
+    g_mutex_lock(&lock);
+    memset(group_sum, 0, sizeof(group_sum));
+    memset(group_peak, 0, sizeof(group_peak));
+    sample_count = 0;
+    g_mutex_unlock(&lock);
+}
+
+void xemu_diag_threads_mark_ui(void)
+{
+    qatomic_set(&ui_tid, (pid_t)syscall(SYS_gettid));
+}
+
+void xemu_diag_threads_sample(GString *s)
+{
+    g_mutex_lock(&lock);
+    if (!threads) {
+        /* The first scan has not finished */
+        g_mutex_unlock(&lock);
+        return;
+    }
+
+    int64_t now = wall_ns();
+    int64_t span = now - last_wall_ns;
+    bool have_span = last_wall_ns && span > 0;
+    last_wall_ns = now;
+
+    double group[G__COUNT] = { 0 };
+    double top_other = 0;
+    const char *top_name = NULL;
+    for (guint i = 0; i < threads->len;) {
+        ThreadInfo *t = &g_array_index(threads, ThreadInfo, i);
+        int64_t ns;
+        if (!thread_ns(t->tid, &ns)) {
+            /* Exited */
+            g_free(t->name);
+            g_array_remove_index_fast(threads, i);
+            continue;
+        }
+        double pct = have_span ? 100.0 * (ns - t->last_ns) / span : 0;
+        t->last_ns = ns;
+        group[t->group] += pct;
+        if (t->group == G_OTHER && pct > top_other) {
+            top_other = pct;
+            top_name = t->name;
+        }
+        i++;
+    }
+
+    if (have_span) {
+        g_string_append(s, " thread_cpu=");
+        for (int g = 0; g < G__COUNT; g++) {
+            g_string_append_printf(s, "%s%s:%.0f", g ? "," : "",
+                                   group_names[g], group[g]);
+            group_sum[g] += group[g];
+            group_peak[g] = MAX(group_peak[g], group[g]);
+        }
+        sample_count++;
+        if (top_other >= 1) {
+            g_string_append_printf(s, " busiest_other=%s:%.0f",
+                                   top_name && top_name[0] ? top_name : "unnamed", top_other);
+        }
+    }
+    g_mutex_unlock(&lock);
+}
+
+void xemu_diag_threads_summary(GString *s)
+{
+    g_mutex_lock(&lock);
+    if (sample_count) {
+        g_string_append(s, "SUMMARY threads, average (peak) % of one core:");
+        for (int g = 0; g < G__COUNT; g++) {
+            g_string_append_printf(s, " %s %.0f (%.0f)", group_names[g],
+                                   group_sum[g] / sample_count,
+                                   group_peak[g]);
+        }
+        g_string_append_c(s, '\n');
+    }
+    g_mutex_unlock(&lock);
+}
+
+double xemu_diag_threads_game_cpu(void)
+{
+    static int64_t last_ns, last_frame_ns;
+    pid_t tid = qatomic_read(&game_cpu_tid);
+    int64_t ns;
+
+    if (!tid || !thread_ns(tid, &ns)) {
+        return -1;
+    }
+    int64_t now = wall_ns();
+    double busy = -1;
+    if (last_frame_ns && now > last_frame_ns && ns >= last_ns) {
+        busy = (double)(ns - last_ns) / (now - last_frame_ns);
+    }
+    last_ns = ns;
+    last_frame_ns = now;
+    return busy;
+}
+
+static gpointer scan_worker(gpointer opaque)
+{
+    scan_threads();
+    qatomic_set(&scan_busy, false);
+    return NULL;
+}
+
+void xemu_diag_threads_scan(void)
+{
+    if (!qatomic_xchg(&scan_busy, true)) {
+        g_thread_unref(g_thread_new("diag.scan", scan_worker, NULL));
+    }
+}
+
+void xemu_diag_programs_summary(GString *s) {}
+
 #else
 
 void xemu_diag_threads_reset(void) {}

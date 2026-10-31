@@ -31,6 +31,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#elif defined(__linux__)
+#include <sys/resource.h>
 #endif
 
 #include "xemu-diag.h"
@@ -1092,6 +1094,51 @@ static void print_system(GString *s)
         g_string_append_printf(s, " mem_mb=%zu",
                                (size_t)(mem.WorkingSetSize >> 20));
     }
+#elif defined(__linux__)
+    /* This process from getrusage, the whole PC from /proc/stat's cpu line */
+    static uint64_t last_proc, last_busy, last_total, last_wall;
+    struct rusage ru;
+    unsigned long long v[8] = { 0 };
+    char *stat = NULL;
+
+    if (getrusage(RUSAGE_SELF, &ru) ||
+        !g_file_get_contents("/proc/stat", &stat, NULL, NULL)) {
+        return;
+    }
+    int n = sscanf(stat, "cpu %llu %llu %llu %llu %llu %llu %llu %llu", &v[0],
+                   &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
+    g_free(stat);
+    if (n < 5) {
+        return;
+    }
+    uint64_t proc = (ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) * 1000000ULL +
+                    ru.ru_utime.tv_usec + ru.ru_stime.tv_usec;
+    uint64_t total = 0;
+    for (int i = 0; i < 8; i++) {
+        total += v[i];
+    }
+    uint64_t busy = total - v[3] - v[4]; /* not idle or waiting for disk */
+    uint64_t wall = now_us();
+
+    if (last_wall && wall > last_wall && total > last_total) {
+        double cpus = g_get_num_processors();
+        g_string_append_printf(s, " cpu=%.0f%% sys_cpu=%.0f%%",
+            100.0 * (proc - last_proc) / ((wall - last_wall) * cpus),
+            100.0 * (busy - last_busy) / (total - last_total));
+    }
+    last_proc = proc;
+    last_busy = busy;
+    last_total = total;
+    last_wall = wall;
+
+    long pages = 0;
+    char *statm = NULL;
+    if (g_file_get_contents("/proc/self/statm", &statm, NULL, NULL) &&
+        sscanf(statm, "%*ld %ld", &pages) == 1) {
+        g_string_append_printf(s, " mem_mb=%ld",
+                               pages * sysconf(_SC_PAGESIZE) >> 20);
+    }
+    g_free(statm);
 #endif
 }
 
