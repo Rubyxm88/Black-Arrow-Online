@@ -259,6 +259,12 @@ static void write_package(FILE *f)
     const char *exe_dir = SDL_GetBasePath();
     char *path = g_build_filename(exe_dir ? exe_dir : ".", "version.txt", NULL);
     char *text = NULL;
+    if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
+        /* Mac and Linux: setup puts it in the console folder */
+        g_free(path);
+        path = g_build_filename(xemu_settings_get_base_path(), "version.txt",
+                                NULL);
+    }
     if (g_file_get_contents(path, &text, NULL, NULL)) {
         char **lines = g_strsplit(text, "\n", -1);
         fprintf(f, "# package:");

@@ -164,6 +164,32 @@ report_tool() {
 # the problem is happening (with the game still open): it makes a .tar.gz in
 # Downloads to send to whoever shared the package.
 data="${XDG_DATA_HOME:-$HOME/.local/share}/Black Arrow Online"
+runlog="$data/system/report-run.log"
+mkdir -p "$data/system" 2>/dev/null
+
+# From the applications menu there is no terminal: open one and run again in
+# it. The copy in /tmp has no spaces in its path, which some terminals' -e
+# split on. With no terminal the report is still made; the Downloads folder
+# opens and a notice shows when it is done.
+if [ ! -t 1 ] && [ -z "${BA_REPORT_IN_TERMINAL:-}" ]; then
+    export BA_REPORT_IN_TERMINAL=1
+    copy="$(mktemp /tmp/black-arrow-report-XXXXXX.sh)" && cp "$0" "$copy"
+    for term in x-terminal-emulator gnome-terminal kgx ptyxis konsole \
+            xfce4-terminal mate-terminal lxterminal tilix xterm; do
+        [ -n "$copy" ] && command -v "$term" >/dev/null 2>&1 || continue
+        echo "$(date '+%F %T') opening $term" >> "$runlog"
+        case "$term" in
+            gnome-terminal|kgx|ptyxis|tilix) "$term" -- bash "$copy" ;;
+            xfce4-terminal) "$term" -x bash "$copy" ;;
+            *) "$term" -e bash "$copy" ;;
+        esac && exit 0
+        echo "$(date '+%F %T') $term did not start" >> "$runlog"
+    done
+    rm -f "$copy"
+    echo "$(date '+%F %T') no terminal, making the report without one" >> "$runlog"
+    exec >> "$runlog" 2>&1 </dev/null
+fi
+echo "$(date '+%F %T') report started (terminal: $([ -t 1 ] && echo yes || echo no))" >> "$runlog"
 stamp="$(date +%Y-%m-%d_%H%M%S)"
 downloads="$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
 [ -n "$downloads" ] && [ -d "$downloads" ] || downloads="$HOME/Downloads"
@@ -233,7 +259,11 @@ tar -czf "$downloads/$name.tar.gz" -C "$(dirname "$out")" "$name" && rm -rf "$(d
 echo
 echo "Done: $name.tar.gz is in $downloads."
 echo "Send it to whoever shared the package. You can close this window."
+echo "$(date '+%F %T') report done: $downloads/$name.tar.gz" >> "$runlog"
 xdg-open "$downloads" >/dev/null 2>&1 &
+command -v notify-send >/dev/null 2>&1 &&
+    notify-send "Black Arrow Report" "$name.tar.gz is in $downloads" >/dev/null 2>&1
+[ -n "${BA_REPORT_IN_TERMINAL:-}" ] && [ "$0" != "${0#/tmp/black-arrow-report-}" ] && rm -f "$0"
 sleep 1
 read -r -p "Press Enter to close. " _ || true
 REPORT
@@ -268,7 +298,7 @@ Name=Black Arrow Report
 Comment=Makes a file with logs to send when Black Arrow Online has a problem
 Exec=bash "$data/report.sh"
 Icon=black-arrow-online
-Terminal=true
+Terminal=false
 Categories=Game;
 EOF
     chmod 644 "$menu/black-arrow-online.desktop" "$menu/black-arrow-report.desktop"
