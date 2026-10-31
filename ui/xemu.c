@@ -837,13 +837,17 @@ static void first_frame_step(const char *step)
  * but may sometimes be called from another thread.
  */
 /*
- * Frame pacing (perf.frame_pacing). A game at 30 fps changes its picture
- * every second vblank, but when the emulated GPU finishes a frame a little
- * late, the change slips to the next vblank and the next frame's comes one
- * early: pictures stay up 50 ms, then 17. The pacer finds the vblank parity
- * the late changes land on and keeps showing the old picture until a vblank
- * of that parity, so every picture stays up 33 ms, one vblank later at most.
- * Games that change their picture at other rates are left alone.
+ * Frame pacing (perf.frame_pacing). A game at 30 fps finishes a frame every
+ * second vblank, but when the emulated GPU finishes one a little late it
+ * slips to the next vblank and the next frame comes one early; a frame that
+ * finishes just before a vblank can also be picked up by the window just
+ * after it. Pictures then stay up 50 ms, then 17. The pacer changes the
+ * picture only on the vblank after the one most frames finish in, and at
+ * most every second vblank, as a console's screen does: late frames show at
+ * once, the others one vblank later, and every picture stays up 33 ms. A
+ * frame that misses its vblank waits for the next one, so the picture
+ * before it stays up 67 ms once instead of 50 then 17. Games that finish
+ * frames at other rates are left alone.
  */
 #define PACE_HISTORY 16
 static uint32_t pace_flips, pace_vblank_at[PACE_HISTORY];
@@ -851,7 +855,7 @@ static int pace_n;
 
 /* True: keep showing the last picture for now */
 static bool frame_pacer_hold(uint32_t vblanks, uint32_t flip_vblank,
-                             uint32_t flips)
+                             uint32_t flips, uint32_t shown_vblank)
 {
     if (flips != pace_flips) {
         pace_vblank_at[pace_n++ % PACE_HISTORY] = flip_vblank;
@@ -868,17 +872,16 @@ static bool frame_pacer_hold(uint32_t vblanks, uint32_t flip_vblank,
         span > 2 * (PACE_HISTORY - 1) + 3) {
         return false;
     }
-    /* The parity fewer changes land on is where the late ones land; with
-       none late, the pictures are already even */
+    /* Show on the vblank parity after the one most frames finish in */
     int odd = 0;
     for (int i = 0; i < PACE_HISTORY; i++) {
         odd += pace_vblank_at[i] & 1;
     }
-    if (odd == 0 || odd == PACE_HISTORY) {
+    uint32_t slot = odd * 2 > PACE_HISTORY ? 0 : 1;
+    if (vblanks - flip_vblank >= 4) {
         return false;
     }
-    uint32_t slot = odd < PACE_HISTORY - odd ? 1 : 0;
-    return (vblanks & 1) != slot && vblanks - flip_vblank < 2;
+    return (vblanks & 1) != slot || vblanks - shown_vblank < 2;
 }
 
 static void gl_render_frame(struct xemu_console *scon)
@@ -927,7 +930,7 @@ static void gl_render_frame(struct xemu_console *scon)
     bool hold = flips != shown_flips && last_tex &&
                 g_config.perf.frame_pacing &&
                 g_config.display.renderer == CONFIG_DISPLAY_RENDERER_OPENGL &&
-                frame_pacer_hold(vblanks, flip_vblank, flips);
+                frame_pacer_hold(vblanks, flip_vblank, flips, shown_vblank);
     if (hold) {
         was_held = true;
     } else if (flips != shown_flips) {
