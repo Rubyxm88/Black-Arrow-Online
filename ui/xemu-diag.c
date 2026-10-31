@@ -1132,10 +1132,19 @@ static void clock_frame(void)
     }
 }
 
+/* A place that reads the clock more often than this a frame is a wait
+   loop, not the clock the game moves its world by */
+#define CLOCK_READS_PER_FRAME 8
+
+static bool clock_steady(const ClockSlot *c)
+{
+    return c->calls <= (int64_t)c->frames_read * CLOCK_READS_PER_FRAME;
+}
+
 /* With the lock held, once a second: " clock=site:calls/frames:min-max_ms"
-   for the reads seen in the most frames, then the most reads: the game's
-   frame cap reads the clock several times a frame while it waits. The first
-   is the frame clock from now on */
+   for the reads seen in the most frames, wait loops last, then the most
+   reads: the game's frame cap reads the clock a few times a frame. The
+   first is the frame clock from now on */
 static void clock_second(GString *s)
 {
     int order[CLOCK_SHOWN];
@@ -1148,8 +1157,9 @@ static void clock_second(GString *s)
         int j = n < CLOCK_SHOWN ? n++ : CLOCK_SHOWN;
         while (j > 0) {
             ClockSlot *o = &clock_slots[order[j - 1]];
-            if (o->frames_read > c->frames_read ||
-                (o->frames_read == c->frames_read && o->calls >= c->calls)) {
+            if (clock_steady(o) != clock_steady(c) ? clock_steady(o) :
+                o->frames_read != c->frames_read ?
+                o->frames_read > c->frames_read : o->calls >= c->calls) {
                 break;
             }
             if (j < CLOCK_SHOWN) {
