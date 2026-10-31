@@ -140,6 +140,11 @@ static struct {
     /* Game time against screen time for the pictures shown */
     int pace_frames, pace_bad;
     int64_t pace_err_max;
+    /* Vblanks raised, how many came late and the latest; game frames by
+       the vblanks since the frame before (0, 1, 2, 3 or more) */
+    int vblanks, vblank_late;
+    int64_t vblank_late_max;
+    int flip_vblanks[4];
 } sec;
 static int64_t last_frame_us;
 static bool frames_seen;
@@ -179,6 +184,13 @@ static int64_t frame_dt[FRAME_RING];
 /* Summary: frames compared and how many differed, matching each picture
    with its own frame's clock read (0) or the one before (1) */
 static int64_t pace_frames, pace_bad[2], pace_err_sum[2], pace_err_max[2];
+/* A vblank this late against its schedule is counted */
+#define VBLANK_LATE_US 2000
+/* Vblanks since the last game frame; for the summary: vblanks, late ones,
+   the latest and game frames by vblanks since the frame before */
+static int vblanks_since_flip;
+static int64_t vblank_total, vblank_late_total, vblank_late_most;
+static int64_t flip_vblanks[4];
 /* Screen stalls for the summary: count and longest */
 static int screen_stall_count;
 static int64_t screen_stall_max;
@@ -531,7 +543,10 @@ static const char lines_help[] =
     "memory, thread_cpu (% of one core per emulator thread: game_cpu is "
     "the emulated Xbox CPU, gpu the graphics thread, ui the window, audio "
     "the sound chip, voices its mixing helpers), work done (count/total "
-    "ms), GPU counters\n"
+    "ms), GPU counters; vblank= the Xbox's 60 Hz vblanks raised, how many "
+    "came 2 ms or more late and the latest, frame_vblanks= game frames "
+    "that came 0/1/2/3+ vblanks after the one before (2 is on time at 30 "
+    "fps)\n"
     "#   SLOW      a frame of 50 ms or more, with its likely cause, how "
     "busy the emulated CPU was (game_cpu) and the work done during it\n"
     "#   SCREEN    a picture stayed on screen 60 ms or more while the "
@@ -687,6 +702,15 @@ static void reset_summary(void)
     screen_stall_count = 0;
     screen_stall_max = 0;
     pace_frames = 0;
+    vblanks_since_flip = 0;
+    vblank_total = vblank_late_total = vblank_late_most = 0;
+    memset(flip_vblanks, 0, sizeof(flip_vblanks));
+    /* Clock reads from before this recording would give one frame the
+       time since then */
+    for (int i = 0; i < CLOCK_SLOTS; i++) {
+        clock_slots[i].have_frame = false;
+    }
+    clock_main = -1;
     memset(pace_bad, 0, sizeof(pace_bad));
     memset(pace_err_sum, 0, sizeof(pace_err_sum));
     memset(pace_err_max, 0, sizeof(pace_err_max));
@@ -729,6 +753,15 @@ static void write_summary(void)
                 pace_err_sum[b] / 1e3 / pace_frames, pace_err_max[b] / 1e3,
                 b ? "previous frame's" : "same frame's", pace_bad[!b],
                 pace_err_sum[!b] / 1e3 / pace_frames);
+    }
+    if (vblank_total) {
+        fprintf(log_file, "SUMMARY vblanks: %" PRId64 ", %" PRId64 " late "
+                "by %d ms or more, latest %.1f ms; game frames by vblanks "
+                "since the frame before (2 is on time at 30 fps): 0: %" PRId64
+                ", 1: %" PRId64 ", 2: %" PRId64 ", 3 or more: %" PRId64 "\n",
+                vblank_total, vblank_late_total, VBLANK_LATE_US / 1000,
+                vblank_late_most / 1e3, flip_vblanks[0], flip_vblanks[1],
+                flip_vblanks[2], flip_vblanks[3]);
     }
     fprintf(log_file, "SUMMARY markers: %d\n", mark_count);
     print_code_top(log_file, "code translated", code_translated, true);
@@ -1079,6 +1112,25 @@ void xemu_diag_poll(void)
     }
 }
 
+void xemu_diag_vblank(int64_t late_ns)
+{
+    if (!qatomic_read(&xemu_perf_clock_enabled)) {
+        return;
+    }
+    int64_t late = MAX(late_ns, 0) / 1000;
+    g_mutex_lock(&lock);
+    sec.vblanks++;
+    vblank_total++;
+    vblanks_since_flip++;
+    sec.vblank_late_max = MAX(sec.vblank_late_max, late);
+    vblank_late_most = MAX(vblank_late_most, late);
+    if (late >= VBLANK_LATE_US) {
+        sec.vblank_late++;
+        vblank_late_total++;
+    }
+    g_mutex_unlock(&lock);
+}
+
 void xemu_perf_clock_read(uint32_t site, uint64_t tsc)
 {
     if (!site) {
@@ -1241,6 +1293,10 @@ void xemu_diag_frame(int64_t now, int64_t gap_us, bool slow,
     game_flips++;
     if (qatomic_read(&xemu_perf_clock_enabled)) {
         clock_frame();
+        int v = MIN(vblanks_since_flip, 3);
+        sec.flip_vblanks[v]++;
+        flip_vblanks[v]++;
+        vblanks_since_flip = 0;
     }
     sec.max_gap = MAX(sec.max_gap, gap_us);
     for (int i = 0; i < XEMU_PERF__COUNT; i++) {
@@ -1673,6 +1729,15 @@ static void tick(void *opaque)
             g_string_append_printf(s, " pace_off_ms=%.1f pace_bad=%d/%d",
                                    last.pace_err_max / 1e3, last.pace_bad,
                                    last.pace_frames);
+        }
+        if (last.vblanks) {
+            g_string_append_printf(s, " vblank=%d late=%d late_ms=%.1f "
+                                   "frame_vblanks=%d/%d/%d/%d",
+                                   last.vblanks, last.vblank_late,
+                                   last.vblank_late_max / 1e3,
+                                   last.flip_vblanks[0], last.flip_vblanks[1],
+                                   last.flip_vblanks[2],
+                                   last.flip_vblanks[3]);
         }
         g_string_append(s, system->str);
         print_work(s, last.count, last.ns, last.max_ns);

@@ -100,6 +100,13 @@ void xemu_diag_frame(int64_t now_us, int64_t gap_us, bool slow,
  */
 void xemu_diag_present(int64_t start_us, int64_t end_us);
 
+/*
+ * From the vblank timer, each time it raises the Xbox's 60 Hz vblank: how
+ * late that was against its schedule. A game at 30 fps waits for two
+ * vblanks a frame, so a late or uneven vblank makes its frames uneven
+ */
+void xemu_diag_vblank(int64_t late_ns);
+
 const char *xemu_diag_cause_name(XemuDiagCause cause);
 
 /* Seconds since this run wrote a freeze report, or -1 if it has not */

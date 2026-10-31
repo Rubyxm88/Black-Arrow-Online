@@ -788,8 +788,11 @@ static void *vblank_timer_thread(void *opaque)
 
         if (!qatomic_read(&qemu_exiting)) {
             xemu_main_loop_lock();
+            int64_t late = qemu_clock_get_ns(QEMU_CLOCK_REALTIME) -
+                           next_vblank;
             process_vblank(scon);
             xemu_main_loop_unlock();
+            xemu_diag_vblank(late);
         }
     }
 
