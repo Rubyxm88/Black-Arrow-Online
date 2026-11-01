@@ -3596,6 +3596,46 @@ static void hard_sse_drop(CPUX86State *env)
         }                                                                   \
     }
 
+/*
+ * The ss forms: only the low float is read and written (the guest code just
+ * stored it 32 bits wide, and a 128-bit load of it stalls the host's store
+ * forwarding); the upper three are copied only when d is not v
+ */
+#define HARD_SSE_S(insn, d, v, s)                                           \
+    __m128 hs_a_, hs_b_, hs_r_;                                             \
+    if (likely(x86_hard_sse && !x86_hard_sse_check)) {                      \
+        hs_r_ = _mm_load_ss((const float *)&(v)->ZMM_S(0));                 \
+        hs_b_ = _mm_load_ss((const float *)&(s)->ZMM_S(0));                 \
+        HARD_SSE_RUN(insn, hs_r_, hs_b_);                                   \
+        _mm_store_ss((float *)&(d)->ZMM_S(0), hs_r_);                       \
+        if ((d) != (v)) {                                                   \
+            (d)->ZMM_L(1) = (v)->ZMM_L(1);                                  \
+            (d)->ZMM_Q(1) = (v)->ZMM_Q(1);                                  \
+        }                                                                   \
+        return;                                                             \
+    }                                                                       \
+    hs_a_ = _mm_loadu_ps((const float *)&(v)->ZMM_S(0));                    \
+    hs_b_ = _mm_loadu_ps((const float *)&(s)->ZMM_S(0));                    \
+    hs_r_ = hs_a_;                                                          \
+    if (x86_hard_sse) {                                                     \
+        HARD_SSE_RUN(insn, hs_r_, hs_b_);                                   \
+    }
+
+/* (u)comiss on the host: ZF, PF and CF are where x86 EFLAGS has them */
+#define HARD_SSE_COMI(insn, d, s)                                           \
+    if (x86_hard_sse && !x86_hard_sse_check &&                              \
+        likely(!(env->mxcsr & HARD_SSE_CTRL))) {                            \
+        __m128 hi_a_ = _mm_load_ss((const float *)&(d)->ZMM_S(0));          \
+        __m128 hi_b_ = _mm_load_ss((const float *)&(s)->ZMM_S(0));          \
+        uint8_t z_, p_, c_;                                                 \
+        asm volatile(insn " %4, %3\n\tsetz %0\n\tsetp %1\n\tsetc %2"        \
+                     : "=q"(z_), "=q"(p_), "=q"(c_)                         \
+                     : "x"(hi_a_), "x"(hi_b_) : "cc");                      \
+        CC_SRC = (z_ ? CC_Z : 0) | (p_ ? CC_P : 0) | (c_ ? CC_C : 0);       \
+        CC_OP = CC_OP_EFLAGS;                                               \
+        return;                                                             \
+    }
+
 /* At the end of the soft path: the lab check */
 #define HARD_SSE_CHECK(insn, d)                                             \
     if (x86_hard_sse_check) {                                               \
@@ -3603,6 +3643,8 @@ static void hard_sse_drop(CPUX86State *env)
     }
 #else
 #define HARD_SSE(insn, d, v, s)
+#define HARD_SSE_S(insn, d, v, s)
+#define HARD_SSE_COMI(insn, d, s)
 #define HARD_SSE_CHECK(insn, d)
 #define hard_sse_collect(env)
 #endif

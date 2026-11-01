@@ -466,7 +466,7 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
 /* Single float forms on the host's SSE when it is on (fpu_helper.c) */
 #if SHIFT == 1
 #define HARD_SSE_P(name, d, v, s) HARD_SSE(#name "ps", d, v, s)
-#define HARD_SSE_SS(name, d, v, s) HARD_SSE(#name "ss", d, v, s)
+#define HARD_SSE_SS(name, d, v, s) HARD_SSE_S(#name "ss", d, v, s)
 #define HARD_SSE_P_CHECK(name, d) HARD_SSE_CHECK(#name "ps", d)
 #define HARD_SSE_SS_CHECK(name, d) HARD_SSE_CHECK(#name "ss", d)
 #else
@@ -1125,6 +1125,7 @@ void helper_ucomiss(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float32 s0, s1;
+    HARD_SSE_COMI("ucomiss", d, s)
 
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
@@ -1137,6 +1138,7 @@ void helper_comiss(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float32 s0, s1;
+    HARD_SSE_COMI("comiss", d, s)
 
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
