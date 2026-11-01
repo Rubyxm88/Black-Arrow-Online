@@ -247,7 +247,8 @@ static void finalize_render_to_texture(PGRAPHState *pg)
  * in play, which copied it to Xbox RAM and back each time. Each pixel is the
  * word depth << 8 | stencil, read as 8_8_8_8 BGRA: depth bits 16-23 in blue,
  * 8-15 in green, 0-7 in red and the stencil in alpha. render_zeta_to() makes
- * that on the GPU; it needs stencil texturing (GL 4.3).
+ * that on the GPU; it needs stencil texturing (GL 4.3). perf.gpu_depth_copy
+ * off goes back to the copy (Settings > Experimental).
  */
 static bool zeta_to_texture_compatible(const SurfaceBinding *surface,
                                        int texture_fmt)
@@ -257,7 +258,7 @@ static bool zeta_to_texture_compatible(const SurfaceBinding *surface,
         stencil_texturing = epoxy_gl_version() >= 43 ||
                             epoxy_has_gl_extension("GL_ARB_stencil_texturing");
     }
-    return stencil_texturing &&
+    return stencil_texturing && g_config.perf.gpu_depth_copy &&
            surface->shape.zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 &&
            texture_fmt == NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_B8G8R8A8;
 }

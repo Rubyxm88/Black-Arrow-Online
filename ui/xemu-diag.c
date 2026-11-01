@@ -535,6 +535,12 @@ static void write_settings(FILE *f)
             g_config.perf.prelight, g_config.perf.cache_shaders,
             g_config.perf.shader_async, g_config.perf.shader_precache_auto,
             g_config.perf.shader_precache_own);
+    /* Settings > Experimental, as they are when the log or report starts */
+    fprintf(f, "# experiments: frame_pacing=%d smooth_game_time=%d "
+            "prelight=%d hard_sse=%d gpu_depth_copy=%d\n",
+            g_config.perf.frame_pacing, g_config.perf.smooth_game_time,
+            g_config.perf.prelight, g_config.perf.hard_sse,
+            g_config.perf.gpu_depth_copy);
     char sound[160];
     sound_mode(sound, sizeof(sound));
     fprintf(f, "# sound: %s\n", sound);

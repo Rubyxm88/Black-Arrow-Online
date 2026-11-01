@@ -477,6 +477,10 @@ perf:
                      # vblanks each frame, as on a console
     type: bool
     default: false
+  gpu_depth_copy:  # Experimental: a depth buffer read as a texture is
+                   # converted on the GPU, not copied through Xbox RAM
+    type: bool
+    default: true
   mac_test_pictures:  # Mac missing-text test; turned off at each start
     type: bool
     default: false

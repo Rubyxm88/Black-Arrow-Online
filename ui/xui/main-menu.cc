@@ -1640,6 +1640,59 @@ void MainMenuSystemView::Draw()
                });
 }
 
+// Fixes still being tried out. The diagnostics log and freeze reports list
+// these (xemu-diag.c, "# experiments:"), so a report says what was on.
+void MainMenuExperimentalView::Draw()
+{
+    // Pre-light and hard SSE are read once when the app starts
+    static const bool start_prelight = g_config.perf.prelight;
+    static const bool start_hard_sse = g_config.perf.hard_sse;
+
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_CheckMark],
+                       "These are tests. If something looks or plays wrong, "
+                       "turn it off or press Reset to Defaults.");
+    ImGui::PopTextWrapPos();
+
+    SectionTitle("Smoothness");
+    Toggle("Frame pacing", &g_config.perf.frame_pacing,
+           "Shows every finished frame evenly and in order, for less "
+           "judder at 30 fps. OpenGL only");
+    Toggle("Smooth game time", &g_config.perf.smooth_game_time,
+           "Black Arrow's world moves in whole console steps each frame, "
+           "as on a real Xbox, for less stutter in motion");
+
+    SectionTitle("Fewer Freezes");
+    Toggle("Pre-light", &g_config.perf.prelight,
+           "Lights the map before you spawn, so the first look around "
+           "does not freeze. Black Arrow only (restart to apply)");
+#if defined(__x86_64__)
+    Toggle("Hard SSE", &g_config.perf.hard_sse,
+           "Runs the game's math directly on the PC's processor, which is "
+           "faster (restart to apply)");
+#endif
+    Toggle("GPU depth copy", &g_config.perf.gpu_depth_copy,
+           "Converts the depth picture Black Arrow reads each frame on the "
+           "graphics card, about 4 ms faster. Turn off if pictures look "
+           "wrong on AMD or Intel graphics");
+
+    if (g_config.perf.prelight != start_prelight ||
+        g_config.perf.hard_sse != start_hard_sse) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Pre-light and Hard SSE change the next time you "
+                            "open Black Arrow Online.");
+    }
+
+    ImGui::Dummy(ImVec2(0, 10 * g_viewport_mgr.m_scale));
+    if (ImGui::Button("Reset to Defaults")) {
+        g_config.perf.frame_pacing = false;
+        g_config.perf.smooth_game_time = false;
+        g_config.perf.prelight = true;
+        g_config.perf.hard_sse = true;
+        g_config.perf.gpu_depth_copy = true;
+    }
+}
+
 MainMenuAboutView::MainMenuAboutView() : m_config_info_text{ NULL }
 {
 }
@@ -1779,6 +1832,7 @@ MainMenuScene::MainMenuScene()
       m_network_button("Network", ICON_FA_NETWORK_WIRED),
       m_snapshots_button("Snapshots", ICON_FA_CLOCK_ROTATE_LEFT),
       m_system_button("System", ICON_FA_MICROCHIP),
+      m_experimental_button("Experimental", ICON_FA_FLASK),
       m_about_button("About", ICON_FA_CIRCLE_INFO)
 {
     m_had_focus_last_frame = false;
@@ -1790,6 +1844,7 @@ MainMenuScene::MainMenuScene()
     m_tabs.push_back(&m_network_button);
     m_tabs.push_back(&m_snapshots_button);
     m_tabs.push_back(&m_system_button);
+    m_tabs.push_back(&m_experimental_button);
     m_tabs.push_back(&m_about_button);
 
     m_views.push_back(&m_general_view);
@@ -1799,6 +1854,7 @@ MainMenuScene::MainMenuScene()
     m_views.push_back(&m_network_view);
     m_views.push_back(&m_snapshots_view);
     m_views.push_back(&m_system_view);
+    m_views.push_back(&m_experimental_view);
     m_views.push_back(&m_about_view);
 
     m_current_view_index = 0;
@@ -1822,7 +1878,7 @@ void MainMenuScene::ShowSystem()
 
 void MainMenuScene::ShowAbout()
 {
-    SetNextViewIndexWithFocus(7);
+    SetNextViewIndexWithFocus(8);
 }
 
 void MainMenuScene::SetNextViewIndexWithFocus(int i)
