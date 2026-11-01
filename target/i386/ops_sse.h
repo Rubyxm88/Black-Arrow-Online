@@ -463,15 +463,28 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
 /* FPU ops */
 /* XXX: not accurate */
 
+/* Single float forms on the host's SSE when it is on (fpu_helper.c) */
+#if SHIFT == 1
+#define HARD_SSE_P(name, d, v, s) HARD_SSE(#name "ps", d, v, s)
+#define HARD_SSE_SS(name, d, v, s) HARD_SSE_S(#name "ss", d, v, s)
+#define HARD_SSE_P_CHECK(name, d) HARD_SSE_CHECK(#name "ps", d)
+#define HARD_SSE_SS_CHECK(name, d) HARD_SSE_CHECK(#name "ss", d)
+#else
+#define HARD_SSE_P(name, d, v, s)
+#define HARD_SSE_P_CHECK(name, d)
+#endif
+
 #define SSE_HELPER_P(name, F)                                           \
     void glue(helper_ ## name ## ps, SUFFIX)(CPUX86State *env,          \
             Reg *d, Reg *v, Reg *s)                                     \
     {                                                                   \
         int i;                                                          \
+        HARD_SSE_P(name, d, v, s)                                       \
         for (i = 0; i < 2 << SHIFT; i++) {                              \
             d->ZMM_S(i) = F(32, v->ZMM_S(i), s->ZMM_S(i));              \
         }                                                               \
-    }                                                                   \
+        HARD_SSE_P_CHECK(name, d)                                       \
+    }                                                                 \
                                                                         \
     void glue(helper_ ## name ## pd, SUFFIX)(CPUX86State *env,          \
             Reg *d, Reg *v, Reg *s)                                     \
@@ -490,11 +503,13 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
     void helper_ ## name ## ss(CPUX86State *env, Reg *d, Reg *v, Reg *s)\
     {                                                                   \
         int i;                                                          \
+        HARD_SSE_SS(name, d, v, s)                                      \
         d->ZMM_S(0) = F(32, v->ZMM_S(0), s->ZMM_S(0));                  \
         for (i = 1; i < 2 << SHIFT; i++) {                              \
             d->ZMM_L(i) = v->ZMM_L(i);                                  \
         }                                                               \
-    }                                                                   \
+        HARD_SSE_SS_CHECK(name, d)                                      \
+    }                                                                 \
                                                                         \
     void helper_ ## name ## sd(CPUX86State *env, Reg *d, Reg *v, Reg *s)\
     {                                                                   \
@@ -535,9 +550,11 @@ SSE_HELPER_S(max, FPU_MAX)
 void glue(helper_sqrtps, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 {
     int i;
+    HARD_SSE_P(sqrt, d, s, s)
     for (i = 0; i < 2 << SHIFT; i++) {
         d->ZMM_S(i) = float32_sqrt(s->ZMM_S(i), &env->sse_status);
     }
+    HARD_SSE_P_CHECK(sqrt, d)
 }
 
 void glue(helper_sqrtpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
@@ -552,10 +569,12 @@ void glue(helper_sqrtpd, SUFFIX)(CPUX86State *env, Reg *d, Reg *s)
 void helper_sqrtss(CPUX86State *env, Reg *d, Reg *v, Reg *s)
 {
     int i;
+    HARD_SSE_SS(sqrt, d, v, s)
     d->ZMM_S(0) = float32_sqrt(s->ZMM_S(0), &env->sse_status);
     for (i = 1; i < 2 << SHIFT; i++) {
         d->ZMM_L(i) = v->ZMM_L(i);
     }
+    HARD_SSE_SS_CHECK(sqrt, d)
 }
 
 void helper_sqrtsd(CPUX86State *env, Reg *d, Reg *v, Reg *s)
@@ -1106,6 +1125,7 @@ void helper_ucomiss(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float32 s0, s1;
+    HARD_SSE_COMI("ucomiss", d, s)
 
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
@@ -1118,6 +1138,7 @@ void helper_comiss(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float32 s0, s1;
+    HARD_SSE_COMI("comiss", d, s)
 
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
@@ -2664,6 +2685,10 @@ void helper_sha256msg2(Reg *d, Reg *a, Reg *b)
 #endif
 
 #undef SSE_HELPER_S
+#undef HARD_SSE_P
+#undef HARD_SSE_SS
+#undef HARD_SSE_P_CHECK
+#undef HARD_SSE_SS_CHECK
 
 #undef LANE_WIDTH
 #undef SHIFT

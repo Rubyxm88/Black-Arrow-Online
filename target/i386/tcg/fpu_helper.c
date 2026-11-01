@@ -3038,9 +3038,16 @@ static void do_xrstor_fpu(X86Access *ac, target_ulong ptr)
     }
 }
 
+#if defined(XBOX) && defined(__x86_64__)
+static void hard_sse_drop(CPUX86State *env);
+#else
+#define hard_sse_drop(env)
+#endif
+
 static void do_xrstor_mxcsr(X86Access *ac, target_ulong ptr)
 {
     CPUX86State *env = ac->env;
+    hard_sse_drop(env);
     cpu_set_mxcsr(env, access_ldl(ac, ptr + XO(legacy.mxcsr)));
 }
 
@@ -3444,6 +3451,204 @@ void helper_xsetbv(CPUX86State *env, uint32_t ecx, uint64_t mask)
 #define SSE_RC_MASK         (3 << SSE_RC_SHIFT)
 #define SSE_FZ              0x8000
 
+#if defined(XBOX) && defined(__x86_64__)
+#include <immintrin.h>
+
+/*
+ * Hard SSE: single float SSE math (add, sub, mul, div, min, max, sqrt; ps and
+ * ss) runs as the same instruction on the host instead of softfloat per
+ * element. The host instruction gives the exact x86 result, NaN and flush
+ * behaviour under the guest's rounding, flush-to-zero and denormals-are-zero
+ * bits, and its flags reach the guest's MXCSR (see HARD_SSE_RUN). Exceptions
+ * stay masked (xemu does not raise #XM).
+ * Reciprocal estimates (rcp, rsqrt) stay soft: their host results differ
+ * between CPU makers.
+ */
+static bool x86_hard_sse;
+static bool x86_hard_sse_check;
+static FILE *hard_sse_check_file;
+
+#define HARD_SSE_CTRL       (SSE_RC_MASK | SSE_FZ | SSE_DAZ)
+#define HARD_SSE_MASKED     0x1f80
+
+/*
+ * Lab check: with XEMU_HARD_SSE_CHECK=<file> each op runs both ways, the
+ * soft result is kept and every lane where the host's differs is written to
+ * the file, with a count line every 16M ops.
+ */
+void x86_hard_sse_init(bool on)
+{
+    const char *check = getenv("XEMU_HARD_SSE_CHECK");
+
+    x86_hard_sse = on;
+    if (on && check && *check && !hard_sse_check_file) {
+        hard_sse_check_file = fopen(check, "w");
+        x86_hard_sse_check = hard_sse_check_file != NULL;
+    }
+}
+
+static inline void hard_sse_flags(CPUX86State *env, uint32_t csr)
+{
+    if (csr & 0x3f) {
+        float_raise((csr & FPUS_IE ? float_flag_invalid : 0) |
+                    (csr & FPUS_DE ? float_flag_input_denormal_used : 0) |
+                    (csr & FPUS_ZE ? float_flag_divbyzero : 0) |
+                    (csr & FPUS_OE ? float_flag_overflow : 0) |
+                    (csr & FPUS_UE ? float_flag_underflow : 0) |
+                    (csr & FPUS_PE ? float_flag_inexact : 0),
+                    &env->sse_status);
+    }
+}
+
+static void hard_sse_compare(CPUX86State *env, const char *insn, __m128 a,
+                             __m128 b, __m128 hard, ZMMReg *soft)
+{
+    static uint64_t checks, mismatches;
+    uint32_t ua[4], ub[4], uh[4];
+    int i;
+
+    _mm_storeu_ps((float *)ua, a);
+    _mm_storeu_ps((float *)ub, b);
+    _mm_storeu_ps((float *)uh, hard);
+    for (i = 0; i < 4; i++) {
+        if (uh[i] != soft->ZMM_L(i)) {
+            if (++mismatches <= 500) {
+                fprintf(hard_sse_check_file,
+                        "MISMATCH %s lane=%d mxcsr=%04x a=%08x b=%08x "
+                        "hard=%08x soft=%08x\n", insn, i, env->mxcsr,
+                        ua[i], ub[i], uh[i], soft->ZMM_L(i));
+                fflush(hard_sse_check_file);
+            }
+        }
+    }
+    if ((++checks & 0xffffff) == 0) {
+        fprintf(hard_sse_check_file, "checks=%" PRIu64 " mismatches=%" PRIu64
+                " mxcsr=%04x\n", checks, mismatches, env->mxcsr);
+        fflush(hard_sse_check_file);
+    }
+}
+
+/*
+ * Reading or loading MXCSR costs about as much as the softfloat it replaces
+ * (the CPU waits for its float pipeline), so in the usual case, the guest on
+ * the host's own controls (round to nearest, no flush: 0x1f80), the
+ * instruction runs with no MXCSR access at all. Its flags stay in the host
+ * MXCSR of the CPU thread and go to sse_status when the guest reads its
+ * MXCSR (hard_sse_collect); a guest MXCSR load drops them (hard_sse_drop).
+ * Host code on the CPU thread can leave flags of its own there (inexact,
+ * mostly), so the guest may see a flag it did not raise; nothing reads them
+ * in practice, and the guest's MXCSR has inexact set within seconds anyway.
+ */
+static inline bool hard_sse_on_cpu_thread(CPUX86State *env)
+{
+    return x86_hard_sse && current_cpu == env_cpu(env);
+}
+
+static void hard_sse_collect(CPUX86State *env)
+{
+    if (hard_sse_on_cpu_thread(env)) {
+        uint32_t csr = _mm_getcsr();
+        if (csr & 0x3f) {
+            hard_sse_flags(env, csr);
+            _mm_setcsr(csr & ~0x3f);
+        }
+    }
+}
+
+static void hard_sse_drop(CPUX86State *env)
+{
+    if (hard_sse_on_cpu_thread(env)) {
+        _mm_setcsr(_mm_getcsr() & ~0x3f);
+    }
+}
+
+/*
+ * r = r insn b on the host, with the guest's MXCSR controls. For the ss
+ * forms the host instruction keeps r's upper three floats, as the guest's
+ * does. Other controls than the host's (rounding, flush to zero, denormals
+ * are zero) are loaded around the instruction and its flags taken at once.
+ */
+#define HARD_SSE_RUN(insn, r, b)                                            \
+    do {                                                                    \
+        if (likely(!(env->mxcsr & HARD_SSE_CTRL))) {                        \
+            asm volatile(insn " %1, %0" : "+x"(r) : "x"(b));                \
+        } else {                                                            \
+            uint32_t host_ = _mm_getcsr(), csr_;                            \
+            uint32_t want_ = (env->mxcsr & HARD_SSE_CTRL) |                 \
+                             HARD_SSE_MASKED;                               \
+            asm volatile("ldmxcsr %2\n\t" insn " %3, %0\n\tstmxcsr %1"      \
+                         : "+x"(r), "=m"(csr_) : "m"(want_), "x"(b));       \
+            _mm_setcsr(host_);                                              \
+            hard_sse_flags(env, csr_);                                      \
+        }                                                                   \
+    } while (0)
+
+/* At the top of a helper: d = v insn s on the host and return when on */
+#define HARD_SSE(insn, d, v, s)                                             \
+    __m128 hs_a_ = _mm_loadu_ps((const float *)&(v)->ZMM_S(0));             \
+    __m128 hs_b_ = _mm_loadu_ps((const float *)&(s)->ZMM_S(0));             \
+    __m128 hs_r_ = hs_a_;                                                   \
+    if (x86_hard_sse) {                                                     \
+        HARD_SSE_RUN(insn, hs_r_, hs_b_);                                   \
+        if (!x86_hard_sse_check) {                                          \
+            _mm_storeu_ps((float *)&(d)->ZMM_S(0), hs_r_);                  \
+            return;                                                         \
+        }                                                                   \
+    }
+
+/*
+ * The ss forms: only the low float is read and written (the guest code just
+ * stored it 32 bits wide, and a 128-bit load of it stalls the host's store
+ * forwarding); the upper three are copied only when d is not v
+ */
+#define HARD_SSE_S(insn, d, v, s)                                           \
+    __m128 hs_a_, hs_b_, hs_r_;                                             \
+    if (likely(x86_hard_sse && !x86_hard_sse_check)) {                      \
+        hs_r_ = _mm_load_ss((const float *)&(v)->ZMM_S(0));                 \
+        hs_b_ = _mm_load_ss((const float *)&(s)->ZMM_S(0));                 \
+        HARD_SSE_RUN(insn, hs_r_, hs_b_);                                   \
+        _mm_store_ss((float *)&(d)->ZMM_S(0), hs_r_);                       \
+        if ((d) != (v)) {                                                   \
+            (d)->ZMM_L(1) = (v)->ZMM_L(1);                                  \
+            (d)->ZMM_Q(1) = (v)->ZMM_Q(1);                                  \
+        }                                                                   \
+        return;                                                             \
+    }                                                                       \
+    hs_a_ = _mm_loadu_ps((const float *)&(v)->ZMM_S(0));                    \
+    hs_b_ = _mm_loadu_ps((const float *)&(s)->ZMM_S(0));                    \
+    hs_r_ = hs_a_;                                                          \
+    if (x86_hard_sse) {                                                     \
+        HARD_SSE_RUN(insn, hs_r_, hs_b_);                                   \
+    }
+
+/* (u)comiss on the host: ZF, PF and CF are where x86 EFLAGS has them */
+#define HARD_SSE_COMI(insn, d, s)                                           \
+    if (x86_hard_sse && !x86_hard_sse_check &&                              \
+        likely(!(env->mxcsr & HARD_SSE_CTRL))) {                            \
+        __m128 hi_a_ = _mm_load_ss((const float *)&(d)->ZMM_S(0));          \
+        __m128 hi_b_ = _mm_load_ss((const float *)&(s)->ZMM_S(0));          \
+        uint8_t z_, p_, c_;                                                 \
+        asm volatile(insn " %4, %3\n\tsetz %0\n\tsetp %1\n\tsetc %2"        \
+                     : "=q"(z_), "=q"(p_), "=q"(c_)                         \
+                     : "x"(hi_a_), "x"(hi_b_) : "cc");                      \
+        CC_SRC = (z_ ? CC_Z : 0) | (p_ ? CC_P : 0) | (c_ ? CC_C : 0);       \
+        CC_OP = CC_OP_EFLAGS;                                               \
+        return;                                                             \
+    }
+
+/* At the end of the soft path: the lab check */
+#define HARD_SSE_CHECK(insn, d)                                             \
+    if (x86_hard_sse_check) {                                               \
+        hard_sse_compare(env, insn, hs_a_, hs_b_, hs_r_, d);                \
+    }
+#else
+#define HARD_SSE(insn, d, v, s)
+#define HARD_SSE_S(insn, d, v, s)
+#define HARD_SSE_COMI(insn, d, s)
+#define HARD_SSE_CHECK(insn, d)
+#define hard_sse_collect(env)
+#endif
+
 void update_mxcsr_status(CPUX86State *env)
 {
     uint32_t mxcsr = env->mxcsr;
@@ -3471,7 +3676,10 @@ void update_mxcsr_status(CPUX86State *env)
 
 void update_mxcsr_from_sse_status(CPUX86State *env)
 {
-    int flags = get_float_exception_flags(&env->sse_status);
+    int flags;
+
+    hard_sse_collect(env);
+    flags = get_float_exception_flags(&env->sse_status);
     env->mxcsr |= ((flags & float_flag_invalid ? FPUS_IE : 0) |
                    (flags & float_flag_input_denormal_used ? FPUS_DE : 0) |
                    (flags & float_flag_divbyzero ? FPUS_ZE : 0) |
@@ -3489,6 +3697,7 @@ void helper_update_mxcsr(CPUX86State *env)
 
 void helper_ldmxcsr(CPUX86State *env, uint32_t val)
 {
+    hard_sse_drop(env);
     cpu_set_mxcsr(env, val);
 }
 

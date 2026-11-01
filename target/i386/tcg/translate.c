@@ -4229,6 +4229,7 @@ void tcg_x86_init(void)
 
 #if defined(XBOX) && defined(__x86_64__)
     g_use_hard_fpu = g_config.perf.hard_fpu;
+    x86_hard_sse_init(g_config.perf.hard_sse);
 #endif
 }
 
@@ -4338,6 +4339,11 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         dc->base.pc_next += 1;
         dc->base.is_jmp = DISAS_JUMP;
         return;
+    }
+
+    /* Black Arrow: put the pre-light routine in, then the call as usual */
+    if (unlikely(xbl_prelight_match(cpu_env(cpu), dc->base.pc_next))) {
+        gen_helper_xbl_prelight(tcg_env);
     }
 
     switch (sigsetjmp(dc->jmpbuf, 0)) {
