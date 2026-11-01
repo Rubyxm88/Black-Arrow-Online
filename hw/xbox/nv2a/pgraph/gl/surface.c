@@ -22,6 +22,8 @@
 #include "hw/xbox/nv2a/pgraph/pgraph.h"
 #include "ui/xemu-settings.h"
 #include "qemu/xemu-perf.h"
+#include "qemu/bitmap.h"
+#include "qemu/fast-hash.h"
 #include "hw/xbox/nv2a/debug_gl.h"
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "hw/xbox/nv2a/pgraph/swizzle.h"
@@ -29,6 +31,7 @@
 #include "renderer.h"
 
 static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force);
+static void surface_note_synced(NV2AState *d, SurfaceBinding *surface);
 static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
                                        bool swizzle, bool flip, bool downscale,
                                        uint8_t *pixels);
@@ -783,6 +786,7 @@ void pgraph_gl_surface_invalidate(NV2AState *d, SurfaceBinding *surface)
     glDeleteTextures(1, &surface->gl_buffer);
 
     QTAILQ_REMOVE(&r->surfaces, surface, entry);
+    g_free(surface->page_hash);
     g_free(surface);
 }
 
@@ -1000,6 +1004,57 @@ static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
     bind_current_surface(d);
 }
 
+#define SURFACE_SYNC_PAGE 4096
+
+/* Remember guest memory as it is now, when it matches the GPU copy */
+static void surface_note_synced(NV2AState *d, SurfaceBinding *surface)
+{
+    size_t len = surface->pitch * surface->height;
+    unsigned int pages = DIV_ROUND_UP(len, SURFACE_SYNC_PAGE);
+    if (surface->page_count != pages) {
+        g_free(surface->page_hash);
+        surface->page_hash = g_new(uint64_t, pages);
+        surface->page_count = pages;
+    }
+    const uint8_t *mem = d->vram_ptr + surface->vram_addr;
+    for (unsigned int i = 0; i < pages; i++) {
+        size_t off = (size_t)i * SURFACE_SYNC_PAGE;
+        surface->page_hash[i] =
+            fast_hash(mem + off, MIN(SURFACE_SYNC_PAGE, len - off));
+    }
+}
+
+/*
+ * The pages of guest memory something other than the GPU wrote since the
+ * surface last matched it. A disc read (DMA) can land in memory an old render
+ * target still covers without passing the CPU access watch; copying the GPU
+ * copy back over it would destroy what was read (Rainbow Six 3 loads lobby
+ * menu textures over its old depth buffer this way). Returns a bitmap of
+ * changed pages, or NULL when none changed.
+ */
+static unsigned long *surface_guest_written_pages(NV2AState *d,
+                                                  SurfaceBinding *surface)
+{
+    size_t len = surface->pitch * surface->height;
+    if (!surface->page_hash ||
+        surface->page_count != DIV_ROUND_UP(len, SURFACE_SYNC_PAGE)) {
+        return NULL;
+    }
+    unsigned long *changed = NULL;
+    const uint8_t *mem = d->vram_ptr + surface->vram_addr;
+    for (unsigned int i = 0; i < surface->page_count; i++) {
+        size_t off = (size_t)i * SURFACE_SYNC_PAGE;
+        if (fast_hash(mem + off, MIN(SURFACE_SYNC_PAGE, len - off)) !=
+            surface->page_hash[i]) {
+            if (!changed) {
+                changed = bitmap_new(surface->page_count);
+            }
+            set_bit(i, changed);
+        }
+    }
+    return changed;
+}
+
 static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force)
 {
     if (!(surface->download_pending || force) || !surface->width ||
@@ -1016,8 +1071,30 @@ static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force)
                                  NV2A_PROF_SURF_DL_OTHER);
 
     int64_t perf_start = xemu_perf_start();
-    surface_download_to_buffer(d, surface, true, false, true,
-                               d->vram_ptr + surface->vram_addr);
+    unsigned long *guest_written = surface_guest_written_pages(d, surface);
+    if (!guest_written) {
+        surface_download_to_buffer(d, surface, true, false, true,
+                                   d->vram_ptr + surface->vram_addr);
+    } else {
+        /* Copy back only the pages the guest left alone; the GPU copy takes
+         * the guest's pages before it is used again */
+        size_t len = surface->pitch * surface->height;
+        uint8_t *buf = g_malloc(len);
+        uint8_t *mem = d->vram_ptr + surface->vram_addr;
+        memcpy(buf, mem, len);
+        surface_download_to_buffer(d, surface, true, false, true, buf);
+        for (unsigned int i = 0; i < surface->page_count; i++) {
+            if (!test_bit(i, guest_written)) {
+                size_t off = (size_t)i * SURFACE_SYNC_PAGE;
+                memcpy(mem + off, buf + off, MIN(SURFACE_SYNC_PAGE, len - off));
+            }
+        }
+        g_free(buf);
+        g_free(guest_written);
+        nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_GUEST_KEPT);
+        surface->upload_pending = true;
+    }
+    surface_note_synced(d, surface);
     xemu_perf_end(XEMU_PERF_COPYBACK, perf_start);
 
     memory_region_set_client_dirty(d->vram, surface->vram_addr,
@@ -1218,6 +1295,7 @@ void pgraph_gl_upload_surface_data(NV2AState *d, SurfaceBinding *surface,
     glBindTexture(GL_TEXTURE_2D, last_texture_binding);
 
     bind_current_surface(d);
+    surface_note_synced(d, surface);
     xemu_perf_end(XEMU_PERF_SURF_UPLOAD, perf_start);
 }
 
@@ -1313,6 +1391,8 @@ static void populate_surface_binding_entry_sized(NV2AState *d, bool color,
     entry->upload_pending = true;
     entry->download_pending = false;
     entry->draw_dirty = false;
+    entry->page_hash = NULL;
+    entry->page_count = 0;
     entry->dma_addr = dma.address;
     entry->dma_len = dma.limit;
     entry->frame_time = pg->frame_time;

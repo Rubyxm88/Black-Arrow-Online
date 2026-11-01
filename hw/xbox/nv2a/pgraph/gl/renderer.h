@@ -65,6 +65,10 @@ typedef struct SurfaceBinding {
 
     GLuint gl_buffer;
     SurfaceFormatInfo fmt;
+
+    /* Hash of each 4 KiB page of guest memory when it last matched the GPU copy */
+    uint64_t *page_hash;
+    unsigned int page_count;
 } SurfaceBinding;
 
 typedef struct TextureBinding {
