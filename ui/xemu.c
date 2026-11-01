@@ -894,8 +894,9 @@ static bool frame_pacer_hold(uint32_t vblanks, uint32_t flip_vblank,
  * steps 20 ms, then 45, while the screen changes every 33 ms. The main loop
  * is told a time that moves by the vblanks between the game's last two
  * Presents instead (each is read just after its vblank wait), or by the
- * usual step when there was no new Present; by one more or less when real
- * time gets three vblanks ahead or behind, and real time after a stall.
+ * usual step when there was no new Present. Presents are on real vblanks, so
+ * that time keeps up with real time by itself; it goes back to real time
+ * only after a stall or when six vblanks away.
  */
 static uint64_t game_clock_given, game_clock_real, game_clock_tsc0;
 static uint64_t game_clock_present, game_present_tsc;
@@ -933,19 +934,22 @@ uint64_t xemu_game_clock(uint64_t tsc)
     game_clock_avg += (real - game_clock_avg) / 16;
     int64_t usual = MAX(1, llround(game_clock_avg / v));
     int64_t steps = usual;
+    bool no_present = true;
     if (game_clock_present && game_present_tsc > game_clock_present) {
         steps = llround((double)(game_present_tsc - game_clock_present) / v);
         steps = MIN(MAX(steps, 1), 6);
+        no_present = false;
     }
     game_clock_present = game_present_tsc;
     int64_t ahead = (int64_t)(tsc - game_clock_given) - steps * v;
-    if (ahead > 3 * v) {
-        steps++;
-    } else if (ahead < -3 * v && steps > 0) {
-        steps--;
-    }
-    game_clock_given += steps * v;
-    xemu_diag_world_step(real, steps * v, usual * v);
+    bool reset = ahead > 6 * v || ahead < -6 * v;
+    /* Never back in time: ahead of real time, wait for it */
+    uint64_t given = ahead > 6 * v  ? tsc - game_clock_given
+                     : ahead < -6 * v ? 0
+                                      : steps * v;
+    game_clock_given += given;
+    xemu_diag_world_step(real, given, usual * v);
+    xemu_diag_world_fix(no_present, reset);
     return g_config.perf.smooth_game_time ? game_clock_given : tsc;
 }
 

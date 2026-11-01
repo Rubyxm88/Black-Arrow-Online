@@ -151,6 +151,7 @@ static struct {
     /* World steps, and how many were off the usual by WORLD_OFF_US or more
        in real time and in the time given to the game */
     int world_steps, world_off_real, world_off_given;
+    int world_no_present, world_reset;
 } sec;
 static int64_t last_frame_us;
 static bool frames_seen;
@@ -211,6 +212,7 @@ static int64_t vblank_total, vblank_late_total, vblank_late_most;
 static int64_t flip_vblanks[4];
 static int64_t shown_vblanks[4], shown_held;
 static int64_t world_steps, world_off_real, world_off_given;
+static int64_t world_no_present, world_reset;
 #define WORLD_OFF_US 4000
 /* Screen stalls for the summary: count and longest */
 static int screen_stall_count;
@@ -729,6 +731,7 @@ static void reset_summary(void)
     memset(shown_vblanks, 0, sizeof(shown_vblanks));
     shown_held = 0;
     world_steps = world_off_real = world_off_given = 0;
+    world_no_present = world_reset = 0;
     present_tsc = 0;
     for (int i = 0; i < 4; i++) {
         qatomic_set(&present_vblanks_sec[i], 0);
@@ -799,6 +802,9 @@ static void write_summary(void)
                 world_steps, WORLD_OFF_US / 1000, world_off_real,
                 100.0 * world_off_real / world_steps, world_off_given,
                 100.0 * world_off_given / world_steps);
+        fprintf(log_file, "SUMMARY world: steps with no new Present: %"
+                PRId64 ", back to real time: %" PRId64 "\n",
+                world_no_present, world_reset);
     }
     if (shown_vblanks[2]) {
         fprintf(log_file, "SUMMARY screen: new pictures by vblanks since "
@@ -1196,6 +1202,19 @@ void xemu_diag_world_step(uint64_t real, uint64_t given, uint64_t usual)
     world_off_real += real_off;
     sec.world_off_given += given_off;
     world_off_given += given_off;
+    g_mutex_unlock(&lock);
+}
+
+void xemu_diag_world_fix(bool no_present, bool reset)
+{
+    if (!qatomic_read(&xemu_perf_clock_enabled)) {
+        return;
+    }
+    g_mutex_lock(&lock);
+    sec.world_no_present += no_present;
+    world_no_present += no_present;
+    sec.world_reset += reset;
+    world_reset += reset;
     g_mutex_unlock(&lock);
 }
 
@@ -1838,6 +1857,10 @@ static void tick(void *opaque)
             g_string_append_printf(s, " world_off=%d/%d/%d",
                                    last.world_off_real, last.world_off_given,
                                    last.world_steps);
+        }
+        if (last.world_no_present + last.world_reset) {
+            g_string_append_printf(s, " world_fix=%d/%d",
+                                   last.world_no_present, last.world_reset);
         }
         if (last.shown_vblanks[0] + last.shown_vblanks[1] +
             last.shown_vblanks[2] + last.shown_vblanks[3]) {

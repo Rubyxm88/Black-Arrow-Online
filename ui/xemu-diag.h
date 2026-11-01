@@ -121,6 +121,12 @@ void xemu_diag_shown(int vblanks, bool held);
  */
 void xemu_diag_world_step(uint64_t real, uint64_t given, uint64_t usual);
 
+/*
+ * A world step that had no new Present to go by (moved by the usual step),
+ * or that went back to real time because the given time got too far away
+ */
+void xemu_diag_world_fix(bool no_present, bool reset);
+
 const char *xemu_diag_cause_name(XemuDiagCause cause);
 
 /* Seconds since this run wrote a freeze report, or -1 if it has not */
