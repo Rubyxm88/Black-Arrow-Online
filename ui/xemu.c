@@ -839,50 +839,204 @@ static void first_frame_step(const char *step)
  */
 /*
  * Frame pacing (perf.frame_pacing). A game at 30 fps finishes a frame every
- * second vblank, but when the emulated GPU finishes one a little late it
- * slips to the next vblank and the next frame comes one early; a frame that
- * finishes just before a vblank can also be picked up by the window just
- * after it. Pictures then stay up 50 ms, then 17. The pacer changes the
- * picture only on the vblank after the one most frames finish in, and at
- * most every second vblank, as a console's screen does: late frames show at
- * once, the others one vblank later, and every picture stays up 33 ms. A
- * frame that misses its vblank waits for the next one, so the picture
- * before it stays up 67 ms once instead of 50 then 17. Games that finish
- * frames at other rates are left alone.
+ * second vblank, but in busy views the emulated GPU finishes some a vblank
+ * or two late and the next ones early, while the game itself keeps its even
+ * beat. Showing each frame as soon as it is done gives pictures that stay up
+ * 50 ms, then 17, and a frame finished while the window waits for its turn
+ * used to be replaced by the next one and never shown. The window now copies
+ * every finished frame into a small queue and shows them in order, one per
+ * two vblanks, on the vblank after the one most frames finish in, as a
+ * console's screen does. A frame later than that pushes the queue back once
+ * (one picture stays up 67 ms) and the frames after it come at the even beat
+ * again, a frame further behind; after 1 s with a frame to spare the queue
+ * drops one to catch up. Games that finish frames at other rates get the
+ * newest frame at once.
  */
 #define PACE_HISTORY 16
-static uint32_t pace_flips, pace_vblank_at[PACE_HISTORY];
+static uint32_t pace_vblank_at[PACE_HISTORY];
 static int pace_n;
 
-/* True: keep showing the last picture for now */
-static bool frame_pacer_hold(uint32_t vblanks, uint32_t flip_vblank,
-                             uint32_t flips, uint32_t shown_vblank)
+static void pace_record(uint32_t flip_vblank)
 {
-    if (flips != pace_flips) {
-        pace_vblank_at[pace_n++ % PACE_HISTORY] = flip_vblank;
-        pace_flips = flips;
-    }
+    pace_vblank_at[pace_n++ % PACE_HISTORY] = flip_vblank;
+}
+
+/* The vblank parity to show on, or -1 when the game is not at 30 fps */
+static int pace_slot(void)
+{
     if (pace_n < PACE_HISTORY) {
-        return false;
+        return -1;
     }
-    /* 30 fps: the last changes average two vblanks apart */
+    /* 30 fps: the last frames average two vblanks apart */
     uint32_t newest = pace_vblank_at[(pace_n - 1) % PACE_HISTORY];
     uint32_t oldest = pace_vblank_at[pace_n % PACE_HISTORY];
     uint32_t span = newest - oldest;
     if (span < 2 * (PACE_HISTORY - 1) - 3 ||
         span > 2 * (PACE_HISTORY - 1) + 3) {
-        return false;
+        return -1;
     }
     /* Show on the vblank parity after the one most frames finish in */
     int odd = 0;
     for (int i = 0; i < PACE_HISTORY; i++) {
         odd += pace_vblank_at[i] & 1;
     }
-    uint32_t slot = odd * 2 > PACE_HISTORY ? 0 : 1;
-    if (vblanks - flip_vblank >= 4) {
+    return odd * 2 > PACE_HISTORY ? 0 : 1;
+}
+
+#define FRAME_QUEUE 4
+#define FRAME_QUEUE_CATCH_UP 60        /* vblanks with a frame to spare */
+
+typedef struct QueuedFrame {
+    GLuint tex, fbo;
+    uint32_t flip_vblank;
+} QueuedFrame;
+
+static QueuedFrame fq[FRAME_QUEUE];
+static GLuint fq_read_fbo;
+static int fq_w, fq_h;
+static int fq_shown = -1;                      /* slot on the screen */
+static int fq_wait[FRAME_QUEUE], fq_waiting;   /* slots to show, oldest first */
+static uint32_t fq_flips, fq_shown_vblank, fq_spare_since;
+static bool fq_started;
+
+static void frame_queue_reset(void)
+{
+    fq_shown = -1;
+    fq_waiting = 0;
+    fq_spare_since = 0;
+}
+
+static void frame_queue_drop_oldest(void)
+{
+    memmove(fq_wait, fq_wait + 1, --fq_waiting * sizeof(fq_wait[0]));
+}
+
+static void frame_queue_alloc(int w, int h)
+{
+    if (!fq_read_fbo) {
+        glGenFramebuffers(1, &fq_read_fbo);
+    }
+    for (int i = 0; i < FRAME_QUEUE; i++) {
+        if (!fq[i].tex) {
+            glGenTextures(1, &fq[i].tex);
+            glGenFramebuffers(1, &fq[i].fbo);
+        }
+        glBindTexture(GL_TEXTURE_2D, fq[i].tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindFramebuffer(GL_FRAMEBUFFER, fq[i].fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, fq[i].tex, 0);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    fq_w = w;
+    fq_h = h;
+    frame_queue_reset();
+}
+
+/* Copy the console's new picture into a free slot; false: there is none */
+static bool frame_queue_capture(uint32_t flip_vblank)
+{
+    GLuint src = nv2a_get_framebuffer_surface();
+    if (!src) {
+        nv2a_release_framebuffer_surface();
         return false;
     }
-    return (vblanks & 1) != slot || vblanks - shown_vblank < 2;
+    GLint w = 0, h = 0;
+    glBindTexture(GL_TEXTURE_2D, src);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if (w != fq_w || h != fq_h) {
+        frame_queue_alloc(w, h);
+    }
+    if (fq_waiting == FRAME_QUEUE - 1) {
+        frame_queue_drop_oldest();
+    }
+    int slot = 0;
+    for (bool used = true; used; slot += used) {
+        used = slot == fq_shown;
+        for (int i = 0; i < fq_waiting; i++) {
+            used |= fq_wait[i] == slot;
+        }
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fq_read_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, src, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fq[slot].fbo);
+    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT,
+                      GL_NEAREST);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    /* The GPU thread draws the next picture into the same texture */
+    GLsync done = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glClientWaitSync(done, GL_SYNC_FLUSH_COMMANDS_BIT, 100000000);
+    glDeleteSync(done);
+    nv2a_release_framebuffer_surface();
+
+    fq[slot].flip_vblank = flip_vblank;
+    fq_wait[fq_waiting++] = slot;
+    return true;
+}
+
+/* The texture to show now; false: no console picture (the VGA path) */
+static bool frame_queue_take(uint32_t vblanks, uint32_t flip_vblank,
+                             uint32_t flips, GLuint *tex)
+{
+    if (flips != fq_flips || !fq_started) {
+        fq_flips = flips;
+        fq_started = true;
+        pace_record(flip_vblank);
+        if (!frame_queue_capture(flip_vblank)) {
+            frame_queue_reset();
+            return false;
+        }
+    }
+    if (fq_waiting) {
+        int slot = pace_slot();
+        bool show;
+        if (slot < 0 || fq_shown < 0) {
+            /* Not at 30 fps: the newest at once */
+            while (fq_waiting > 1) {
+                frame_queue_drop_oldest();
+            }
+            show = true;
+        } else {
+            uint32_t since = vblanks - fq_shown_vblank;
+            show = ((vblanks & 1) == slot && since >= 2) || since >= 4;
+            /* A frame to spare is one finished beyond the one shown now,
+               counted only when a frame is shown: between shows the next
+               one is normally not done yet */
+            if (!show) {
+            } else if (fq_waiting < 2) {
+                fq_spare_since = 0;
+            } else if (!fq_spare_since) {
+                fq_spare_since = vblanks;
+            } else if (vblanks - fq_spare_since >= FRAME_QUEUE_CATCH_UP) {
+                frame_queue_drop_oldest();
+                fq_spare_since = 0;
+            }
+        }
+        if (show) {
+            int next = fq_wait[0];
+            frame_queue_drop_oldest();
+            xemu_diag_shown(vblanks - fq_shown_vblank,
+                            vblanks != fq[next].flip_vblank);
+            fq_shown = next;
+            fq_shown_vblank = vblanks;
+        }
+    }
+    if (fq_shown < 0) {
+        return false;
+    }
+    *tex = fq[fq_shown].tex;
+    return true;
 }
 
 /*
@@ -989,30 +1143,25 @@ static void gl_render_frame(struct xemu_console *scon)
      * the guest code isn't using HW accelerated rendering, but just blitting
      * to the framebuffer, fall back to the VGA path.
      */
-    /* A new picture from the console: how many vblanks since the last one
-       shown, and whether the frame pacer holds it back for now */
-    static uint32_t shown_flips, shown_vblank;
-    static GLuint last_tex;
+    /* With frame pacing the window shows the console's frames from its
+       queue; otherwise the newest */
     uint32_t vblanks, flip_vblank, flips;
     nv2a_get_flips(&vblanks, &flip_vblank, &flips);
-    static bool was_held;
-    bool hold = flips != shown_flips && last_tex &&
-                g_config.perf.frame_pacing &&
-                g_config.display.renderer == CONFIG_DISPLAY_RENDERER_OPENGL &&
-                frame_pacer_hold(vblanks, flip_vblank, flips, shown_vblank);
-    if (hold) {
-        was_held = true;
-    } else if (flips != shown_flips) {
-        xemu_diag_shown(vblanks - shown_vblank, was_held);
-        was_held = false;
-        shown_flips = flips;
-        shown_vblank = vblanks;
-    }
+    bool pacing = g_config.perf.frame_pacing &&
+                  g_config.display.renderer == CONFIG_DISPLAY_RENDERER_OPENGL;
+    static uint32_t shown_flips, shown_vblank;
+    GLuint tex = 0;
 
     first_frame_step("getting the console's picture");
-    GLuint tex = hold ? last_tex : nv2a_get_framebuffer_surface();
-    if (!hold) {
-        last_tex = tex;
+    bool queued = pacing &&
+                  frame_queue_take(vblanks, flip_vblank, flips, &tex);
+    if (!queued) {
+        if (flips != shown_flips) {
+            xemu_diag_shown(vblanks - shown_vblank, false);
+            shown_flips = flips;
+            shown_vblank = vblanks;
+        }
+        tex = nv2a_get_framebuffer_surface();
     }
     first_frame_step(tex ? "got the console's picture" : "no console picture yet");
 
@@ -1058,7 +1207,7 @@ static void gl_render_frame(struct xemu_console *scon)
         glDeleteTextures(1, &tex);
     }
 
-    if (!hold) {
+    if (!queued) {
         nv2a_release_framebuffer_surface();
     }
 
