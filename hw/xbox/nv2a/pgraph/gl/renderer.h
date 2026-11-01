@@ -65,6 +65,14 @@ typedef struct SurfaceBinding {
 
     GLuint gl_buffer;
     SurfaceFormatInfo fmt;
+
+    /* Early copy back: see surface_copy_early() */
+    bool cpu_touched;
+    bool early_valid;
+    int early_draw_time;
+    GLuint early_pbo;
+    size_t early_pbo_size;
+    GLsync early_fence;
 } SurfaceBinding;
 
 typedef struct TextureBinding {
@@ -220,8 +228,16 @@ typedef struct PGRAPHGLState {
     struct s2t_rndr {
         GLuint fbo, vao, vbo, prog;
         GLuint tex_loc, surface_size_loc;
-        GLuint zprog_depth, zprog_stencil;
     } s2t_rndr;
+
+    GLuint early_fbo;
+
+    /* Textures built from render targets: colour, depth, stencil passes */
+    struct compose {
+        GLuint prog[3];
+        GLint tex_loc[3], row_loc[3], size_loc[3], scale_loc[3], pick_loc[3],
+            shift_loc[3];
+    } compose;
 
     /* A colour surface at its unscaled size, to read back scaled ones */
     struct shrink_target {
@@ -311,9 +327,14 @@ static inline void pgraph_gl_surface_download_if_dirty_why(
     pgraph_gl_download_reason = 0;
 }
 SurfaceBinding *pgraph_gl_surface_get(NV2AState *d, hwaddr addr);
-SurfaceBinding *pgraph_gl_surface_get_for_texture(NV2AState *d, hwaddr addr,
-                                                  hwaddr len,
-                                                  const TextureShape *shape);
+#define PGRAPH_GL_COMPOSE_MAX 8
+int pgraph_gl_compose_texture_sources(NV2AState *d, const TextureShape *shape,
+                                      hwaddr tex_addr, hwaddr tex_len,
+                                      SurfaceBinding **list);
+void pgraph_gl_compose_texture(NV2AState *d, TextureBinding *binding,
+                               const TextureShape *shape, hwaddr tex_addr,
+                               SurfaceBinding **list, int n,
+                               int texture_unit);
 SurfaceBinding *pgraph_gl_surface_get_within(NV2AState *d, hwaddr addr);
 void pgraph_gl_surface_invalidate(NV2AState *d, SurfaceBinding *e);
 void pgraph_gl_unbind_surface(NV2AState *d, bool color);

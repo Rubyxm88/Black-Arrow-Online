@@ -22,7 +22,6 @@
 #include "hw/xbox/nv2a/pgraph/pgraph.h"
 #include "ui/xemu-settings.h"
 #include "qemu/xemu-perf.h"
-#include "hw/xbox/xbl-yuv.h"
 #include "hw/xbox/nv2a/debug_gl.h"
 #include "hw/xbox/nv2a/nv2a_int.h"
 #include "hw/xbox/nv2a/pgraph/swizzle.h"
@@ -30,6 +29,7 @@
 #include "renderer.h"
 
 static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force);
+static void surface_early_free(SurfaceBinding *s);
 static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
                                        bool swizzle, bool flip, bool downscale,
                                        uint8_t *pixels);
@@ -159,6 +159,9 @@ void pgraph_gl_set_surface_dirty(PGRAPHState *pg, bool color, bool zeta)
     }
 }
 
+static void compose_init(PGRAPHGLState *r, const char *vs);
+static void compose_finalize(PGRAPHGLState *r);
+
 static void init_render_to_texture(PGRAPHState *pg)
 {
     PGRAPHGLState *r = pg->gl_renderer_state;
@@ -184,30 +187,6 @@ static void init_render_to_texture(PGRAPHState *pg)
 
     r->s2t_rndr.prog = pgraph_gl_compile_shader(vs, fs);
     r->s2t_rndr.tex_loc = glGetUniformLocation(r->s2t_rndr.prog, "tex");
-
-    /* Depth and stencil to colour bytes: see render_zeta_to() */
-    const char *zfs_depth =
-        "#version 330\n"
-        "uniform sampler2D tex;\n"
-        "layout(location = 0) out vec4 out_Color;\n"
-        "void main()\n"
-        "{\n"
-        "    float z = texelFetch(tex, ivec2(gl_FragCoord.xy), 0).r;\n"
-        "    uint d = uint(z * 16777215.0 + 0.5);\n"
-        "    out_Color = vec4(float(d & 0xffu), float((d >> 8) & 0xffu),\n"
-        "                     float(d >> 16), 0.0) / 255.0;\n"
-        "}\n";
-    const char *zfs_stencil =
-        "#version 330\n"
-        "uniform usampler2D tex;\n"
-        "layout(location = 0) out vec4 out_Color;\n"
-        "void main()\n"
-        "{\n"
-        "    uint s = texelFetch(tex, ivec2(gl_FragCoord.xy), 0).r;\n"
-        "    out_Color = vec4(0.0, 0.0, 0.0, float(s & 0xffu) / 255.0);\n"
-        "}\n";
-    r->s2t_rndr.zprog_depth = pgraph_gl_compile_shader(vs, zfs_depth);
-    r->s2t_rndr.zprog_stencil = pgraph_gl_compile_shader(vs, zfs_stencil);
     r->s2t_rndr.surface_size_loc = glGetUniformLocation(r->s2t_rndr.prog,
                                                     "surface_size");
 
@@ -217,6 +196,8 @@ static void init_render_to_texture(PGRAPHState *pg)
     glBindBuffer(GL_ARRAY_BUFFER, r->s2t_rndr.vbo);
     glBufferData(GL_ARRAY_BUFFER, 0, NULL, GL_STATIC_DRAW);
     glGenFramebuffers(1, &r->s2t_rndr.fbo);
+
+    compose_init(r, vs);
 }
 
 static void finalize_render_to_texture(PGRAPHState *pg)
@@ -225,10 +206,11 @@ static void finalize_render_to_texture(PGRAPHState *pg)
 
     glDeleteProgram(r->s2t_rndr.prog);
     r->s2t_rndr.prog = 0;
-    glDeleteProgram(r->s2t_rndr.zprog_depth);
-    r->s2t_rndr.zprog_depth = 0;
-    glDeleteProgram(r->s2t_rndr.zprog_stencil);
-    r->s2t_rndr.zprog_stencil = 0;
+    compose_finalize(r);
+    if (r->early_fbo) {
+        glDeleteFramebuffers(1, &r->early_fbo);
+        r->early_fbo = 0;
+    }
 
     glDeleteVertexArrays(1, &r->s2t_rndr.vao);
     r->s2t_rndr.vao = 0;
@@ -240,26 +222,6 @@ static void finalize_render_to_texture(PGRAPHState *pg)
     r->s2t_rndr.fbo = 0;
 }
 
-/*
- * The menus read a Z24S8 depth buffer as a B8G8R8A8 texture every frame,
- * which copied it to Xbox RAM and back each time. Each pixel is the word
- * depth << 8 | stencil, read as 8_8_8_8 BGRA: depth bits 16-23 in blue, 8-15
- * in green, 0-7 in red and the stencil in alpha. render_zeta_to() makes that
- * on the GPU; it needs stencil texturing (GL 4.3).
- */
-static bool zeta_to_texture_compatible(const SurfaceBinding *surface,
-                                       int texture_fmt)
-{
-    static int stencil_texturing = -1;
-    if (stencil_texturing < 0) {
-        stencil_texturing = epoxy_gl_version() >= 43 ||
-                            epoxy_has_gl_extension("GL_ARB_stencil_texturing");
-    }
-    return stencil_texturing &&
-           surface->shape.zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 &&
-           texture_fmt == NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_B8G8R8A8;
-}
-
 static bool surface_to_texture_can_fastpath(SurfaceBinding *surface,
                                             TextureShape *shape)
 {
@@ -269,7 +231,8 @@ static bool surface_to_texture_can_fastpath(SurfaceBinding *surface,
     int texture_fmt = shape->color_format;
 
     if (!surface->color) {
-        return zeta_to_texture_compatible(surface, texture_fmt);
+        // FIXME: Support zeta to color
+        return false;
     }
 
     switch (surface_fmt) {
@@ -304,79 +267,6 @@ static bool surface_to_texture_can_fastpath(SurfaceBinding *surface,
     trace_nv2a_pgraph_surface_texture_compat_failed(
         surface_fmt, texture_fmt);
     return false;
-}
-
-/*
- * Two passes into the texture: the depth as three colour bytes, then the
- * stencil as the fourth (a depth-stencil texture gives one or the other)
- */
-static void render_zeta_to(NV2AState *d, SurfaceBinding *surface,
-                           int texture_unit, GLuint gl_target,
-                           GLuint gl_texture, unsigned int width,
-                           unsigned int height)
-{
-    PGRAPHState *pg = &d->pgraph;
-    PGRAPHGLState *r = pg->gl_renderer_state;
-
-    glActiveTexture(GL_TEXTURE0 + texture_unit);
-    glBindFramebuffer(GL_FRAMEBUFFER, r->s2t_rndr.fbo);
-
-    GLenum draw_buffers[1] = { GL_COLOR_ATTACHMENT0 };
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gl_target,
-                           gl_texture, 0);
-    glDrawBuffers(1, draw_buffers);
-    ASSERT_FRAMEBUFFER_COMPLETE();
-    ASSERT_NO_GL_ERROR();
-
-    /* An integer (stencil) texture must use nearest filtering */
-    glBindTexture(GL_TEXTURE_2D, surface->gl_buffer);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
-
-    glBindVertexArray(r->s2t_rndr.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, r->s2t_rndr.vbo);
-
-    glViewport(0, 0, width, height);
-    glDisable(GL_DITHER);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_BLEND);
-    glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_DEPTH_TEST);
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
-                    GL_DEPTH_COMPONENT);
-    glUseProgram(r->s2t_rndr.zprog_depth);
-    glProgramUniform1i(r->s2t_rndr.zprog_depth,
-                       glGetUniformLocation(r->s2t_rndr.zprog_depth, "tex"),
-                       texture_unit);
-    glColorMask(true, true, true, false);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
-                    GL_STENCIL_INDEX);
-    glUseProgram(r->s2t_rndr.zprog_stencil);
-    glProgramUniform1i(r->s2t_rndr.zprog_stencil,
-                       glGetUniformLocation(r->s2t_rndr.zprog_stencil, "tex"),
-                       texture_unit);
-    glColorMask(false, false, false, true);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-
-    glColorMask(true, true, true, true);
-    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
-                    GL_DEPTH_COMPONENT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, gl_target, 0,
-                           0);
-    glBindFramebuffer(GL_FRAMEBUFFER, r->gl_framebuffer);
-    glBindVertexArray(r->gl_vertex_array);
-    glBindTexture(gl_target, gl_texture);
-    glUseProgram(
-        r->shader_binding ? r->shader_binding->gl_program : 0);
 }
 
 static void render_surface_to(NV2AState *d, SurfaceBinding *surface,
@@ -502,13 +392,8 @@ void pgraph_gl_render_surface_to_texture(NV2AState *d, SurfaceBinding *surface,
     glTexImage2D(texture->gl_target, 0, f->gl_internal_format, width, height, 0,
                  f->gl_format, f->gl_type, NULL);
     glBindTexture(texture->gl_target, 0);
-    if (surface->color) {
-        render_surface_to(d, surface, texture_unit, texture->gl_target,
-                          texture->gl_texture, width, height);
-    } else {
-        render_zeta_to(d, surface, texture_unit, texture->gl_target,
-                       texture->gl_texture, width, height);
-    }
+    render_surface_to(d, surface, texture_unit, texture->gl_target,
+                             texture->gl_texture, width, height);
     glBindTexture(texture->gl_target, texture->gl_texture);
     glUseProgram(
         r->shader_binding ? r->shader_binding->gl_program : 0);
@@ -529,8 +414,8 @@ bool pgraph_gl_check_surface_to_texture_compatibility(
     int surface_fmt = surface->shape.color_format;
     int texture_fmt = shape->color_format;
 
-    if (!surface->color &&
-        !zeta_to_texture_compatible(surface, texture_fmt)) {
+    if (!surface->color) {
+        // FIXME: Support zeta to color
         return false;
     }
 
@@ -610,21 +495,9 @@ static void surface_access_callback(void *opaque, MemoryRegion *mr, hwaddr addr,
             trace_nv2a_pgraph_surface_cpu_read(surface->vram_addr, offset);
         }
 
-        /*
-         * The menu video writing a full-width first or last row replaces the
-         * picture the GPU drew there: drop it instead of copying it back
-         */
-        if (surface->draw_dirty && write && xbl_yuv_row_bytes && len > 16 &&
-            g_config.display.quality.skip_reuse_copyback &&
-            xbl_yuv_row_bytes == surface->pitch &&
-            (offset == 0 || offset + surface->pitch == surface->size)) {
-            nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_SKIPPED);
-            surface->draw_dirty = false;
-            surface->download_pending = false;
-        }
-
         if (surface->draw_dirty) {
             surface->download_pending = true;
+            surface->cpu_touched = true;
             wait_for_downloads = true;
         }
 
@@ -742,29 +615,481 @@ static SurfaceBinding *surface_put(NV2AState *d, hwaddr addr,
 }
 
 /*
- * Two render targets can start at the same address (the menus put a colour
- * target over a depth buffer). A texture there shows the one drawn last: use
- * it when it can be turned into the texture on the GPU, else the first one.
+ * Textures built on the GPU from the render targets that share their memory.
+ *
+ * A texture over memory that render targets have drawn into used to need
+ * those targets copied back to Xbox RAM first (a wait for the GPU, 13-17 ms
+ * each on Intel graphics at 2x). Instead the texture is loaded from Xbox RAM
+ * as before and each target newer than RAM is drawn over its own rows on
+ * the GPU, oldest first, as the exact bytes a copy back would have left in
+ * RAM (same pixel picked at higher resolutions). Only linear 32-bit
+ * textures and targets with the same pitch: colour A8R8G8B8/X8R8G8B8, and
+ * Z24S8 depth when stencil texturing is there (GL 4.3).
+ *
+ * XEMU_COMPOSE=0 turns it off. XEMU_COMPOSE_CHECK=1 also does the copy
+ * back into a spare buffer and compares it with the texture byte for byte
+ * ("composecheck:" lines on stderr).
  */
-SurfaceBinding *pgraph_gl_surface_get_for_texture(NV2AState *d, hwaddr addr,
-                                                  hwaddr len,
-                                                  const TextureShape *shape)
+
+static int compose_env(const char *name, int def)
+{
+    const char *e = getenv(name);
+    return e && e[0] ? e[0] != '0' : def;
+}
+
+static bool compose_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = compose_env("XEMU_COMPOSE", 1);
+    }
+    return on;
+}
+
+static bool compose_check_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = compose_env("XEMU_COMPOSE_CHECK", 0);
+    }
+    return on;
+}
+
+static bool stencil_texturing(void)
+{
+    static int has = -1;
+    if (has < 0) {
+        has = epoxy_gl_version() >= 43 ||
+              epoxy_has_gl_extension("GL_ARB_stencil_texturing");
+    }
+    return has;
+}
+
+/* Bit position of R, G, B and A in the texture's 32-bit word in RAM */
+static bool compose_texture_shifts(const ColorFormatInfo *f, int shift[4])
+{
+    static const int bgra_rev[4] = { 16, 8, 0, 24 };
+    static const int bgra[4] = { 8, 16, 24, 0 };
+    static const int rgba_rev[4] = { 0, 8, 16, 24 };
+    static const int rgba[4] = { 24, 16, 8, 0 };
+    const int *s = NULL;
+
+    if (f->bytes_per_pixel != 4 || !f->linear || f->depth ||
+        f->gl_internal_format != GL_RGBA8) {
+        return false;
+    }
+    if (f->gl_format == GL_BGRA) {
+        s = f->gl_type == GL_UNSIGNED_INT_8_8_8_8 ? bgra :
+            f->gl_type == GL_UNSIGNED_INT_8_8_8_8_REV ||
+            f->gl_type == GL_UNSIGNED_BYTE ? bgra_rev : NULL;
+    } else if (f->gl_format == GL_RGBA) {
+        s = f->gl_type == GL_UNSIGNED_INT_8_8_8_8 ? rgba :
+            f->gl_type == GL_UNSIGNED_INT_8_8_8_8_REV ||
+            f->gl_type == GL_UNSIGNED_BYTE ? rgba_rev : NULL;
+    }
+    if (!s) {
+        return false;
+    }
+    memcpy(shift, s, sizeof(int) * 4);
+    return true;
+}
+
+static bool compose_surface_ok(const SurfaceBinding *s, hwaddr tex_addr,
+                               const TextureShape *shape)
+{
+    int64_t delta = (int64_t)s->vram_addr - (int64_t)tex_addr;
+
+    if (s->swizzle || s->pitch != shape->pitch || !s->width || !s->height ||
+        s->fmt.bytes_per_pixel != 4 || s->width * 4 > s->pitch ||
+        delta % (int64_t)s->pitch) {
+        return false;
+    }
+    if (s->color) {
+        return s->fmt.gl_format == GL_BGRA &&
+               s->fmt.gl_type == GL_UNSIGNED_INT_8_8_8_8_REV;
+    }
+    return s->shape.zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z24S8 &&
+           s->fmt.gl_format == GL_DEPTH_STENCIL && stencil_texturing();
+}
+
+static int compose_cmp_draw_time(const void *a, const void *b)
+{
+    const SurfaceBinding *x = *(SurfaceBinding *const *)a;
+    const SurfaceBinding *y = *(SurfaceBinding *const *)b;
+    return x->draw_time - y->draw_time;
+}
+
+/*
+ * The render targets newer than RAM under a texture, oldest first, when the
+ * texture can be built from them on the GPU (else 0: copy them back)
+ */
+int pgraph_gl_compose_texture_sources(NV2AState *d, const TextureShape *shape,
+                                      hwaddr tex_addr, hwaddr tex_len,
+                                      SurfaceBinding **list)
 {
     PGRAPHGLState *r = d->pgraph.gl_renderer_state;
-    SurfaceBinding *first = pgraph_gl_surface_get(d, addr);
-    SurfaceBinding *newest = NULL, *surface;
+    const ColorFormatInfo *f = &kelvin_color_format_gl_map[shape->color_format];
+    int shift[4];
+    int n = 0;
 
-    QTAILQ_FOREACH (surface, &r->surfaces, entry) {
-        if (check_surface_overlaps_range(surface, addr, len) &&
-            (!newest || surface->draw_time > newest->draw_time)) {
-            newest = surface;
+    if (!compose_on() || shape->cubemap || shape->dimensionality != 2 ||
+        shape->levels != 1 || !shape->pitch ||
+        !compose_texture_shifts(f, shift)) {
+        return 0;
+    }
+
+    SurfaceBinding *s;
+    QTAILQ_FOREACH(s, &r->surfaces, entry) {
+        if (!s->draw_dirty || !check_surface_overlaps_range(s, tex_addr,
+                                                            tex_len)) {
+            continue;
+        }
+        if (n == PGRAPH_GL_COMPOSE_MAX || !compose_surface_ok(s, tex_addr, shape)) {
+            return 0;
+        }
+        list[n++] = s;
+    }
+    qsort(list, n, sizeof(*list), compose_cmp_draw_time);
+    return n;
+}
+
+static void GLAPIENTRY compose_gl_message(GLenum source, GLenum type,
+                                          GLuint id, GLenum severity,
+                                          GLsizei length,
+                                          const GLchar *message,
+                                          const void *user)
+{
+    static int shown;
+    if (type == GL_DEBUG_TYPE_ERROR && shown++ < 40) {
+        fprintf(stderr, "composecheck: GL says: %s\n", message);
+    }
+}
+
+static void compose_init(PGRAPHGLState *r, const char *vs)
+{
+    if (compose_check_on() && epoxy_gl_version() >= 43) {
+        glEnable(GL_DEBUG_OUTPUT);
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        glDebugMessageCallback(compose_gl_message, NULL);
+    }
+
+    /*
+     * The texture pixel (x, y) is the target's pixel (x, y - row) at the
+     * Xbox's resolution, read at (x * scale + pick, y * scale + pick) like
+     * the copy back. Its 32-bit RAM word goes to the output channels at the
+     * texture format's bit positions.
+     */
+    static const char *head =
+        "#version 330\n"
+        "uniform int row;\n"
+        "uniform ivec2 size;\n"
+        "uniform int scale;\n"
+        "uniform int pick;\n"
+        "uniform ivec4 shift;\n"
+        "layout(location = 0) out vec4 out_Color;\n"
+        "ivec2 source()\n"
+        "{\n"
+        "    ivec2 p = ivec2(gl_FragCoord.xy);\n"
+        "    p.y -= row;\n"
+        "    if (p.x >= size.x || p.y < 0 || p.y >= size.y) {\n"
+        "        discard;\n"
+        "    }\n"
+        "    return p * scale + pick;\n"
+        "}\n"
+        "vec4 bytes(uint w)\n"
+        "{\n"
+        "    uvec4 c = (uvec4(w) >> uvec4(shift)) & 0xffu;\n"
+        "    return vec4(c) / 255.0;\n"
+        "}\n";
+    static const char *colour =
+        "uniform sampler2D tex;\n"
+        "void main()\n"
+        "{\n"
+        "    uvec4 c = uvec4(texelFetch(tex, source(), 0) * 255.0 + 0.5);\n"
+        "    out_Color = bytes(c.a << 24 | c.r << 16 | c.g << 8 | c.b);\n"
+        "}\n";
+    /* round(): z * 16777215.0 + 0.5 is 2^24 in floats at z = 1.0 */
+    static const char *depth =
+        "uniform sampler2D tex;\n"
+        "void main()\n"
+        "{\n"
+        "    float z = texelFetch(tex, source(), 0).r;\n"
+        "    uint d = min(uint(round(z * 16777215.0)), 0xffffffu);\n"
+        "    out_Color = bytes(d << 8);\n"
+        "}\n";
+    static const char *stencil =
+        "uniform usampler2D tex;\n"
+        "void main()\n"
+        "{\n"
+        "    out_Color = bytes(texelFetch(tex, source(), 0).r & 0xffu);\n"
+        "}\n";
+    const char *bodies[3] = { colour, depth, stencil };
+
+    for (int i = 0; i < 3; i++) {
+        char *fs = g_strconcat(head, bodies[i], NULL);
+        GLuint prog = pgraph_gl_compile_shader(vs, fs);
+        g_free(fs);
+        r->compose.prog[i] = prog;
+        r->compose.tex_loc[i] = glGetUniformLocation(prog, "tex");
+        r->compose.row_loc[i] = glGetUniformLocation(prog, "row");
+        r->compose.size_loc[i] = glGetUniformLocation(prog, "size");
+        r->compose.scale_loc[i] = glGetUniformLocation(prog, "scale");
+        r->compose.pick_loc[i] = glGetUniformLocation(prog, "pick");
+        r->compose.shift_loc[i] = glGetUniformLocation(prog, "shift");
+    }
+}
+
+static void compose_finalize(PGRAPHGLState *r)
+{
+    for (int i = 0; i < 3; i++) {
+        glDeleteProgram(r->compose.prog[i]);
+        r->compose.prog[i] = 0;
+    }
+}
+
+/* XEMU_COMPOSE_CHECK=1: any GL error at a step, first 20 */
+static void compose_gl_errors(const char *where)
+{
+    static int shown;
+    GLenum e;
+    while ((e = glGetError()) != GL_NO_ERROR) {
+        if (shown++ < 20) {
+            fprintf(stderr, "composecheck: GL error 0x%04x at %s\n", e, where);
         }
     }
-    if (newest && newest != first && newest->vram_addr == addr &&
-        pgraph_gl_check_surface_to_texture_compatibility(newest, shape)) {
-        return newest;
+}
+
+static void compose_pass(PGRAPHGLState *r, int prog, int texture_unit,
+                         int row, const SurfaceBinding *s, int scale,
+                         int pick, const int shift[4])
+{
+    GLuint p = r->compose.prog[prog];
+    glUseProgram(p);
+    glProgramUniform1i(p, r->compose.tex_loc[prog], texture_unit);
+    glProgramUniform1i(p, r->compose.row_loc[prog], row);
+    glProgramUniform2i(p, r->compose.size_loc[prog], s->width, s->height);
+    glProgramUniform1i(p, r->compose.scale_loc[prog], scale);
+    glProgramUniform1i(p, r->compose.pick_loc[prog], pick);
+    glProgramUniform4i(p, r->compose.shift_loc[prog], shift[0], shift[1],
+                       shift[2], shift[3]);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    if (compose_check_on()) {
+        static int shown;
+        if (shown < 3) {
+            uint8_t px[4] = { 0 };
+            glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            GLint cur = 0;
+            glGetIntegerv(GL_CURRENT_PROGRAM, &cur);
+            GLint minf = 0, cmp = 0, base = 0, maxl = 0, mode = 0;
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &minf);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, &cmp);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, &base);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &maxl);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                                &mode);
+            fprintf(stderr, "composecheck: pass %d pixel0 %02x %02x %02x %02x "
+                    "cur prog %d minf 0x%x cmp 0x%x base %d max %d mode 0x%x "
+                    "a2c %d ms %d logic %d clip0 %d discard %d srgb %d\n",
+                    prog, px[0], px[1], px[2], px[3], cur, minf, cmp, base,
+                    maxl, mode, glIsEnabled(GL_SAMPLE_ALPHA_TO_COVERAGE),
+                    glIsEnabled(GL_MULTISAMPLE), glIsEnabled(GL_COLOR_LOGIC_OP),
+                    glIsEnabled(GL_CLIP_DISTANCE0),
+                    glIsEnabled(GL_RASTERIZER_DISCARD),
+                    glIsEnabled(GL_FRAMEBUFFER_SRGB));
+        }
+        if (shown++ < 3) {
+            GLint fmt = 0, w = 0;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0,
+                                     GL_TEXTURE_INTERNAL_FORMAT, &fmt);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
+            fprintf(stderr, "composecheck: pass %d prog %u tex_loc %d "
+                    "row_loc %d size %ux%u row %d scale %d src fmt 0x%x "
+                    "width %d\n", prog, p, r->compose.tex_loc[prog],
+                    r->compose.row_loc[prog], s->width, s->height, row,
+                    scale, fmt, w);
+        }
+        compose_gl_errors(prog == 0 ? "colour pass" :
+                          prog == 1 ? "depth pass" : "stencil pass");
     }
-    return first;
+}
+
+static void compose_check(NV2AState *d, TextureBinding *binding,
+                          const TextureShape *shape, hwaddr tex_addr,
+                          SurfaceBinding **list, int n);
+
+/*
+ * Draws the targets in list (from pgraph_gl_compose_texture_sources) over
+ * the texture just loaded from RAM. Leaves the texture bound to its unit.
+ */
+void pgraph_gl_compose_texture(NV2AState *d, TextureBinding *binding,
+                               const TextureShape *shape, hwaddr tex_addr,
+                               SurfaceBinding **list, int n,
+                               int texture_unit)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHGLState *r = pg->gl_renderer_state;
+    const ColorFormatInfo *f = &kelvin_color_format_gl_map[shape->color_format];
+    int scale = pg->surface_scale_factor;
+    int shift[4];
+
+    compose_texture_shifts(f, shift);
+    nv2a_profile_inc_counter(NV2A_PROF_SURF_TO_TEX);
+    if (compose_check_on()) {
+        compose_gl_errors("before compose");
+    }
+
+    glActiveTexture(GL_TEXTURE0 + texture_unit);
+    glBindTexture(binding->gl_target, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->s2t_rndr.fbo);
+    GLenum draw_buffers[1] = { GL_COLOR_ATTACHMENT0 };
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           binding->gl_target, binding->gl_texture, 0);
+    glDrawBuffers(1, draw_buffers);
+    ASSERT_FRAMEBUFFER_COMPLETE();
+    if (compose_check_on()) {
+        static int shown;
+        if (shown++ < 3) {
+            fprintf(stderr, "composecheck: target 0x%x tex %u %ux%u\n",
+                    binding->gl_target, binding->gl_texture, shape->width,
+                    shape->height);
+        }
+        compose_gl_errors("compose framebuffer");
+    }
+
+    glBindVertexArray(r->s2t_rndr.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r->s2t_rndr.vbo);
+    glViewport(0, 0, shape->width, shape->height);
+    glDisable(GL_DITHER);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    int draw_time = 1;
+    for (int i = 0; i < n; i++) {
+        SurfaceBinding *s = list[i];
+        int row = ((int64_t)s->vram_addr - (int64_t)tex_addr) /
+                  (int64_t)s->pitch;
+        draw_time = MAX(draw_time, s->draw_time);
+
+        glBindTexture(GL_TEXTURE_2D, s->gl_buffer);
+        if (s->color) {
+            /* The GPU shrink of a copy back takes each block's middle */
+            glColorMask(true, true, true, true);
+            compose_pass(r, 0, texture_unit, row, s, scale, scale / 2, shift);
+            continue;
+        }
+
+        /* The CPU shrink of a depth copy back takes each block's first */
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+
+        /* Stencil is the word's low byte: one channel, depth the others */
+        bool low[4];
+        for (int c = 0; c < 4; c++) {
+            low[c] = shift[c] == 0;
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                        GL_DEPTH_COMPONENT);
+        glColorMask(!low[0], !low[1], !low[2], !low[3]);
+        compose_pass(r, 1, texture_unit, row, s, scale, 0, shift);
+        glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                        GL_STENCIL_INDEX);
+        glColorMask(low[0], low[1], low[2], low[3]);
+        compose_pass(r, 2, texture_unit, row, s, scale, 0, shift);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                        GL_DEPTH_COMPONENT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glColorMask(true, true, true, true);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           binding->gl_target, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->gl_framebuffer);
+    glBindVertexArray(r->gl_vertex_array);
+    glBindTexture(binding->gl_target, binding->gl_texture);
+    glUseProgram(r->shader_binding ? r->shader_binding->gl_program : 0);
+
+    /* Never reused from the texture cache: built again on its next use */
+    binding->draw_time = draw_time;
+    binding->scale = 1;
+
+    if (compose_check_on()) {
+        compose_gl_errors("after compose");
+        compose_check(d, binding, shape, tex_addr, list, n);
+        compose_gl_errors("compose check");
+    }
+}
+
+/* Same bytes as copying the targets back to RAM and loading from there? */
+static void compose_check(NV2AState *d, TextureBinding *binding,
+                          const TextureShape *shape, hwaddr tex_addr,
+                          SurfaceBinding **list, int n)
+{
+    static uint64_t checks, bad_checks;
+    const ColorFormatInfo *f = &kelvin_color_format_gl_map[shape->color_format];
+    unsigned int w = shape->width, h = shape->height, pitch = shape->pitch;
+    size_t row_bytes = MIN(w * 4, pitch);
+    uint8_t *got = g_malloc(w * h * 4);
+    uint8_t *want = g_malloc0(w * h * 4);
+
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glGetTexImage(binding->gl_target, 0, f->gl_format, f->gl_type, got);
+
+    for (unsigned int y = 0; y < h; y++) {
+        memcpy(want + y * w * 4, d->vram_ptr + tex_addr + y * pitch,
+               row_bytes);
+    }
+    for (int i = 0; i < n; i++) {
+        SurfaceBinding *s = list[i];
+        int row = ((int64_t)s->vram_addr - (int64_t)tex_addr) /
+                  (int64_t)s->pitch;
+        uint8_t *buf = g_malloc0(s->pitch * s->height);
+        surface_download_to_buffer(d, s, false, false, true, buf);
+        for (unsigned int sy = 0; sy < s->height; sy++) {
+            int ty = (int)sy + row;
+            if (ty >= 0 && ty < (int)h) {
+                memcpy(want + ty * w * 4, buf + sy * s->pitch,
+                       MIN(s->width, w) * 4);
+            }
+        }
+        g_free(buf);
+    }
+    glBindTexture(binding->gl_target, binding->gl_texture);
+
+    unsigned int bad = 0, bx = 0, by = 0;
+    uint32_t got_px = 0, want_px = 0;
+    for (unsigned int p = 0; p < w * h; p++) {
+        if (memcmp(got + p * 4, want + p * 4, 4)) {
+            if (!bad++) {
+                bx = p % w;
+                by = p / w;
+                memcpy(&got_px, got + p * 4, 4);
+                memcpy(&want_px, want + p * 4, 4);
+            }
+        }
+    }
+    checks++;
+    bad_checks += bad != 0;
+    if (bad && bad_checks <= 100) {
+        fprintf(stderr,
+                "composecheck: MISMATCH tex@0x%08x fmt=0x%02x %ux%u targets=%d "
+                "bad_pixels=%u first=(%u,%u) got=%08x want=%08x\n",
+                (unsigned)tex_addr, shape->color_format, w, h, n, bad, bx, by,
+                got_px, want_px);
+    }
+    if (checks % 500 == 0 || checks == 1) {
+        fprintf(stderr, "composecheck: %" PRIu64 " textures built, %" PRIu64
+                " with differences\n", checks, bad_checks);
+    }
+    g_free(got);
+    g_free(want);
 }
 
 SurfaceBinding *pgraph_gl_surface_get(NV2AState *d, hwaddr addr)
@@ -816,6 +1141,7 @@ void pgraph_gl_surface_invalidate(NV2AState *d, SurfaceBinding *surface)
 
     unregister_cpu_access_callback(d, surface);
 
+    surface_early_free(surface);
     glDeleteTextures(1, &surface->gl_buffer);
 
     QTAILQ_REMOVE(&r->surfaces, surface, entry);
@@ -959,7 +1285,17 @@ static void surface_copy_shrink_row(uint8_t *out, uint8_t *in,
  * the first one, this the one nearest the block's middle), and leaves the
  * shrink target bound for reading
  */
+static void shrink_surface_on_gpu_from(NV2AState *d, SurfaceBinding *surface,
+                                       GLuint read_fbo);
+
 static void shrink_surface_on_gpu(NV2AState *d, SurfaceBinding *surface)
+{
+    shrink_surface_on_gpu_from(d, surface,
+                               d->pgraph.gl_renderer_state->gl_framebuffer);
+}
+
+static void shrink_surface_on_gpu_from(NV2AState *d, SurfaceBinding *surface,
+                                       GLuint read_fbo)
 {
     PGRAPHState *pg = &d->pgraph;
     PGRAPHGLState *r = pg->gl_renderer_state;
@@ -993,7 +1329,7 @@ static void shrink_surface_on_gpu(NV2AState *d, SurfaceBinding *surface)
     /* The scissor test applies to blits too */
     GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
     glDisable(GL_SCISSOR_TEST);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->gl_framebuffer);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, r->shrink.fbo);
     glBlitFramebuffer(0, 0, width * factor, height * factor, 0, 0, width,
                       height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -1101,6 +1437,165 @@ static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
     bind_current_surface(d);
 }
 
+
+/*
+ * Early copy back. A colour render target the game's CPU touched while the
+ * GPU had drawn into it (the menus read a 40x30 one every frame) gets its
+ * copy back started when the GPU moves on to another target: into a pixel
+ * buffer the GPU fills by itself, with a fence. When the CPU reads it, the
+ * copy is usually done; before, the read waited for all drawing queued up
+ * to then (13-17 ms each on Intel graphics at 2x). XEMU_EARLY_COPY=0 turns
+ * it off; XEMU_COMPOSE_CHECK=1 also compares it with a plain copy back.
+ */
+#define EARLY_COPY_MAX_BYTES (2 * 1024 * 1024)
+
+static bool early_copy_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        on = compose_env("XEMU_EARLY_COPY", 1);
+    }
+    return on;
+}
+
+static void surface_early_free(SurfaceBinding *s)
+{
+    if (s->early_fence) {
+        glDeleteSync(s->early_fence);
+        s->early_fence = 0;
+    }
+    if (s->early_pbo) {
+        glDeleteBuffers(1, &s->early_pbo);
+        s->early_pbo = 0;
+    }
+    s->early_pbo_size = 0;
+    s->early_valid = false;
+}
+
+static void surface_copy_early(NV2AState *d, SurfaceBinding *s)
+{
+    PGRAPHState *pg = &d->pgraph;
+    PGRAPHGLState *r = pg->gl_renderer_state;
+
+    if (!early_copy_on() || !s || !s->color || !s->cpu_touched ||
+        !s->draw_dirty || s->swizzle || !s->width || !s->height ||
+        s->size > EARLY_COPY_MAX_BYTES ||
+        s->pitch % s->fmt.bytes_per_pixel ||
+        (s->early_valid && s->early_draw_time == s->draw_time)) {
+        return;
+    }
+
+    if (!r->early_fbo) {
+        glGenFramebuffers(1, &r->early_fbo);
+    }
+    if (!s->early_pbo) {
+        glGenBuffers(1, &s->early_pbo);
+    }
+    if (s->early_fence) {
+        glDeleteSync(s->early_fence);
+        s->early_fence = 0;
+    }
+
+    GLint last_read_fbo, last_draw_fbo;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &last_read_fbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &last_draw_fbo);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->early_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, s->gl_buffer, 0);
+    GLuint read_fbo = r->early_fbo;
+    if (pg->surface_scale_factor != 1) {
+        /* Same pixels as the copy back: the shrink target at Xbox size */
+        shrink_surface_on_gpu_from(d, s, r->early_fbo);
+        read_fbo = r->shrink.fbo;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
+
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, s->early_pbo);
+    if (s->early_pbo_size != s->size) {
+        glBufferData(GL_PIXEL_PACK_BUFFER, s->size, NULL, GL_STREAM_READ);
+        s->early_pbo_size = s->size;
+    }
+    GLint rl, pa;
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &rl);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &pa);
+    glPixelStorei(GL_PACK_ROW_LENGTH, s->pitch / s->fmt.bytes_per_pixel);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, s->width, s->height, s->fmt.gl_format, s->fmt.gl_type,
+                 NULL);
+    glPixelStorei(GL_PACK_ROW_LENGTH, rl);
+    glPixelStorei(GL_PACK_ALIGNMENT, pa);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    s->early_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    glFlush();
+    if (compose_check_on()) {
+        compose_gl_errors("early copy start");
+    }
+
+    /* The read framebuffer may be the shrink one now: detach from ours */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->early_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, last_read_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, last_draw_fbo);
+
+    s->early_valid = true;
+    s->early_draw_time = s->draw_time;
+}
+
+/* The early copy into pixels (pitch apart), if it is still current */
+static bool surface_take_early_copy(NV2AState *d, SurfaceBinding *s,
+                                    uint8_t *pixels)
+{
+    if (!s->early_valid || s->early_draw_time != s->draw_time ||
+        !s->early_fence) {
+        return false;
+    }
+    glClientWaitSync(s->early_fence, GL_SYNC_FLUSH_COMMANDS_BIT,
+                     5000000000ull);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, s->early_pbo);
+    const uint8_t *src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, s->size,
+                                          GL_MAP_READ_BIT);
+    bool ok = src != NULL;
+    if (ok) {
+        size_t row = s->width * s->fmt.bytes_per_pixel;
+        for (unsigned int y = 0; y < s->height; y++) {
+            memcpy(pixels + y * s->pitch, src + y * s->pitch, row);
+        }
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    s->early_valid = false;
+    if (compose_check_on()) {
+        compose_gl_errors("early copy take");
+    }
+
+    if (ok && compose_check_on()) {
+        static uint64_t checks, bad_checks;
+        uint8_t *want = g_malloc0(s->size);
+        surface_download_to_buffer(d, s, false, false, true, want);
+        size_t row = s->width * s->fmt.bytes_per_pixel;
+        unsigned int bad_rows = 0;
+        for (unsigned int y = 0; y < s->height; y++) {
+            bad_rows += memcmp(want + y * s->pitch, pixels + y * s->pitch,
+                               row) != 0;
+        }
+        checks++;
+        bad_checks += bad_rows != 0;
+        if (bad_rows && bad_checks <= 100) {
+            fprintf(stderr, "earlycheck: MISMATCH surf@0x%08x %ux%u "
+                    "bad_rows=%u\n", (unsigned)s->vram_addr, s->width,
+                    s->height, bad_rows);
+        }
+        if (checks % 500 == 0 || checks == 1) {
+            fprintf(stderr, "earlycheck: %" PRIu64 " early copies, %" PRIu64
+                    " with differences\n", checks, bad_checks);
+        }
+        g_free(want);
+    }
+    return ok;
+}
+
 static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force)
 {
     if (!(surface->download_pending || force) || !surface->width ||
@@ -1117,8 +1612,12 @@ static void surface_download(NV2AState *d, SurfaceBinding *surface, bool force)
                                  NV2A_PROF_SURF_DL_OTHER);
 
     int64_t perf_start = xemu_perf_start();
-    surface_download_to_buffer(d, surface, true, false, true,
-                               d->vram_ptr + surface->vram_addr);
+    if (surface_take_early_copy(d, surface, d->vram_ptr + surface->vram_addr)) {
+        nv2a_profile_inc_counter(NV2A_PROF_SURF_DL_EARLY);
+    } else {
+        surface_download_to_buffer(d, surface, true, false, true,
+                                   d->vram_ptr + surface->vram_addr);
+    }
     xemu_perf_end(XEMU_PERF_COPYBACK, perf_start);
 
     memory_region_set_client_dirty(d->vram, surface->vram_addr,
@@ -1419,6 +1918,12 @@ static void populate_surface_binding_entry_sized(NV2AState *d, bool color,
     entry->frame_time = pg->frame_time;
     entry->draw_time = pg->draw_time;
     entry->cleared = false;
+    entry->cpu_touched = false;
+    entry->early_valid = false;
+    entry->early_draw_time = 0;
+    entry->early_pbo = 0;
+    entry->early_pbo_size = 0;
+    entry->early_fence = 0;
 }
 
 static void populate_surface_binding_entry(NV2AState *d, bool color,
@@ -1649,6 +2154,7 @@ void pgraph_gl_unbind_surface(NV2AState *d, bool color)
             glFramebufferTexture2D(GL_FRAMEBUFFER,
                                    GL_COLOR_ATTACHMENT0,
                                    GL_TEXTURE_2D, 0, 0);
+            surface_copy_early(d, r->color_binding);
             r->color_binding = NULL;
         }
     } else {

@@ -273,8 +273,7 @@ void pgraph_gl_bind_textures(NV2AState *d)
         bool possibly_dirty = false;
         bool possibly_dirty_checked = false;
 
-        SurfaceBinding *surface = pgraph_gl_surface_get_for_texture(
-            d, texture_vram_offset, length, &state);
+        SurfaceBinding *surface = pgraph_gl_surface_get(d, texture_vram_offset);
         bool surf_to_tex = false;
         if (surface != NULL) {
             surf_to_tex = pgraph_gl_check_surface_to_texture_compatibility(
@@ -344,7 +343,15 @@ void pgraph_gl_bind_textures(NV2AState *d)
             }
         }
 
+        /* Render targets newer than RAM drawn over the texture on the GPU */
+        SurfaceBinding *compose_list[PGRAPH_GL_COMPOSE_MAX];
+        int compose_n = 0;
         if (!surf_to_tex) {
+            compose_n = pgraph_gl_compose_texture_sources(
+                d, &state, texture_vram_offset, length, compose_list);
+        }
+
+        if (!surf_to_tex && !compose_n) {
             // FIXME: Restructure to support rendering surfaces to cubemap faces
 
             // Writeback any surfaces which this texture may index
@@ -447,6 +454,11 @@ void pgraph_gl_bind_textures(NV2AState *d)
         key_out->possibly_dirty = false;
         TextureBinding *binding = key_out->binding;
         binding->refcnt++;
+
+        if (compose_n) {
+            pgraph_gl_compose_texture(d, binding, &state, texture_vram_offset,
+                                      compose_list, compose_n, i);
+        }
 
         if (surf_to_tex && binding->draw_time < surface->draw_time) {
             trace_nv2a_pgraph_surface_render_to_texture(
