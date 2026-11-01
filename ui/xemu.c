@@ -889,16 +889,23 @@ static bool frame_pacer_hold(uint32_t vblanks, uint32_t flip_vblank,
  * Smooth game time (perf.smooth_game_time). Black Arrow moves its world each
  * frame by the time its main loop measured since the frame before. On a
  * console the loop starts each frame at the same point after a vblank, so at
- * 30 fps every step is two vblanks. In xemu it starts when the emulated GPU
- * lets it go, up to about 10 ms early or late, so the world steps 25 ms, then
- * 42, while the screen changes every 33 ms. The main loop is told a time that
- * moves by the usual whole number of vblanks instead, by one more or less
- * when real time gets a vblank ahead or behind it, and real time after a
- * stall.
+ * 30 fps every step is two vblanks. In xemu it starts when the emulated CPU
+ * and GPU let it go, up to a frame early or late in busy views, so the world
+ * steps 20 ms, then 45, while the screen changes every 33 ms. The main loop
+ * is told a time that moves by the vblanks between the game's last two
+ * Presents instead (each is read just after its vblank wait), or by the
+ * usual step when there was no new Present; by one more or less when real
+ * time gets three vblanks ahead or behind, and real time after a stall.
  */
 static uint64_t game_clock_given, game_clock_real, game_clock_tsc0;
+static uint64_t game_clock_present, game_present_tsc;
 static uint32_t game_clock_vblank0;
 static double game_clock_avg;
+
+void xemu_game_present(uint64_t tsc)
+{
+    game_present_tsc = tsc;
+}
 
 uint64_t xemu_game_clock(uint64_t tsc)
 {
@@ -917,6 +924,7 @@ uint64_t xemu_game_clock(uint64_t tsc)
     if (!game_clock_real || tsc < game_clock_real ||
         tsc - game_clock_real > 6 * v) {
         game_clock_given = game_clock_real = tsc;
+        game_clock_present = game_present_tsc;
         game_clock_avg = 2 * v;
         return tsc;
     }
@@ -925,14 +933,16 @@ uint64_t xemu_game_clock(uint64_t tsc)
     game_clock_avg += (real - game_clock_avg) / 16;
     int64_t usual = MAX(1, llround(game_clock_avg / v));
     int64_t steps = usual;
-    int64_t ahead = (int64_t)(tsc - game_clock_given) - usual * v;
-    while (ahead > v) {
-        steps++;
-        ahead -= v;
+    if (game_clock_present && game_present_tsc > game_clock_present) {
+        steps = llround((double)(game_present_tsc - game_clock_present) / v);
+        steps = MIN(MAX(steps, 1), 6);
     }
-    while (ahead < -v && steps > 0) {
+    game_clock_present = game_present_tsc;
+    int64_t ahead = (int64_t)(tsc - game_clock_given) - steps * v;
+    if (ahead > 3 * v) {
+        steps++;
+    } else if (ahead < -3 * v && steps > 0) {
         steps--;
-        ahead += v;
     }
     game_clock_given += steps * v;
     xemu_diag_world_step(real, steps * v, usual * v);

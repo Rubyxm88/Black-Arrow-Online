@@ -89,6 +89,14 @@ void xemu_perf_clock_read(uint32_t site, uint64_t tsc);
 #define XEMU_GAME_CLOCK_SITE 0x0037364b
 uint64_t xemu_game_clock(uint64_t tsc);
 
+/*
+ * Its Direct3D Present reads the clock once a frame after the vblank wait,
+ * through an rdtsc; ret helper: xemu_game_present(tsc) is given that time
+ */
+#define XEMU_GAME_PRESENT_HELPER 0x0044e5b0
+#define XEMU_GAME_PRESENT_RETURN 0x0044eb55
+void xemu_game_present(uint64_t tsc);
+
 /* Count something that has no duration */
 static inline void xemu_perf_event(enum XemuPerfKind kind)
 {

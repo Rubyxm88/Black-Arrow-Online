@@ -86,6 +86,18 @@ void helper_rdtsc(CPUX86State *env)
             !memcmp(code, loop, sizeof(loop))) {
             val = xemu_game_clock(val);
         }
+    } else if (env->eip == XEMU_GAME_PRESENT_HELPER) {
+        static const uint8_t helper[] = { 0x0f, 0x31, 0xc3 };
+        uint8_t code[sizeof(helper)];
+        uint32_t caller;
+        if (cpu_memory_rw_debug(env_cpu(env), XEMU_GAME_PRESENT_HELPER, code,
+                                sizeof(code), false) == 0 &&
+            !memcmp(code, helper, sizeof(helper)) &&
+            cpu_memory_rw_debug(env_cpu(env), env->regs[R_ESP], &caller,
+                                sizeof(caller), false) == 0 &&
+            caller == XEMU_GAME_PRESENT_RETURN) {
+            xemu_game_present(val);
+        }
     }
 #endif
     env->regs[R_EAX] = (uint32_t)(val);
