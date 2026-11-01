@@ -626,7 +626,10 @@ static SurfaceBinding *surface_put(NV2AState *d, hwaddr addr,
  * textures and targets with the same pitch: colour A8R8G8B8/X8R8G8B8, and
  * Z24S8 depth when stencil texturing is there (GL 4.3).
  *
- * XEMU_COMPOSE=0 turns it off. XEMU_COMPOSE_CHECK=1 also does the copy
+ * Off unless XEMU_COMPOSE=1 (it gave no speed-up on the Intel graphics it
+ * was for, and xemu crashed there while recording diagnostics, reason not
+ * known). Any GL error right after it turns it off for the rest of the run.
+ * XEMU_COMPOSE_CHECK=1 also does the copy
  * back into a spare buffer and compares it with the texture byte for byte
  * ("composecheck:" lines on stderr).
  */
@@ -637,13 +640,28 @@ static int compose_env(const char *name, int def)
     return e && e[0] ? e[0] != '0' : def;
 }
 
+static int compose_state = -1;
+static int early_copy_state = -1;
+
+/* A GL error right after a step of *state's work: off for the rest of the run */
+static void compose_guard(int *state, const char *what)
+{
+    GLenum e = glGetError();
+    if (e == GL_NO_ERROR) {
+        return;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    *state = 0;
+    fprintf(stderr, "nv2a: %s turned off after GL error 0x%04x\n", what, e);
+}
+
 static bool compose_on(void)
 {
-    static int on = -1;
-    if (on < 0) {
-        on = compose_env("XEMU_COMPOSE", 1);
+    if (compose_state < 0) {
+        compose_state = compose_env("XEMU_COMPOSE", 0);
     }
-    return on;
+    return compose_state;
 }
 
 static bool compose_check_on(void)
@@ -1018,6 +1036,7 @@ void pgraph_gl_compose_texture(NV2AState *d, TextureBinding *binding,
     /* Never reused from the texture cache: built again on its next use */
     binding->draw_time = draw_time;
     binding->scale = 1;
+    compose_guard(&compose_state, "building textures from render targets");
 
     if (compose_check_on()) {
         compose_gl_errors("after compose");
@@ -1444,18 +1463,18 @@ static void surface_download_to_buffer(NV2AState *d, SurfaceBinding *surface,
  * copy back started when the GPU moves on to another target: into a pixel
  * buffer the GPU fills by itself, with a fence. When the CPU reads it, the
  * copy is usually done; before, the read waited for all drawing queued up
- * to then (13-17 ms each on Intel graphics at 2x). XEMU_EARLY_COPY=0 turns
- * it off; XEMU_COMPOSE_CHECK=1 also compares it with a plain copy back.
+ * to then (13-17 ms each on Intel graphics at 2x). Off unless
+ * XEMU_EARLY_COPY=1 (see compose_on); a GL error after it turns it off.
+ * XEMU_COMPOSE_CHECK=1 also compares it with a plain copy back.
  */
 #define EARLY_COPY_MAX_BYTES (2 * 1024 * 1024)
 
 static bool early_copy_on(void)
 {
-    static int on = -1;
-    if (on < 0) {
-        on = compose_env("XEMU_EARLY_COPY", 1);
+    if (early_copy_state < 0) {
+        early_copy_state = compose_env("XEMU_EARLY_COPY", 0);
     }
-    return on;
+    return early_copy_state;
 }
 
 static void surface_early_free(SurfaceBinding *s)
@@ -1541,13 +1560,15 @@ static void surface_copy_early(NV2AState *d, SurfaceBinding *s)
 
     s->early_valid = true;
     s->early_draw_time = s->draw_time;
+    compose_guard(&early_copy_state, "early copy back");
 }
 
 /* The early copy into pixels (pitch apart), if it is still current */
 static bool surface_take_early_copy(NV2AState *d, SurfaceBinding *s,
                                     uint8_t *pixels)
 {
-    if (!s->early_valid || s->early_draw_time != s->draw_time ||
+    if (!early_copy_on() || !s->early_valid ||
+        s->early_draw_time != s->draw_time ||
         !s->early_fence) {
         return false;
     }
