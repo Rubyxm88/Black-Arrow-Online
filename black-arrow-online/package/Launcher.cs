@@ -46,6 +46,34 @@ static class Launcher
     static extern bool AllowSetForegroundWindow(int processId);
     const int ASFW_ANY = -1;
 
+    // Tells Windows a file changed, so it shows the new icon
+    [DllImport("shell32.dll")]
+    static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern void SHChangeNotify(int eventId, uint flags, string item1, IntPtr item2);
+    const int SHCNE_UPDATEITEM = 0x00002000, SHCNE_ASSOCCHANGED = 0x08000000;
+    const uint SHCNF_IDLIST = 0x0000, SHCNF_PATHW = 0x0005, SHCNF_FLUSHNOWAIT = 0x3000;
+
+    // An update replaces this program in place, and Windows keeps showing the
+    // icon it had cached for the old one (on the file and on shortcuts to it).
+    // The first time a new copy runs, ask Windows to look again.
+    static void RefreshIcon()
+    {
+        try {
+            string self = Path.GetFullPath(Application.ExecutablePath);
+            string stamp = File.GetLastWriteTimeUtc(self).Ticks + " " + new FileInfo(self).Length;
+            string seen = Path.Combine(systemDir, "launcher-icon.txt");
+            if (File.Exists(seen) && File.ReadAllText(seen).Trim() == stamp) {
+                return;
+            }
+            SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, self, IntPtr.Zero);
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, IntPtr.Zero,
+                           IntPtr.Zero);
+            File.WriteAllText(seen, stamp);
+        } catch (Exception) {
+        }
+    }
+
     [STAThread]
     static int Main(string[] args)
     {
@@ -74,6 +102,7 @@ static class Launcher
         bool noLaunch = args.Contains("--nolaunch");
 
         Updater.CleanUp();
+        RefreshIcon();
 
         // Help > Versions & Updates in xemu: install the chosen build (newer
         // or older) once xemu has closed
