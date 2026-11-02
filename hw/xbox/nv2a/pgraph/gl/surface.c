@@ -1908,6 +1908,15 @@ void pgraph_gl_surface_flush(NV2AState *d)
 
     flush_surfaces(d);
 
+    /*
+     * A flush comes with a reset, a loaded state, a renderer switch or a
+     * scale change. What the GPU wrote before it says nothing about memory
+     * after it: after a reset the new program loads its own data there, and
+     * the XBL Dashboard's background went black when those pages "won".
+     */
+    g_free(r->gpu_pages);
+    r->gpu_pages = NULL;
+
     pgraph_gl_reload_surface_scale_factor(pg);
 
     if (update_surface) {

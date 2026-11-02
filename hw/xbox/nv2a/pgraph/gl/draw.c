@@ -401,6 +401,17 @@ void pgraph_gl_draw_end(NV2AState *d)
         r->zeta_binding->draw_time = pg->draw_time;
     }
 
+    /*
+     * A draw that writes alpha replaces what the CPU left in the target, so
+     * the GPU's copy wins again. The XBL Dashboard draws its background this
+     * way into memory it used before; Rainbow Six 3's blur draws that must
+     * not clobber its menu pictures leave alpha alone.
+     */
+    if (r->color_binding && r->color_binding->cpu_pages && mask_alpha) {
+        g_free(r->color_binding->cpu_pages);
+        r->color_binding->cpu_pages = NULL;
+    }
+
     pgraph_gl_set_surface_dirty(pg, color_write, zeta_write);
     NV2A_GL_DGROUP_END();
 }
