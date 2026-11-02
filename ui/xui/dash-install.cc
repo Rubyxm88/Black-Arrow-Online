@@ -30,7 +30,6 @@
 #include "font-manager.hh"
 #include "gl-helpers.hh"
 #include "xbcheck.hh"
-#include "../xemu-xbcheck.h"
 #include "../xemu-dashinstall.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-notifications.h"
@@ -242,8 +241,6 @@ static float Progress(const char **what)
 
 static const ImVec4 green(0.30f, 0.78f, 0.34f, 1.0f);
 static const ImVec4 dim(0.62f, 0.65f, 0.66f, 1.0f);
-static const ImVec4 red(1.0f, 0.42f, 0.36f, 1.0f);
-static const ImVec4 amber(1.0f, 0.78f, 0.30f, 1.0f);
 
 enum StepState { STEP_WAITING, STEP_RUNNING, STEP_DONE };
 
@@ -281,46 +278,6 @@ static void StepRow(const char *label, StepState state)
     }
 }
 
-/* The XB Online check, as short rows under its step */
-static void DrawChecks(bool *has_fix)
-{
-    XbCheckItem items[XBCHECK_MAX_ITEMS];
-    bool running = true;
-    int n = xemu_xbcheck_get(items, XBCHECK_MAX_ITEMS, &running);
-    StepState state = n == 0 ? STEP_WAITING :
-                      running ? STEP_RUNNING : STEP_DONE;
-
-    *has_fix = false;
-    StepRow("Check the connection to XB Online", state);
-    if (n == 0) {
-        return;
-    }
-    float indent = ImGui::GetTextLineHeight() + 10.0f * g_viewport_mgr.m_scale;
-    ImGui::Indent(indent);
-    ImGui::PushFont(g_font_mgr.m_default_font);
-    // Two columns of short results
-    if (ImGui::BeginTable("##checks", 2)) {
-        for (int i = 0; i < n; i++) {
-            // In XbCheckState order
-            static const char *const marks[] = { "...", "OK", "OK", "!",
-                                                 "FIX" };
-            const ImVec4 colors[] = { dim, green, green, amber, red };
-            ImGui::TableNextColumn();
-            float x0 = ImGui::GetCursorPosX();
-            ImGui::TextColored(colors[items[i].state], "%s",
-                               marks[items[i].state]);
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(x0 + ImGui::CalcTextSize("FIX  ").x);
-            ImGui::TextColored(dim, "%s", items[i].name);
-            *has_fix |= items[i].state == XBCHECK_FAIL ||
-                        items[i].state == XBCHECK_WARN;
-        }
-        ImGui::EndTable();
-    }
-    ImGui::PopFont();
-    ImGui::Unindent(indent);
-}
-
 void DashInstallDraw()
 {
     if (stage == STAGE_IDLE) {
@@ -333,7 +290,7 @@ void DashInstallDraw()
         stage_time = begin_time;
         xemu_dashinstall_resets();  // start counting restarts
         xemu_settings_save();       // the try counts even if xemu crashes
-        // The connection check shows here, not in its own panel
+        // The connection check waits until the setup is done
         xbcheck_window.hidden = true;
     }
     Step();
@@ -394,9 +351,6 @@ void DashInstallDraw()
 
         // Steps
         ImGui::PushFont(g_font_mgr.m_menu_font_small);
-        bool has_fix;
-        DrawChecks(&has_fix);
-        ImGui::Dummy(ImVec2(0, 6.0f * scale));
         bool starting = stage == STAGE_BOOTING || stage == STAGE_PRESSING ||
                         stage == STAGE_WAIT_START;
         StepRow("Start the installer", starting ? STEP_RUNNING : STEP_DONE);
@@ -430,10 +384,6 @@ void DashInstallDraw()
         ImGui::TextWrapped("XBL Dashboard becomes your console's dashboard; "
                            "the original one is kept as a backup.");
         ImGui::PopStyleColor();
-        if (has_fix) {
-            ImGui::TextColored(amber, "Items marked FIX or ! are explained "
-                                      "once setup is done.");
-        }
         ImGui::PopFont();
     }
     ImGui::End();
