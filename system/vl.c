@@ -147,6 +147,7 @@
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-net.h"
 #include "ui/xemu-xbonline.h"
+#include "ui/xemu-hddgrow.h"
 #include "ui/xemu-dashinstall.h"
 #include "ui/xemu-gamecache.h"
 #include "ui/xemu-input.h"
@@ -4081,6 +4082,9 @@ void qemu_init(int argc, char **argv)
 
     qemu_init_main_loop(&error_fatal);
     cpu_timers_init();
+
+    /* A stock 8 GiB hard disk becomes 64 GiB with an F: drive, once */
+    xemu_hdd_grow(g_config.sys.files.hdd_path);
 
     user_register_global_props();
     replay_configure(icount_opts);
