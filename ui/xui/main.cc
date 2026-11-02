@@ -364,7 +364,7 @@ void xemu_hud_update(void)
     if (!first_boot_window.is_open) self_update_window.Draw();
 #endif
     if (!first_boot_window.is_open) DrawFreezeToast();
-    if (!first_boot_window.is_open) DrawPerfOverlay();
+    if (!first_boot_window.is_open && !xemu_dashinstall_active()) DrawPerfOverlay();
     if (!first_boot_window.is_open) DrawSoundRestartNotice();
     g_scene_mgr.Draw();
     if (!first_boot_window.is_open) notification_manager.Draw();

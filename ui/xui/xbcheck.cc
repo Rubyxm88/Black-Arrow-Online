@@ -62,6 +62,8 @@ XbCheckWindow xbcheck_window;
 XbCheckWindow::XbCheckWindow()
 {
     is_open = false;
+    hidden = false;
+    m_shorten = false;
     m_started = false;
     m_quiet = false;
     m_done_time = -1;
@@ -150,6 +152,9 @@ void XbCheckWindow::Draw()
         }
         Start(false);
     }
+    if (hidden) {
+        return;
+    }
 
     double now = ImGui::GetTime();
     if (m_toast_end > now) {
@@ -186,7 +191,8 @@ void XbCheckWindow::Draw()
     if (running) {
         m_done_time = -1;
     } else if (m_done_time < 0) {
-        m_done_time = now;
+        m_done_time = m_shorten ? now - SHORT_DELAY - 1 : now;
+        m_shorten = false;
     } else if (!problem && !needs_action && now - m_done_time > CLOSE_DELAY) {
         is_open = false;
         return;

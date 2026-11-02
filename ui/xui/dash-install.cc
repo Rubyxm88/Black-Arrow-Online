@@ -27,12 +27,17 @@
 #include "dash-install.hh"
 #include "actions.hh"
 #include "viewport-manager.hh"
+#include "font-manager.hh"
+#include "gl-helpers.hh"
+#include "xbcheck.hh"
+#include "../xemu-xbcheck.h"
 #include "../xemu-dashinstall.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-notifications.h"
 #include "../xemu-input.h"
 #include "../xemu-settings.h"
 #include <algorithm>
+#include <math.h>
 
 /* Seconds after the installer disc starts booting before the first A */
 #define FIRST_PRESS 22.0
@@ -217,22 +222,101 @@ static float Progress(const char **what)
     case STAGE_BOOTING:
     case STAGE_PRESSING:
     case STAGE_WAIT_START: {
-        *what = "Starting the installer...";
+        *what = "Starting the XBL Dashboard installer";
         double since = Now() - begin_time;
         return (float)std::min(0.15, 0.15 * since / (FIRST_PRESS + START_CHECK));
     }
     case STAGE_INSTALLING: {
-        *what = "Installing XBL Dashboard...";
+        *what = "Copying XBL Dashboard to the console";
         double done = (HddWritten() - install_written) / EXPECTED_WRITE;
         return 0.15f + 0.75f * (float)std::min(done, 1.0);
     }
     case STAGE_RESTARTING:
-        *what = "Starting XBL Dashboard...";
+        *what = "Restarting into XBL Dashboard";
         return 0.90f + 0.10f * (float)std::min(t / DASH_BOOT_TIME, 1.0);
     default:
         *what = "";
         return 1.0f;
     }
+}
+
+static const ImVec4 green(0.30f, 0.78f, 0.34f, 1.0f);
+static const ImVec4 dim(0.62f, 0.65f, 0.66f, 1.0f);
+static const ImVec4 red(1.0f, 0.42f, 0.36f, 1.0f);
+static const ImVec4 amber(1.0f, 0.78f, 0.30f, 1.0f);
+
+enum StepState { STEP_WAITING, STEP_RUNNING, STEP_DONE };
+
+/* A step: a ring (waiting), a pulsing dot (running) or a tick (done) */
+static void StepRow(const char *label, StepState state)
+{
+    float h = ImGui::GetTextLineHeight();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImVec2 c(p.x + h / 2, p.y + h / 2);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    float scale = g_viewport_mgr.m_scale;
+
+    if (state == STEP_DONE) {
+        dl->AddCircleFilled(c, h * 0.45f, ImGui::GetColorU32(green));
+        ImVec2 tick[3] = { ImVec2(c.x - h * 0.22f, c.y + h * 0.02f),
+                           ImVec2(c.x - h * 0.06f, c.y + h * 0.18f),
+                           ImVec2(c.x + h * 0.24f, c.y - h * 0.16f) };
+        dl->AddPolyline(tick, 3, IM_COL32_WHITE, 0, 2.0f * scale);
+    } else if (state == STEP_RUNNING) {
+        float pulse = 0.6f + 0.4f * sinf((float)ImGui::GetTime() * 5.0f);
+        dl->AddCircle(c, h * 0.45f, ImGui::GetColorU32(green), 0,
+                      1.5f * scale);
+        dl->AddCircleFilled(c, h * 0.22f * pulse + h * 0.08f,
+                            ImGui::GetColorU32(green));
+    } else {
+        dl->AddCircle(c, h * 0.45f, ImGui::GetColorU32(dim), 0,
+                      1.5f * scale);
+    }
+    ImGui::Dummy(ImVec2(h, h));
+    ImGui::SameLine(0, 10.0f * scale);
+    if (state == STEP_WAITING) {
+        ImGui::TextColored(dim, "%s", label);
+    } else {
+        ImGui::Text("%s", label);
+    }
+}
+
+/* The XB Online check, as short rows under its step */
+static void DrawChecks(bool *has_fix)
+{
+    XbCheckItem items[XBCHECK_MAX_ITEMS];
+    bool running = true;
+    int n = xemu_xbcheck_get(items, XBCHECK_MAX_ITEMS, &running);
+    StepState state = n == 0 ? STEP_WAITING :
+                      running ? STEP_RUNNING : STEP_DONE;
+
+    *has_fix = false;
+    StepRow("Check the connection to XB Online", state);
+    if (n == 0) {
+        return;
+    }
+    float indent = ImGui::GetTextLineHeight() + 10.0f * g_viewport_mgr.m_scale;
+    ImGui::Indent(indent);
+    ImGui::PushFont(g_font_mgr.m_default_font);
+    // Two columns of short results
+    if (ImGui::BeginTable("##checks", 2)) {
+        for (int i = 0; i < n; i++) {
+            // In XbCheckState order
+            static const char *const marks[] = { "...", "OK", "OK", "!",
+                                                 "FIX" };
+            const ImVec4 colors[] = { dim, green, green, amber, red };
+            ImGui::TableNextColumn();
+            ImGui::TextColored(colors[items[i].state], "%s",
+                               marks[items[i].state]);
+            ImGui::SameLine(ImGui::CalcTextSize("FIX  ").x);
+            ImGui::TextColored(dim, "%s", items[i].name);
+            *has_fix |= items[i].state == XBCHECK_FAIL ||
+                        items[i].state == XBCHECK_WARN;
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopFont();
+    ImGui::Unindent(indent);
 }
 
 void DashInstallDraw()
@@ -247,9 +331,14 @@ void DashInstallDraw()
         stage_time = begin_time;
         xemu_dashinstall_resets();  // start counting restarts
         xemu_settings_save();       // the try counts even if xemu crashes
+        // The connection check shows here, not in its own panel
+        xbcheck_window.hidden = true;
     }
     Step();
     if (stage == STAGE_IDLE) {
+        // Its results stay one click away: the one-line summary
+        xbcheck_window.hidden = false;
+        xbcheck_window.ShowShort();
         return;
     }
 
@@ -263,31 +352,90 @@ void DashInstallDraw()
         vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y),
         IM_COL32(12, 14, 12, 255));
 
+    float width = 600.0f * scale;
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always,
                             ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(520.0f * scale, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        ImVec2(28.0f * scale, 24.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * scale);
     if (ImGui::Begin("##dash-install", NULL,
                      ImGuiWindowFlags_NoDecoration |
                          ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoFocusOnAppearing |
                          ImGuiWindowFlags_NoNav)) {
-        ImGui::Dummy(ImVec2(0, 6.0f * scale));
-        ImGui::Text("Setting up XBL Dashboard");
-        ImGui::Dummy(ImVec2(0, 4.0f * scale));
-        ImGui::TextWrapped("This happens one time only. XBL Dashboard "
-                           "becomes your console's dashboard; the old one is "
-                           "kept as a backup. Please don't close xemu.");
+        float inner = ImGui::GetContentRegionAvail().x;
+
+        // Logo
+        if (g_bao_logo_tex && g_bao_logo_w > 0) {
+            float lw = std::min(inner, 400.0f * scale);
+            float lh = lw * g_bao_logo_h / g_bao_logo_w;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - lw) / 2);
+            ImGui::Image((ImTextureID)(intptr_t)g_bao_logo_tex,
+                         ImVec2(lw, lh));
+            ImGui::Dummy(ImVec2(0, 14.0f * scale));
+        }
+
+        // Title and what it means
+        ImGui::PushFont(g_font_mgr.m_menu_font);
+        ImGui::Text("Setting up your console");
+        ImGui::PopFont();
+        ImGui::PushFont(g_font_mgr.m_default_font);
+        ImGui::TextColored(dim, "One time only, about two minutes. Please "
+                                "don't close xemu.");
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, 12.0f * scale));
+        ImGui::Separator();
         ImGui::Dummy(ImVec2(0, 10.0f * scale));
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
-                              ImVec4(0.063f, 0.486f, 0.063f, 1.0f));
-        ImGui::ProgressBar(progress, ImVec2(-1, 0), "");
-        ImGui::PopStyleColor();
-        ImGui::TextDisabled("%s  %d%%", what, (int)(progress * 100 + 0.5f));
+
+        // Steps
+        ImGui::PushFont(g_font_mgr.m_menu_font_small);
+        bool has_fix;
+        DrawChecks(&has_fix);
         ImGui::Dummy(ImVec2(0, 6.0f * scale));
+        bool starting = stage == STAGE_BOOTING || stage == STAGE_PRESSING ||
+                        stage == STAGE_WAIT_START;
+        StepRow("Start the installer", starting ? STEP_RUNNING : STEP_DONE);
+        ImGui::Dummy(ImVec2(0, 6.0f * scale));
+        StepRow("Install XBL Dashboard",
+                stage == STAGE_INSTALLING ? STEP_RUNNING :
+                starting                  ? STEP_WAITING : STEP_DONE);
+        ImGui::Dummy(ImVec2(0, 6.0f * scale));
+        StepRow("Start XBL Dashboard",
+                stage == STAGE_RESTARTING ? STEP_RUNNING : STEP_WAITING);
+        ImGui::PopFont();
+
+        // Overall progress
+        ImGui::Dummy(ImVec2(0, 16.0f * scale));
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
+                              ImVec4(0.20f, 0.62f, 0.24f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * scale);
+        ImGui::ProgressBar(progress, ImVec2(-1, 10.0f * scale), "");
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::PushFont(g_font_mgr.m_default_font);
+        ImGui::TextColored(dim, "%s", what);
+        char pct[8];
+        snprintf(pct, sizeof(pct), "%d%%", (int)(progress * 100 + 0.5f));
+        ImGui::SameLine(inner - ImGui::CalcTextSize(pct).x +
+                        ImGui::GetStyle().WindowPadding.x);
+        ImGui::Text("%s", pct);
+
+        ImGui::Dummy(ImVec2(0, 10.0f * scale));
+        ImGui::PushStyleColor(ImGuiCol_Text, dim);
+        ImGui::TextWrapped("XBL Dashboard becomes your console's dashboard; "
+                           "the original one is kept as a backup.");
+        ImGui::PopStyleColor();
+        if (has_fix) {
+            ImGui::TextColored(amber, "Items marked FIX or ! are explained "
+                                      "once setup is done.");
+        }
+        ImGui::PopFont();
     }
     ImGui::End();
+    ImGui::PopStyleVar(2);
 }
 
 extern "C" {

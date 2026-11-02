@@ -688,6 +688,9 @@ static void check_account(void)
         item_set(i, XBCHECK_INFO, "Could not read the hard disk image.");
     } else if (r == 0) {
         item_set(i, XBCHECK_FAIL,
+                 xemu_xbonline_main_dashboard() == XBONLINE_DASH_XBL ?
+                 "Not signed in yet. Sign in with your xb.live account on the "
+                 "XBL Dashboard (menu Play > XBL Dashboard)." :
                  "This console has never been set up for Xbox Live. Menu: XB "
                  "Online > XBL Dashboard (Account Setup) and add your account.");
     } else {

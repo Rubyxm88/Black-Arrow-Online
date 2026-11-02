@@ -22,6 +22,7 @@
 #include "data/controller_mask.png.h"
 #include "data/controller_mask_s.png.h"
 #include "data/logo_sdf.png.h"
+#include "data/bao_logo.png.h"
 #include "data/xemu_64x64.png.h"
 #include "data/xmu_mask.png.h"
 #include "notifications.hh"
@@ -35,6 +36,8 @@
 
 Fbo *controller_fbo, *xmu_fbo, *logo_fbo;
 GLuint g_controller_duke_tex, g_controller_s_tex, g_logo_tex, g_icon_tex, g_xmu_tex;
+GLuint g_bao_logo_tex;
+int g_bao_logo_w, g_bao_logo_h;
 
 enum class ShaderType {
     Blit,
@@ -833,6 +836,13 @@ void InitCustomRendering(void)
     logo_fbo = new Fbo(512, 512);
 
     g_icon_tex = LoadTextureFromMemory(xemu_64x64_data, xemu_64x64_size, false);
+    {
+        int c;
+        stbi_info_from_memory(bao_logo_data, bao_logo_size, &g_bao_logo_w,
+                              &g_bao_logo_h, &c);
+        g_bao_logo_tex =
+            LoadTextureFromMemory(bao_logo_data, bao_logo_size, false);
+    }
 
     g_framebuffer_shader = NewDecalShader(ShaderType::BlitGamma);
 }
