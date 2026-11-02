@@ -928,16 +928,21 @@ std::string InstalledBuildText()
     return "Test Build";
 }
 
-std::string WindowTitleText()
+std::string XemuUpstreamVersion()
 {
-    // xemu's own version without our suffix: 0.8.139-1-xbl -> 0.8.139
+    // Our tag adds "-1-xbl" after xemu's number: 0.8.139-1-xbl -> 0.8.139
     std::string xemu = xemu_version;
     size_t dash = xemu.find('-');
     if (dash != std::string::npos) {
         xemu.resize(dash);
     }
+    return xemu;
+}
+
+std::string WindowTitleText()
+{
     return "Black Arrow Online  |  " + InstalledBuildText() + "  |  xemu " +
-           xemu;
+           XemuUpstreamVersion();
 }
 
 void DrawBuildBadge()

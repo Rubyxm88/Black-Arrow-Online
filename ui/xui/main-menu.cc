@@ -1859,7 +1859,7 @@ static void BaoAboutLogo()
     ImGui::Dummy(ImVec2(0, 6.0f * scale));
     char powered[96];
     snprintf(powered, sizeof(powered), "%s  |  powered by xemu %s",
-             InstalledBuildText().c_str(), xemu_version);
+             InstalledBuildText().c_str(), XemuUpstreamVersion().c_str());
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                          (avail - ImGui::CalcTextSize(powered).x) / 2);
     ImGui::TextDisabled("%s", powered);
@@ -1871,11 +1871,11 @@ void MainMenuAboutView::Draw()
     if (build_info_text == NULL) {
         build_info_text =
             g_strdup_printf("Black Arrow:  %s\n"
-                            "xemu:         %s\n"
                             "Commit:       %s\n"
-                            "Date:         %s",
-                            InstalledBuildText().c_str(), xemu_version,
-                            xemu_commit, xemu_date);
+                            "Date:         %s\n"
+                            "xemu:         %s",
+                            InstalledBuildText().c_str(), xemu_commit,
+                            xemu_date, XemuUpstreamVersion().c_str());
     }
 
     static const char *sys_info_text = NULL;

@@ -74,6 +74,9 @@ std::string InstalledBuildText();
 // The window title: "Black Arrow Online | Build 27 | xemu 0.8.139"
 std::string WindowTitleText();
 
+// xemu's own version, without our "-1-xbl" tag: "0.8.139"
+std::string XemuUpstreamVersion();
+
 // The build the player does not want to be offered (update-skip.txt, which
 // the launcher's "Skip this build" also writes), or 0 (a build-number.hh number)
 int SkippedBuild();

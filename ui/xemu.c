@@ -1389,11 +1389,13 @@ static void display_very_early_init(DisplayOptions *o)
         SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-    char *title = g_strdup_printf("Black Arrow Online  |  xemu %s"
+    // xemu's own number only; "-1-xbl" is our tag
+    int xemu_len = (int)strcspn(xemu_version, "-");
+    char *title = g_strdup_printf("Black Arrow Online  |  xemu %.*s"
 #ifdef XEMU_DEBUG_BUILD
                                   " Debug"
 #endif
-                                  , xemu_version);
+                                  , xemu_len, xemu_version);
 
     // Decide window size
     int min_window_width = 640;
