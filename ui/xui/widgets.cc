@@ -53,7 +53,8 @@ void SectionTitle(const char *title)
 }
 
 float GetWidgetTitleDescriptionHeight(const char *title,
-                                      const char *description)
+                                      const char *description,
+                                      float wrap_width)
 {
     ImGui::PushFont(g_font_mgr.m_menu_font_medium);
     float h = ImGui::GetFrameHeight();
@@ -63,7 +64,9 @@ float GetWidgetTitleDescriptionHeight(const char *title,
         ImGuiStyle &style = ImGui::GetStyle();
         h += style.ItemInnerSpacing.y;
         ImGui::PushFont(g_font_mgr.m_default_font);
-        h += ImGui::GetTextLineHeight();
+        h += wrap_width > 0
+                 ? ImGui::CalcTextSize(description, NULL, false, wrap_width).y
+                 : ImGui::GetTextLineHeight();
         ImGui::PopFont();
     }
 
@@ -71,7 +74,7 @@ float GetWidgetTitleDescriptionHeight(const char *title,
 }
 
 void WidgetTitleDescription(const char *title, const char *description,
-                            ImVec2 pos)
+                            ImVec2 pos, float wrap_width)
 {
     ImDrawList *draw_list = ImGui::GetWindowDrawList();
     ImGuiStyle &style = ImGui::GetStyle();
@@ -89,7 +92,9 @@ void WidgetTitleDescription(const char *title, const char *description,
         text_pos.y += title_height + style.ItemInnerSpacing.y;
 
         ImGui::PushFont(g_font_mgr.m_default_font);
-        draw_list->AddText(text_pos, ImGui::GetColorU32(ImVec4(0.94f, 0.94f, 0.94f, 0.70f)), description);
+        draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_pos,
+                           ImGui::GetColorU32(ImVec4(0.94f, 0.94f, 0.94f, 0.70f)),
+                           description, NULL, wrap_width);
         ImGui::PopFont();
     }
 }
@@ -195,9 +200,15 @@ bool Toggle(const char *str_id, bool *v, const char *description)
     float title_height = ImGui::GetTextLineHeight();
     ImGui::PopFont();
 
+    // The description wraps before the switch on the right
+    float toggle_height = title_height * 0.9;
+    ImVec2 toggle_size(toggle_height * 1.75, toggle_height);
+    float wrap = ImGui::GetColumnWidth() - toggle_size.x -
+                 style.FramePadding.x * 2 - style.ItemSpacing.x;
+
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImVec2 bb(ImGui::GetColumnWidth(),
-              GetWidgetTitleDescriptionHeight(str_id, description));
+              GetWidgetTitleDescriptionHeight(str_id, description, wrap));
     ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0, 0));
     ImGui::PushID(str_id);
     bool status = ImGui::Button("###toggle_button", bb);
@@ -209,10 +220,8 @@ bool Toggle(const char *str_id, bool *v, const char *description)
     const ImVec2 p_min = ImGui::GetItemRectMin();
     const ImVec2 p_max = ImGui::GetItemRectMax();
 
-    WidgetTitleDescription(str_id, description, p);
+    WidgetTitleDescription(str_id, description, p, wrap);
 
-    float toggle_height = title_height * 0.9;
-    ImVec2 toggle_size(toggle_height * 1.75, toggle_height);
     ImVec2 toggle_pos(p_max.x - toggle_size.x - style.FramePadding.x,
                       p_min.y + (title_height - toggle_size.y)/2 + style.FramePadding.y);
     DrawToggle(*v, ImGui::IsItemHovered(), toggle_pos, toggle_size);

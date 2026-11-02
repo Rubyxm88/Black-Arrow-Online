@@ -59,7 +59,7 @@ void MainMenuGeneralView::Draw()
 #if defined(__x86_64__)
     SectionTitle("Performance");
     Toggle("Hard FPU emulation", &g_config.perf.hard_fpu,
-           "Use hardware-accelerated floating point emulation (requires restart)");
+           "Use hardware-accelerated floating point emulation (restart to apply)");
 #endif
 
     Toggle("Cache shaders to disk", &g_config.perf.cache_shaders,
@@ -1644,10 +1644,6 @@ void MainMenuSystemView::Draw()
 // these (xemu-diag.c, "# experiments:"), so a report says what was on.
 void MainMenuExperimentalView::Draw()
 {
-    // Pre-light and hard SSE are read once when the app starts
-    static const bool start_prelight = g_config.perf.prelight;
-    static const bool start_hard_sse = g_config.perf.hard_sse;
-
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_CheckMark],
                        "These are tests. If something looks or plays wrong, "
@@ -1676,11 +1672,18 @@ void MainMenuExperimentalView::Draw()
            "graphics card, about 4 ms faster. Turn off if pictures look "
            "wrong on AMD or Intel graphics");
 
-    if (g_config.perf.prelight != start_prelight ||
-        g_config.perf.hard_sse != start_hard_sse) {
+    // Pre-light and Hard SSE are read when the app opens; the restart
+    // notice (DrawSoundRestartNotice) offers the same restart
+    std::string waiting = AppRestartSettings();
+    if (!waiting.empty()) {
         ImGui::Spacing();
-        ImGui::TextDisabled("Pre-light and Hard SSE change the next time you "
-                            "open Black Arrow Online.");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s: used after Black Arrow Online opens "
+                            "again.", waiting.c_str());
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("Restart to Apply")) {
+            ActionRestartApp();
+        }
     }
 
     ImGui::Dummy(ImVec2(0, 10 * g_viewport_mgr.m_scale));
@@ -1832,7 +1835,7 @@ MainMenuScene::MainMenuScene()
       m_network_button("Network", ICON_FA_NETWORK_WIRED),
       m_snapshots_button("Snapshots", ICON_FA_CLOCK_ROTATE_LEFT),
       m_system_button("System", ICON_FA_MICROCHIP),
-      m_experimental_button("Experimental", ICON_FA_FLASK),
+      m_experimental_button("Experimental", ICON_FA_SLIDERS),
       m_about_button("About", ICON_FA_CIRCLE_INFO)
 {
     m_had_focus_last_frame = false;

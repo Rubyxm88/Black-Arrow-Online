@@ -23,10 +23,12 @@
 
 void Separator();
 void SectionTitle(const char *title);
+// wrap_width > 0 wraps the description to that width (0: one line)
 float GetWidgetTitleDescriptionHeight(const char *title,
-                                      const char *description);
+                                      const char *description,
+                                      float wrap_width = 0.0f);
 void WidgetTitleDescription(const char *title, const char *description,
-                            ImVec2 pos);
+                            ImVec2 pos, float wrap_width = 0.0f);
 void WidgetTitleDescriptionItem(const char *str_id,
                                 const char *description = nullptr);
 float GetSliderRadius(ImVec2 size);

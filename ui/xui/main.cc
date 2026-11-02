@@ -164,6 +164,8 @@ void xemu_hud_init(SDL_Window* window, void* sdl_gl_context)
     InitializeStyle();
     g_main_menu.SetNextViewIndex(g_config.general.last_viewed_menu_index);
     first_boot_window.is_open = g_config.general.show_welcome;
+    // What the app starts with, for the restart notice
+    AppRestartSettings();
 }
 
 void xemu_hud_cleanup(void)

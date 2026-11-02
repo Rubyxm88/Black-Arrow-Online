@@ -17,6 +17,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 #pragma once
+#include <string>
 
 void ActionEjectDisc();
 void ActionLoadDisc();
@@ -50,3 +51,12 @@ SoundRestart SoundRestartReason();
 // Whether the chosen sound needs a game restart (SoundRestartReason).
 // name gets the Xbox audio setting now ("Stereo", "Dolby Digital", ...)
 bool SoundRestartNeeded(const char **name);
+
+// Settings read only when the app starts (Hard FPU, Hard SSE, Pre-light).
+// Names the ones set differently from what is running, joined by ", ", or
+// returns an empty string. Switching one back clears it.
+std::string AppRestartSettings();
+// Saves the settings, closes the app and opens it again once it is closed
+// (the HDD image can only be open once). Returns false, with nothing
+// closed, if the new copy could not be started.
+bool ActionRestartApp();

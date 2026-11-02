@@ -287,22 +287,26 @@ void DrawFreezeToast()
     ImGui::End();
 }
 
-// At the top right while the chosen sound only works after the game restarts
-// (SoundRestartReason): why, a Restart button and Later. It goes away by
-// itself when the choice no longer needs it or the game restarts; Later hides
-// it until a choice needs a restart for another reason.
+// At the top right while a setting waits for a restart: the sound choice
+// (SoundRestartReason, a game restart) or settings read only when the app
+// starts (AppRestartSettings, an app restart). It names what waits and has a
+// Restart button and Later. It goes away by itself when nothing waits any
+// more, e.g. a setting switched back; Later hides it until what waits
+// changes.
 void DrawSoundRestartNotice()
 {
-    static SoundRestart dismissed = SOUND_RESTART_NONE;
-    SoundRestart reason = SoundRestartReason();
-    if (reason == SOUND_RESTART_NONE) {
-        dismissed = SOUND_RESTART_NONE;
+    static std::string dismissed;
+    SoundRestart sound = SoundRestartReason();
+    std::string app = AppRestartSettings();
+    if (sound == SOUND_RESTART_NONE && app.empty()) {
+        dismissed.clear();
         return;
     }
-    if (reason == dismissed) {
+    std::string key = std::to_string((int)sound) + "|" + app;
+    if (key == dismissed) {
         return;
     }
-    dismissed = SOUND_RESTART_NONE;
+    dismissed.clear();
 
     const ImGuiViewport *vp = ImGui::GetMainViewport();
     float scale = g_viewport_mgr.m_scale;
@@ -323,33 +327,46 @@ void DrawSoundRestartNotice()
         // the theme's dim text is too faint over the game
         const ImVec4 *c = ImGui::GetStyle().Colors;
         ImGui::TextColored(c[ImGuiCol_CheckMark], "Restart to Apply");
-        if (reason == SOUND_RESTART_ACCURATE) {
-            ImGui::Text("Accurate starts after the game restarts. Until "
-                        "then sound stays on Fast.");
-        } else {
-            ImGui::Text("5.1 rear sound starts after the game restarts.");
+        if (sound == SOUND_RESTART_ACCURATE) {
+            ImGui::BulletText("Accurate sound: until then sound stays on "
+                              "Fast.");
+        } else if (sound == SOUND_RESTART_SURROUND) {
+            ImGui::BulletText("5.1 rear sound.");
+        }
+        if (!app.empty()) {
+            ImGui::BulletText("%s: read when Black Arrow Online opens.",
+                              app.c_str());
         }
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, c[ImGuiCol_ButtonHovered]);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c[ImGuiCol_CheckMark]);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, c[ImGuiCol_ButtonHovered]);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-        bool restart = ImGui::Button("Restart game");
+        // An app restart starts the game again too, so it covers the sound
+        bool restart = ImGui::Button(app.empty() ? "Restart game"
+                                                 : "Restart app");
         ImGui::PopStyleColor(4);
         if (restart) {
-            ActionReset();
+            if (app.empty()) {
+                ActionReset();
+            } else {
+                ActionRestartApp();
+            }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Restarts the game, not the app. In a match, "
-                              "you leave it.");
+            ImGui::SetTooltip(app.empty()
+                                  ? "Restarts the game, not the app. In a "
+                                    "match, you leave it."
+                                  : "Closes Black Arrow Online and opens it "
+                                    "again. In a match, you leave it.");
         }
         ImGui::SameLine();
         if (ImGui::Button("Later")) {
-            dismissed = reason;
+            dismissed = key;
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Sound > Restart to Apply does it "
-                              "later.");
+            ImGui::SetTooltip("Until then the settings wait. Restarting "
+                              "yourself applies them too.");
         }
     }
     ImGui::End();
