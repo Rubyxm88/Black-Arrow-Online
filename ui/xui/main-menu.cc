@@ -1925,14 +1925,13 @@ void MainMenuAboutView::Draw()
 
     SectionTitle("Community");
 
-    ImGui::Text("Black Arrow Online runs on xemu, the original Xbox "
-                "emulator. Visit");
+    ImGui::TextWrapped("Black Arrow Online runs on xemu, the original Xbox "
+                       "emulator.");
+    ImGui::Text("More about xemu:");
     ImGui::SameLine();
     if (ImGui::SmallButton("https://xemu.app")) {
         SDL_OpenURL("https://xemu.app");
     }
-    ImGui::SameLine();
-    ImGui::Text("for more about xemu.");
 }
 
 MainMenuTabButton::MainMenuTabButton(std::string text, std::string icon)
