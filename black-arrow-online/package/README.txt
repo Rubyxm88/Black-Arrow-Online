@@ -222,8 +222,8 @@ UPDATES
 -------
 When a newer build is out, Black Arrow Online offers it when you start.
 An update replaces the launcher, the emulator and the shader list only. Your console, Xbox
-Live sign-in, saves, settings and games are not touched. The previous
-emulator is kept as system\xemu.previous.exe.
+Live sign-in, saves, settings and games are not touched. The emulator and
+launcher it replaces go to system\backups (named by build, the last 3 kept).
 
 Help > Versions & Updates... lists every build on the releases page. Pick a
 newer one to update, or an older one to go back to it if the newest gives

@@ -713,6 +713,72 @@ static class Updater
         } catch (IOException) {
         } catch (UnauthorizedAccessException) {
         }
+        TidyBackups();
+    }
+
+    // Older programs an update replaced, kept for going back by hand
+    public static string BackupsDir { get { return InSystem("backups"); } }
+    const int KeepBuilds = 3;
+
+    // Builds before 27 kept the last emulator as system\xemu.previous.exe,
+    // and copies made by hand sit next to the programs: all go to backups
+    static void TidyBackups()
+    {
+        try {
+            string root = AppDomain.CurrentDomain.BaseDirectory;
+            var loose = new List<string>();
+            loose.AddRange(Directory.GetFiles(Launcher.systemDir, "xemu.previous.exe"));
+            loose.AddRange(Directory.GetFiles(Launcher.systemDir, "xemu-*.exe"));
+            loose.AddRange(Directory.GetFiles(root, "Black Arrow Online-*.exe"));
+            foreach (string file in loose) {
+                Directory.CreateDirectory(BackupsDir);
+                string to = Path.Combine(BackupsDir, Path.GetFileName(file));
+                if (File.Exists(to)) {
+                    File.Delete(to);
+                }
+                File.Move(file, to);
+            }
+        } catch (IOException) {
+        } catch (UnauthorizedAccessException) {
+        }
+    }
+
+    // Keep a program the update replaces, named by the build it came with
+    static void Backup(string file, string name, bool move)
+    {
+        Directory.CreateDirectory(BackupsDir);
+        string to = Path.Combine(BackupsDir, name);
+        if (File.Exists(to)) {
+            File.Delete(to);
+        }
+        if (move) {
+            File.Move(file, to);
+        } else {
+            File.Copy(file, to);
+        }
+    }
+
+    // Only the newest few builds of each program stay
+    static void PruneBackups()
+    {
+        try {
+            var named = new Regex(@"^(.*)-build(\d+)(?:\.(\d+))?\.exe$", RegexOptions.IgnoreCase);
+            var groups = Directory.GetFiles(BackupsDir, "*-build*.exe")
+                .Select(f => new { File = f, M = named.Match(Path.GetFileName(f)) })
+                .Where(x => x.M.Success)
+                .GroupBy(x => x.M.Groups[1].Value.ToLowerInvariant());
+            foreach (var group in groups) {
+                var old = group.OrderByDescending(x => int.Parse(x.M.Groups[2].Value))
+                               .ThenByDescending(x => x.M.Groups[3].Success ?
+                                                 int.Parse(x.M.Groups[3].Value) : 0)
+                               .Skip(KeepBuilds);
+                foreach (var x in old) {
+                    File.Delete(x.File);
+                }
+            }
+        } catch (IOException) {
+        } catch (UnauthorizedAccessException) {
+        }
     }
 
     public static void Install(UpdateInfo update, Action<int> progress)
@@ -756,6 +822,8 @@ static class Updater
         string root = AppDomain.CurrentDomain.BaseDirectory;
         string self = Path.GetFullPath(Application.ExecutablePath);
         string versionFile = Path.GetFullPath(InSystem("version.txt"));
+        UpdateInfo before = Installed();
+        string tag = before.Build > 0 ? "-build" + before.Text : "-old";
         var files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories)
             .Select(f => f.Substring(folder.Length).TrimStart(Path.DirectorySeparatorChar))
             // version.txt goes last, so a failed update is offered again
@@ -769,18 +837,18 @@ static class Updater
             }
             Directory.CreateDirectory(Path.GetDirectoryName(target));
             if (string.Equals(target, self, StringComparison.OrdinalIgnoreCase)) {
-                // A running program cannot be overwritten, but it can be renamed
-                File.Delete(self + ".old");
-                File.Move(self, self + ".old");
+                // A running program cannot be overwritten, but it can be moved
+                Backup(self, Path.GetFileNameWithoutExtension(self) + tag + ".exe", true);
             } else if (Path.GetFileName(target).Equals("xemu.exe", StringComparison.OrdinalIgnoreCase) &&
                        File.Exists(target)) {
-                File.Copy(target, InSystem("xemu.previous.exe"), true);
+                Backup(target, "xemu" + tag + ".exe", false);
             }
             File.Copy(Path.Combine(folder, name), target, true);
         }
 
         File.Delete(zip);
         Directory.Delete(folder, true);
+        PruneBackups();
     }
 
 }
