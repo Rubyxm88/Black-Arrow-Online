@@ -16,6 +16,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Compression;
@@ -787,6 +788,8 @@ static class Theme
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
         button.BackColor = primary ? Green : Grey;
+        button.FlatAppearance.MouseOverBackColor =
+            primary ? Color.FromArgb(76, 192, 86) : Color.FromArgb(78, 83, 87);
         button.ForeColor = Color.White;
         button.Font = new Font("Segoe UI", primary ? 10F : 9F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
@@ -1040,11 +1043,78 @@ class InstallForm : Form
     }
 }
 
+// A rounded panel
+class Card : Panel
+{
+    public Card()
+    {
+        DoubleBuffered = true;
+        ResizeRedraw = true;
+        BackColor = Theme.Back;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (GraphicsPath path = Rounded(new RectangleF(0.5F, 0.5F, Width - 1.5F, Height - 1.5F), 10))
+        using (var fill = new SolidBrush(Theme.PanelBack))
+        using (var line = new Pen(Color.FromArgb(54, 58, 61))) {
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(line, path);
+        }
+    }
+
+    public static GraphicsPath Rounded(RectangleF r, float radius)
+    {
+        float d = radius * 2;
+        var path = new GraphicsPath();
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+// A green ring with a step number
+class Badge : Control
+{
+    readonly string number;
+
+    public Badge(string number)
+    {
+        this.number = number;
+        SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint |
+                 ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        BackColor = Theme.Back;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        var r = new RectangleF(1, 1, Width - 3, Height - 3);
+        using (var fill = new SolidBrush(Color.FromArgb(30, 64, 34)))
+        using (var ring = new Pen(Theme.Green, 2F))
+        using (var font = new Font("Segoe UI", 11F, FontStyle.Bold))
+        using (var text = new SolidBrush(Color.White)) {
+            g.FillEllipse(fill, r);
+            g.DrawEllipse(ring, r);
+            var center = new StringFormat { Alignment = StringAlignment.Center,
+                                             LineAlignment = StringAlignment.Center };
+            g.DrawString(number, font, text, new RectangleF(0, 1, Width, Height), center);
+        }
+    }
+}
+
 class SetupForm : Form
 {
     static readonly Color Back = Theme.Back;
     static readonly Color PanelBack = Theme.PanelBack;
-    static readonly Color FieldBack = Color.FromArgb(50, 54, 57);
     static readonly Color Green = Theme.Green;
     static readonly Color Grey = Theme.Grey;
     static readonly Color TextColor = Theme.TextColor;
@@ -1057,7 +1127,13 @@ class SetupForm : Form
     readonly ProgressBar progress;
     readonly Label status, gamesLabel, cleanText;
 
-    const string IdleStatus = "Close xemu before copying files that it is using.";
+    const string IdleStatus = "This window shows only once. Help > Black Arrow Online " +
+                              "Guide in xemu explains the rest.";
+
+    const int W = 760;           // window width
+    const int Side = 36;         // left and right margin
+    const int Inner = W - 2 * Side;
+    const int HeaderHeight = 150;
 
     public SetupForm(string previewPath)
     {
@@ -1065,7 +1141,7 @@ class SetupForm : Form
         Text = "Black Arrow Online - First-time setup";
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(1012, 708);
+        ClientSize = new Size(W, 716);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -1073,29 +1149,31 @@ class SetupForm : Form
         ForeColor = TextColor;
         Font = new Font("Segoe UI", 10F);
         Icon = Launcher.AppIcon();
+        DoubleBuffered = true;
 
+        // --- header: the logo on a soft green glow ---
         var logo = Launcher.Logo();
         if (logo != null) {
-            // The logo picture is 4:1
             var pic = new PictureBox();
             pic.Image = logo;
             pic.SizeMode = PictureBoxSizeMode.Zoom;
             pic.BackColor = Color.Transparent;
-            pic.SetBounds(22, 12, 272, 68);
+            pic.SetBounds((W - 360) / 2, 22, 360, 90);  // the picture is 4:1
             Controls.Add(pic);
-            AddLabel(this, "First-time setup of your virtual Xbox",
-                     314, 38, 340, 24, 10F, false, Dim);
         } else {
-            AddLabel(this, "Black Arrow Online", 24, 16, 630, 38, 18F, true, TextColor);
-            AddLabel(this, "First-time setup of your virtual Xbox",
-                     26, 56, 630, 24, 10F, false, Dim);
+            Label name = AddLabel(this, "Black Arrow Online", 0, 40, W, 50, 22F, true, TextColor);
+            name.TextAlign = ContentAlignment.MiddleCenter;
         }
+        Label sub = AddLabel(this, "Let's set up your virtual Xbox", 0, 116, W, 24, 10.5F,
+                             false, Dim);
+        sub.TextAlign = ContentAlignment.MiddleCenter;
 
-        // --- clean start ---
-        var clean = AddPanel(24, 92, 632, 112);
-        AddLabel(clean, "New console", 18, 12, 420, 28, 13F, true, TextColor);
-        cleanText = AddLabel(clean, "", 18, 44, 440, 56, 9F, false, Dim);
-        cleanButton = AddButton(clean, "", 468, 36, 146, 42, true);
+        // --- new console: the one thing to do here ---
+        var clean = AddCard(Side, 168, Inner, 124);
+        AddLabel(clean, "New console", 24, 20, 400, 32, 15F, true, TextColor);
+        cleanText = AddLabel(clean, "", 25, 56, 420, 56, 9.5F, false, Dim);
+        cleanButton = AddButton(clean, "", Inner - 24 - 196, 36, 196, 52, true);
+        cleanButton.Font = new Font("Segoe UI", 11.5F, FontStyle.Bold);
         cleanButton.Click += delegate {
             if (Launcher.ContentMissing) {
                 AddContent();
@@ -1105,44 +1183,36 @@ class SetupForm : Form
         };
         ShowClean();
 
-        // --- your account ---
-        // Every console starts new: the Xbox Live account lives on xb.live,
-        // so there is nothing to copy from an older setup
-        var account = AddPanel(24, 216, 632, 428);
-        AddLabel(account, "Already playing on xb.live?", 18, 12, 590, 28, 13F, true, TextColor);
-        AddLabel(account, "Nothing to copy. Your Xbox Live account is kept on xb.live, so you " +
-                          "just sign in to it again in the XBL Dashboard.",
-                 18, 44, 596, 42, 9F, false, Dim);
-        AddLabel(account, "XBL Dashboard", 18, 104, 590, 26, 11F, true, TextColor);
-        AddLabel(account, "The first time xemu starts it makes the XBL Dashboard your console's " +
-                          "dashboard. This takes about two minutes and a progress bar shows how far " +
-                          "it is. Please don't close xemu while it runs. It happens one time only; " +
-                          "the original dashboard is kept as a backup.",
-                 18, 134, 596, 80, 9F, false, Dim);
-        AddLabel(account, "Saves from another xemu", 18, 230, 590, 26, 11F, true, TextColor);
-        AddLabel(account, "Game saves on another xemu's hard disk stay there; this console " +
-                          "starts with none.",
-                 18, 260, 596, 42, 9F, false, Dim);
-
-        // --- what happens next ---
-        var next = AddPanel(668, 92, 320, 552);
-        AddLabel(next, "What happens next", 18, 12, 290, 28, 13F, true, TextColor);
-        AddStep(next, 50, "1", "XBL Dashboard is set up, then opens",
-                "Sign in with your xb.live account. For a link code use the menu " +
-                "XB Live > Link Code.");
-        AddStep(next, 138, "2", "Switch the network to XB Online",
+        // --- what happens next: four steps in a row ---
+        AddLabel(this, "WHAT HAPPENS NEXT", Side + 2, 314, 300, 20, 8.5F, true, Green);
+        int col = (Inner + 16) / 4;
+        AddStep(Side + 0 * col, 344, col - 16, "1", "XBL Dashboard opens",
+                "It sets itself up the first time, about two minutes. Then sign in " +
+                "with your xb.live account.");
+        AddStep(Side + 1 * col, 344, col - 16, "2", "Go online",
                 "In the dashboard: Settings > Network, set the top option to XB Online.");
-        AddStep(next, 212, "3", "Install the game update and maps",
-                "Menu Play > Black Arrow Updates (stock).");
-        AddStep(next, 300, "4", "Play",
-                "Menu Play > Play Rainbow Six 3 Black Arrow.");
-        AddLabel(next, "This window appears only once. From then on, Black Arrow Online " +
-                       "starts on the XBL Dashboard; pick your game in the Play menu. " +
-                       "Help > Black Arrow Online Guide explains the rest.",
-                 18, 366, 286, 72, 9F, false, Dim);
+        AddStep(Side + 2 * col, 344, col - 16, "3", "Update the game",
+                "In xemu: Play > Black Arrow Updates (stock) adds the update and maps.");
+        AddStep(Side + 3 * col, 344, col - 16, "4", "Play",
+                "Play > Play Rainbow Six 3 Black Arrow. From then on xemu opens " +
+                "straight to the dashboard.");
 
-        gamesLabel = AddLabel(next, "", 18, 448, 286, 40, 9F, true, TextColor);
-        Button openGames = AddButton(next, "Open the games folder", 18, 496, 190, 34, false);
+        // --- good to know ---
+        var know = AddCard(Side, 494, Inner, 92);
+        int third = (Inner - 24) / 3;
+        AddNote(know, 22 + 0 * third, third - 20, "Already on xb.live?",
+                "Nothing to copy. Your account lives on xb.live; just sign in again.");
+        AddNote(know, 22 + 1 * third, third - 20, "Don't close xemu",
+                "Let the dashboard finish setting up. The original is kept as a backup.");
+        AddNote(know, 22 + 2 * third, third - 20, "Saves",
+                "Saves on another xemu stay there. This console starts new.");
+
+        // --- your game ---
+        var games = AddCard(Side, 600, Inner, 58);
+        gamesLabel = AddLabel(games, "", 22, 9, Inner - 230, 40, 9.5F, true, TextColor);
+        gamesLabel.TextAlign = ContentAlignment.MiddleLeft;
+        Button openGames = AddButton(games, "Open games folder", Inner - 22 - 170, 12, 170, 34,
+                                     false);
         openGames.Click += delegate {
             Directory.CreateDirectory(Launcher.GamesDir);
             Process.Start("explorer.exe", "\"" + Launcher.GamesDir + "\"");
@@ -1150,18 +1220,30 @@ class SetupForm : Form
         Activated += delegate { ShowGames(); };
         ShowGames();
 
-        status = AddLabel(this, IdleStatus, 26, 656, 630, 22, 9F, false, Dim);
+        // --- footer ---
+        status = AddLabel(this, IdleStatus, Side + 2, 674, Inner - 140, 20, 8.5F, false, Dim);
         UpdateInfo installed = Updater.Installed();
         if (installed.Build > 0) {
-            Label build = AddLabel(this, "Build " + installed.Text, 668, 656, 320, 22, 9F,
-                                   false, Dim);
+            Label build = AddLabel(this, "Build " + installed.Text, W - Side - 140, 674, 140, 20,
+                                   8.5F, true, Dim);
             build.TextAlign = ContentAlignment.TopRight;
         }
         progress = new ProgressBar();
-        progress.SetBounds(26, 682, 628, 10);
+        progress.SetBounds(Side, 700, Inner, 6);
         progress.Style = ProgressBarStyle.Continuous;
         progress.Visible = false;
         Controls.Add(progress);
+    }
+
+    // The header glow behind the logo
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var band = new Rectangle(0, 0, ClientSize.Width, HeaderHeight);
+        using (var brush = new LinearGradientBrush(band, Color.FromArgb(22, 44, 26), Back,
+                                                   LinearGradientMode.Vertical)) {
+            e.Graphics.FillRectangle(brush, band);
+        }
     }
 
     protected override void OnShown(EventArgs e)
@@ -1184,9 +1266,8 @@ class SetupForm : Form
             cleanButton.Text = "Add content pack";
         } else {
             cleanText.ForeColor = Dim;
-            cleanText.Text = "A brand new console with the Xbox dashboards already installed.\n" +
-                             "Choose this if you have never used xemu, or want a fresh Xbox " +
-                             "Live setup.";
+            cleanText.Text = "A fresh virtual Xbox with the dashboards already installed. " +
+                             "Your xb.live account signs in later.";
             cleanButton.Text = "Start clean";
         }
     }
@@ -1262,20 +1343,28 @@ class SetupForm : Form
 
     // --- controls ---
 
-    static void AddStep(Control parent, int y, string number, string title, string text)
+    // A numbered circle, then a short title and line
+    void AddStep(int x, int y, int w, string number, string title, string text)
     {
-        AddLabel(parent, number, 18, y, 22, 24, 12F, true, Green);
-        AddLabel(parent, title, 42, y + 2, 266, 22, 9.5F, true, TextColor);
-        AddLabel(parent, text, 42, y + 24, 266, 56, 9F, false, Dim);
+        var badge = new Badge(number);
+        badge.SetBounds(x, y, 32, 32);
+        Controls.Add(badge);
+        AddLabel(this, title, x, y + 42, w, 22, 10.5F, true, TextColor);
+        AddLabel(this, text, x, y + 66, w, 72, 9F, false, Dim);
     }
 
-    Panel AddPanel(int x, int y, int w, int h)
+    static void AddNote(Control parent, int x, int w, string title, string text)
     {
-        var panel = new Panel();
-        panel.SetBounds(x, y, w, h);
-        panel.BackColor = PanelBack;
-        Controls.Add(panel);
-        return panel;
+        AddLabel(parent, title, x, 16, w, 22, 9.5F, true, TextColor);
+        AddLabel(parent, text, x, 40, w, 40, 8.5F, false, Dim);
+    }
+
+    Card AddCard(int x, int y, int w, int h)
+    {
+        var card = new Card();
+        card.SetBounds(x, y, w, h);
+        Controls.Add(card);
+        return card;
     }
 
     static Label AddLabel(Control parent, string text, int x, int y, int w, int h,
@@ -1290,43 +1379,4 @@ class SetupForm : Form
         return Theme.AddButton(parent, text, x, y, w, h, primary);
     }
 
-    // One file: a title with a Required/Optional tag, the path box with a
-    // Browse button, and a line saying which file is wanted
-    TextBox AddFileRow(Control parent, int y, string title, string tag, string fileName,
-                       string description, string filter, string initial)
-    {
-        Label name = AddLabel(parent, title, 18, y, 10, 20, 9.5F, true, TextColor);
-        name.AutoSize = true;
-        Label tagLabel = AddLabel(parent, tag.ToUpperInvariant(), 0, y + 3, 10, 16, 7.5F, true,
-                                  tag == "Required" ? Green : Dim);
-        tagLabel.AutoSize = true;
-        parent.Layout += delegate { tagLabel.Left = name.Right + 6; };
-
-        var box = new TextBox();
-        box.SetBounds(18, y + 22, 498, 24);
-        box.BackColor = FieldBack;
-        box.ForeColor = TextColor;
-        box.BorderStyle = BorderStyle.FixedSingle;
-        box.Font = new Font("Segoe UI", 9F);
-        box.Text = initial;
-        parent.Controls.Add(box);
-
-        Button browse = AddButton(parent, "Browse...", 524, y + 21, 90, 26, false);
-        browse.Click += delegate {
-            using (var dialog = new OpenFileDialog()) {
-                dialog.Title = "Choose your " + title + " file (" + fileName + ")";
-                dialog.Filter = filter;
-                string current = box.Text.Trim();
-                if (current.Length > 0 && File.Exists(current)) {
-                    dialog.InitialDirectory = Path.GetDirectoryName(current);
-                }
-                if (dialog.ShowDialog(this) == DialogResult.OK) {
-                    box.Text = dialog.FileName;
-                }
-            }
-        };
-
-        AddLabel(parent, fileName + "  -  " + description, 18, y + 48, 596, 16, 8F, false, Dim);
-        return box;
-    }
 }
