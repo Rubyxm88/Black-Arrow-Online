@@ -297,6 +297,8 @@ void xemu_hud_update(void)
             xemu_dashinstall_start_now();
         } else if (action && !strcmp(action, "dash")) {
             ActionXboxDashboard();
+        } else if (action && !strcmp(action, "about")) {
+            g_main_menu.ShowAbout();
         } else if (action && !strncmp(action, "play:", 5)) {
             ActionPlayDiscFile(action + 5);
         }
