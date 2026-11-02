@@ -602,13 +602,32 @@ static void PlayMenu()
     // Only the dashboard the console has: the XBL Dashboard once it is
     // installed, otherwise the original one (and a way to install it)
     MenuHeader("Dashboard");
+    int backup = xemu_xbonline_backup_dashboard();
     if (xemu_xbonline_main_dashboard() == XBONLINE_DASH_XBL) {
         if (ImGui::MenuItem("XBL Dashboard")) ActionXboxDashboard();
         MenuItemHelp("Takes the disc out and goes back to your console's "
                      "dashboard.");
+        if (backup == XBONLINE_DASH_STOCK &&
+            ImGui::MenuItem("Switch to Original Dashboard", NULL, false,
+                            !xemu_dashinstall_active())) {
+            ActionSwitchDashboard();
+        }
+        if (backup == XBONLINE_DASH_STOCK) {
+            MenuItemHelp("Restarts the console into the dashboard it had "
+                         "before the XBL Dashboard. Your Xbox Live account "
+                         "and the XBL Dashboard stay; switch back any time.");
+        }
     } else {
         if (ImGui::MenuItem("Original Xbox Dashboard")) ActionXboxDashboard();
-        if (xemu_xbonline_install_disc()) {
+        if (backup == XBONLINE_DASH_XBL) {
+            if (ImGui::MenuItem("Switch to XBL Dashboard", NULL, false,
+                                !xemu_dashinstall_active())) {
+                ActionSwitchDashboard();
+            }
+            MenuItemHelp("Restarts the console into the XBL Dashboard, "
+                         "signed in as before. The original dashboard is "
+                         "kept as its backup.");
+        } else if (xemu_xbonline_install_disc()) {
             if (ImGui::MenuItem("Install XBL Dashboard", NULL, false,
                                 !xemu_dashinstall_active())) {
                 xemu_dashinstall_start_now();

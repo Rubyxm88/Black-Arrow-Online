@@ -448,7 +448,8 @@ int xemu_xbonline_hdd_title_update(const char *hdd_path, uint32_t title_id,
     return result;
 }
 
-int xemu_xbonline_hdd_main_dashboard(const char *hdd_path)
+/* Which dashboard a file in the root of C: is */
+static int hdd_dashboard_kind(const char *hdd_path, const char *name)
 {
     HddImage img;
     Fatx fs;
@@ -456,7 +457,7 @@ int xemu_xbonline_hdd_main_dashboard(const char *hdd_path)
 
     if (hdd_open(&img, hdd_path) &&
         fatx_open_part(&fs, &img, FATX_C_OFFSET, FATX_C_SIZE)) {
-        uint32_t file = fatx_find(&fs, 1, "xboxdash.xbe", false);
+        uint32_t file = fatx_find(&fs, 1, name, false);
         XbOnlineXbe xbe;
 
         result = XBONLINE_DASH_NONE;
@@ -476,6 +477,16 @@ int xemu_xbonline_hdd_main_dashboard(const char *hdd_path)
     }
     hdd_close(&img);
     return result;
+}
+
+int xemu_xbonline_hdd_main_dashboard(const char *hdd_path)
+{
+    return hdd_dashboard_kind(hdd_path, XEMU_XBONLINE_DASH_FILE);
+}
+
+int xemu_xbonline_hdd_backup_dashboard(const char *hdd_path)
+{
+    return hdd_dashboard_kind(hdd_path, XEMU_XBONLINE_DASH_BACKUP_FILE);
 }
 
 int xemu_xbonline_hdd_has_content(const char *hdd_path, uint32_t title_id,
@@ -551,11 +562,18 @@ bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe)
 
 static bool hdd_has_dashboard;
 static int main_dashboard = XBONLINE_DASH_NONE;
+static int backup_dashboard = XBONLINE_DASH_NONE;
 
 void xemu_xbonline_probe_hdd(const char *hdd_path)
 {
     hdd_has_dashboard = xemu_xbonline_hdd_has_dashboard(hdd_path) == 1;
     main_dashboard = xemu_xbonline_hdd_main_dashboard(hdd_path);
+    backup_dashboard = xemu_xbonline_hdd_backup_dashboard(hdd_path);
+}
+
+int xemu_xbonline_backup_dashboard(void)
+{
+    return backup_dashboard;
 }
 
 int xemu_xbonline_main_dashboard(void)

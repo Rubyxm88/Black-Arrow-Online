@@ -83,6 +83,17 @@ enum {
  */
 int xemu_xbonline_hdd_main_dashboard(const char *hdd_path);
 
+/*
+ * The dashboard kept as a backup when the XBL Dashboard was installed
+ * (C:\xboxdash.xbe.xblbak): one of XBONLINE_DASH_*, or -1 if the image
+ * could not be read.
+ */
+int xemu_xbonline_hdd_backup_dashboard(const char *hdd_path);
+
+/* File names of the dashboard the console boots and of its backup */
+#define XEMU_XBONLINE_DASH_FILE "xboxdash.xbe"
+#define XEMU_XBONLINE_DASH_BACKUP_FILE "xboxdash.xbe.xblbak"
+
 /* Title ID of Rainbow Six 3: Black Arrow */
 #define XEMU_XBONLINE_TITLE_ID 0x55530037
 
@@ -173,6 +184,9 @@ void xemu_xbonline_probe_hdd(const char *hdd_path);
  */
 int xemu_xbonline_main_dashboard(void);
 void xemu_xbonline_set_main_dashboard(int kind);
+
+/* The backup dashboard, as found by xemu_xbonline_probe_hdd() */
+int xemu_xbonline_backup_dashboard(void);
 
 /* The XBL Dashboard installer disc, or NULL if the package has none */
 const char *xemu_xbonline_install_disc(void);

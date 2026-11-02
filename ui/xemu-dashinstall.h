@@ -48,6 +48,14 @@ void xemu_dashinstall_hdd_flush(void);
 /* Console restarts so far (counted from the first call) */
 int xemu_dashinstall_resets(void);
 
+/*
+ * Swap the dashboard the console boots with its backup at the next restart:
+ * C:\xboxdash.xbe and C:\xboxdash.xbe.xblbak trade names while the console
+ * is stopped for the restart, which the caller asks for. After the restart xemu_xbonline_main_dashboard() and _backup_dashboard() say
+ * which is which, and a notification says how it went.
+ */
+void xemu_dashinstall_switch_dashboard(void);
+
 #ifdef __cplusplus
 }
 #endif

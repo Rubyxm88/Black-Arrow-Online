@@ -149,7 +149,7 @@ static void Finish()
             "old dashboard. Play > Install XBL Dashboard tries again.");
         return;
     }
-    xemu_xbonline_set_main_dashboard(XBONLINE_DASH_XBL);
+    xemu_xbonline_probe_hdd(g_config.sys.files.hdd_path);
     g_config.general.xb_online_setup_offered = true;
     xemu_settings_save();
     ActionReset();
@@ -396,6 +396,8 @@ bool xemu_dashinstall_wanted(void)
 {
     return xemu_xbonline_install_disc() &&
            xemu_xbonline_main_dashboard() == XBONLINE_DASH_STOCK &&
+           // Switched back to the old dashboard: the XBL one is its backup
+           xemu_xbonline_backup_dashboard() != XBONLINE_DASH_XBL &&
            g_config.general.xbl_dash_install_tries < MAX_AUTO_TRIES &&
            !getenv("XEMU_NO_DASH_INSTALL");
 }

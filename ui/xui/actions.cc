@@ -23,6 +23,7 @@
 #include "../xemu-snapshots.h"
 #include "../xemu-notifications.h"
 #include "../xemu-xbonline.h"
+#include "../xemu-dashinstall.h"
 #include "snapshot-manager.hh"
 #include "hw/xbox/xbox-audio-setting.h"
 #include <filesystem>
@@ -111,6 +112,13 @@ void ActionXboxDashboard(void)
     // hard disk
     ActionEjectDisc();
     ActionReset();
+}
+
+void ActionSwitchDashboard(void)
+{
+    // The two dashboards trade places while the console restarts
+    xemu_dashinstall_switch_dashboard();
+    ActionXboxDashboard();
 }
 
 void ActionTogglePause(void)
