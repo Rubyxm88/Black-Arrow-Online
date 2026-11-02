@@ -245,6 +245,8 @@ void DashInstallDraw()
         timed = true;
         begin_time = Now();
         stage_time = begin_time;
+        xemu_dashinstall_resets();  // start counting restarts
+        xemu_settings_save();       // the try counts even if xemu crashes
     }
     Step();
     if (stage == STAGE_IDLE) {
@@ -300,9 +302,9 @@ bool xemu_dashinstall_wanted(void)
 
 void xemu_dashinstall_begin(void)
 {
-    xemu_dashinstall_resets();  // start counting restarts
+    // Counting restarts and saving the settings wait for the first frame:
+    // this runs before the machine is set up
     g_config.general.xbl_dash_install_tries++;
-    xemu_settings_save();
     presses = 0;
     timed = false;
     stage = STAGE_BOOTING;
