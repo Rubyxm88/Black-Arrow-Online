@@ -849,8 +849,8 @@ static void first_frame_step(const char *step)
  * console's screen does. A frame later than that pushes the queue back once
  * (one picture stays up 67 ms) and the frames after it come at the even beat
  * again, a frame further behind; after 1 s with a frame to spare the queue
- * drops one to catch up. Games that finish frames at other rates get the
- * newest frame at once.
+ * drops one to catch up. Games that finish frames at other rates, and apps
+ * that stop flipping, get the console's current picture at once.
  */
 #define PACE_HISTORY 16
 static uint32_t pace_vblank_at[PACE_HISTORY];
@@ -993,10 +993,17 @@ static bool frame_queue_take(uint32_t vblanks, uint32_t flip_vblank,
         fq_flips = flips;
         fq_started = true;
         pace_record(flip_vblank);
-        if (!frame_queue_capture(flip_vblank)) {
+        if (pace_slot() >= 0 && !frame_queue_capture(flip_vblank)) {
             frame_queue_reset();
             return false;
         }
+    }
+    /* Not at an even 30 fps, or no flip lately (dashboards and other apps
+       that put pictures on the screen without FLIP_STALL): show the
+       console's current picture, as without pacing */
+    if (pace_slot() < 0 || vblanks - flip_vblank > 8) {
+        frame_queue_reset();
+        return false;
     }
     if (fq_waiting) {
         int slot = pace_slot();
