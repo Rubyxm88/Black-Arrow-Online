@@ -28,6 +28,13 @@ extern "C" {
 #define XEMU_XBONLINE_LOADER_DISC "XBL Dashboard Loader.iso"
 
 /*
+ * Disc image of the XBL Dashboard installer, next to the executable. It puts
+ * the XBL Dashboard in place of the console's own dashboard (keeping a backup
+ * of the old one); xemu runs it once by itself (ui/xui/dash-install.cc).
+ */
+#define XEMU_XBONLINE_INSTALL_DISC "XBL Dashboard Installer.iso"
+
+/*
  * Optional disc image, also kept next to the executable, that installs the
  * title update and downloadable content of the main game.
  */
@@ -62,6 +69,19 @@ int xemu_xbonline_hdd_account_names(const char *hdd_path, char *out,
  * Returns 1 if it is, 0 if it is not, -1 if the image could not be read.
  */
 int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
+
+/* The dashboard the console boots (C:\xboxdash.xbe) */
+enum {
+    XBONLINE_DASH_NONE = 0,  /* missing or not an XBE */
+    XBONLINE_DASH_STOCK = 1, /* the original Xbox dashboard, or another one */
+    XBONLINE_DASH_XBL = 2,   /* the XBL Dashboard */
+};
+
+/*
+ * Which dashboard the hard disk image boots: one of XBONLINE_DASH_*, or -1
+ * if the image could not be read.
+ */
+int xemu_xbonline_hdd_main_dashboard(const char *hdd_path);
 
 /* Title ID of Rainbow Six 3: Black Arrow */
 #define XEMU_XBONLINE_TITLE_ID 0x55530037
@@ -146,6 +166,16 @@ bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe);
  * xemu_xbonline_setup_disc() knows which disc to offer.
  */
 void xemu_xbonline_probe_hdd(const char *hdd_path);
+
+/*
+ * The dashboard the hard disk boots, as found by xemu_xbonline_probe_hdd()
+ * or set after the XBL Dashboard is installed (XBONLINE_DASH_*, -1 unknown).
+ */
+int xemu_xbonline_main_dashboard(void);
+void xemu_xbonline_set_main_dashboard(int kind);
+
+/* The XBL Dashboard installer disc, or NULL if the package has none */
+const char *xemu_xbonline_install_disc(void);
 
 /*
  * Disc image to boot for Xbox Live account setup, or NULL if none is

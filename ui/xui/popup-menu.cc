@@ -23,6 +23,8 @@
 #include <map>
 #include "misc.hh"
 #include "actions.hh"
+#include "../xemu-xbonline.h"
+#include "../xemu-dashinstall.h"
 #include "font-manager.hh"
 #include "viewport-manager.hh"
 #include "scene-manager.hh"
@@ -444,13 +446,29 @@ public:
             nav.PushFocus();
             nav.PushMenu(games);
         }
-        if (PopupMenuButton("XBL Dashboard (Account Setup)", ICON_FA_GLOBE)) {
-            ActionXboxLiveSetup();
-            pop = true;
-        }
-        if (PopupMenuButton("Original Xbox Dashboard", ICON_FA_TV)) {
-            ActionXboxDashboard();
-            pop = true;
+        // Only the dashboard the console has
+        if (xemu_xbonline_main_dashboard() == XBONLINE_DASH_XBL) {
+            if (PopupMenuButton("XBL Dashboard", ICON_FA_GLOBE)) {
+                ActionXboxDashboard();
+                pop = true;
+            }
+        } else {
+            if (PopupMenuButton("Original Xbox Dashboard", ICON_FA_TV)) {
+                ActionXboxDashboard();
+                pop = true;
+            }
+            if (xemu_xbonline_install_disc()) {
+                if (!xemu_dashinstall_active() &&
+                    PopupMenuButton("Install XBL Dashboard", ICON_FA_GLOBE)) {
+                    xemu_dashinstall_start_now();
+                    pop = true;
+                }
+            } else if (xemu_xbonline_setup_disc() &&
+                       PopupMenuButton("XBL Dashboard (Account Setup)",
+                                       ICON_FA_GLOBE)) {
+                ActionXboxLiveSetup();
+                pop = true;
+            }
         }
         if (PopupMenuButton("Eject Disc", ICON_FA_EJECT)) {
             ActionEjectDisc();

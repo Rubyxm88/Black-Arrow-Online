@@ -239,12 +239,17 @@ static bool hdd_read_bytes(HddImage *img, uint64_t offset, uint8_t *buf,
     return true;
 }
 
-static bool fatx_open(Fatx *fs, HddImage *img)
+/* System partition (C:), which holds the dashboard the console boots */
+#define FATX_C_OFFSET 0x8CA80000ULL
+#define FATX_C_SIZE 0x1F400000ULL
+
+static bool fatx_open_part(Fatx *fs, HddImage *img, uint64_t part_offset,
+                           uint64_t part_size)
 {
     uint8_t hdr[16];
     uint64_t fat_size;
 
-    if (!hdd_read_bytes(img, FATX_E_OFFSET, hdr, sizeof(hdr)) ||
+    if (!hdd_read_bytes(img, part_offset, hdr, sizeof(hdr)) ||
         ldl_le_p(hdr) != FATX_MAGIC) {
         return false;
     }
@@ -253,13 +258,18 @@ static bool fatx_open(Fatx *fs, HddImage *img)
     if (fs->cluster_size < SECTOR_SIZE || fs->cluster_size > FATX_MAX_CLUSTER) {
         return false;
     }
-    fs->cluster_count = FATX_E_SIZE / fs->cluster_size;
+    fs->cluster_count = part_size / fs->cluster_size;
     fs->wide = fs->cluster_count >= 0xfff0;
     fat_size = (uint64_t)fs->cluster_count * (fs->wide ? 4 : 2);
     fat_size = (fat_size + 0xfff) & ~0xfffULL;
-    fs->fat_offset = FATX_E_OFFSET + 0x1000;
+    fs->fat_offset = part_offset + 0x1000;
     fs->data_offset = fs->fat_offset + fat_size;
     return true;
+}
+
+static bool fatx_open(Fatx *fs, HddImage *img)
+{
+    return fatx_open_part(fs, img, FATX_E_OFFSET, FATX_E_SIZE);
 }
 
 /* Next cluster of a chain, or 0 at its end */
@@ -438,6 +448,36 @@ int xemu_xbonline_hdd_title_update(const char *hdd_path, uint32_t title_id,
     return result;
 }
 
+int xemu_xbonline_hdd_main_dashboard(const char *hdd_path)
+{
+    HddImage img;
+    Fatx fs;
+    int result = -1;
+
+    if (hdd_open(&img, hdd_path) &&
+        fatx_open_part(&fs, &img, FATX_C_OFFSET, FATX_C_SIZE)) {
+        uint32_t file = fatx_find(&fs, 1, "xboxdash.xbe", false);
+        XbOnlineXbe xbe;
+
+        result = XBONLINE_DASH_NONE;
+        if (file) {
+            uint8_t *data = g_malloc(fs.cluster_size);
+            if (hdd_read_bytes(&img, fs.data_offset +
+                               (uint64_t)(file - 1) * fs.cluster_size,
+                               data, fs.cluster_size) &&
+                xbe_certificate(data, fs.cluster_size, &xbe)) {
+                /* The XBL Dashboard's certificate names it; the stock
+                   dashboard says "Xbox Dashboard" */
+                result = g_str_has_prefix(xbe.name, "XBL Dash") ?
+                             XBONLINE_DASH_XBL : XBONLINE_DASH_STOCK;
+            }
+            g_free(data);
+        }
+    }
+    hdd_close(&img);
+    return result;
+}
+
 int xemu_xbonline_hdd_has_content(const char *hdd_path, uint32_t title_id,
                                   const char *offering)
 {
@@ -510,10 +550,31 @@ bool xemu_xbonline_disc_xbe(const char *iso_path, XbOnlineXbe *xbe)
 }
 
 static bool hdd_has_dashboard;
+static int main_dashboard = XBONLINE_DASH_NONE;
 
 void xemu_xbonline_probe_hdd(const char *hdd_path)
 {
     hdd_has_dashboard = xemu_xbonline_hdd_has_dashboard(hdd_path) == 1;
+    main_dashboard = xemu_xbonline_hdd_main_dashboard(hdd_path);
+}
+
+int xemu_xbonline_main_dashboard(void)
+{
+    return main_dashboard;
+}
+
+void xemu_xbonline_set_main_dashboard(int kind)
+{
+    main_dashboard = kind;
+    if (kind == XBONLINE_DASH_XBL) {
+        hdd_has_dashboard = true;
+    }
+}
+
+const char *xemu_xbonline_install_disc(void)
+{
+    return qemu_access(XEMU_XBONLINE_INSTALL_DISC, F_OK) == 0 ?
+               XEMU_XBONLINE_INSTALL_DISC : NULL;
 }
 
 const char *xemu_xbonline_setup_disc(void)
@@ -531,6 +592,7 @@ const char *xemu_xbonline_setup_disc(void)
 bool xemu_xbonline_is_system_disc(const char *path)
 {
     return g_str_has_suffix(path, XEMU_XBONLINE_SETUP_DISC) ||
+           g_str_has_suffix(path, XEMU_XBONLINE_INSTALL_DISC) ||
            g_str_has_suffix(path, XEMU_XBONLINE_LOADER_DISC) ||
            g_str_has_suffix(path, XEMU_XBONLINE_UPDATE_DISC) ||
            g_str_has_suffix(path, XEMU_XBONLINE_RS3_UPDATE_DISC);

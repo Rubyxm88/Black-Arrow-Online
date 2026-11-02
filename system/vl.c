@@ -147,6 +147,7 @@
 #include "ui/xemu-notifications.h"
 #include "ui/xemu-net.h"
 #include "ui/xemu-xbonline.h"
+#include "ui/xemu-dashinstall.h"
 #include "ui/xemu-gamecache.h"
 #include "ui/xemu-input.h"
 #include "hw/xbox/eeprom_generation.h"
@@ -3088,7 +3089,28 @@ void qemu_init(int argc, char **argv)
     xemu_xbonline_probe_hdd(g_config.sys.files.hdd_path);
     xemu_gamecache_init();
     const char *setup_disc = xemu_xbonline_setup_disc();
-    if (g_config.net.enable &&
+    bool xbl_dash_home =
+        xemu_xbonline_main_dashboard() == XBONLINE_DASH_XBL;
+    if (xemu_dashinstall_wanted()) {
+        // The console still boots its old dashboard: install the XBL
+        // Dashboard over it, once (ui/xui/dash-install.cc)
+        dvd_path = xemu_xbonline_install_disc();
+        xemu_dashinstall_begin();
+    } else if (xbl_dash_home) {
+        // The XBL Dashboard is the console's dashboard: start there, with
+        // no disc in; games start from the Play menu
+        dvd_path = "";
+        if (!g_config.general.xb_online_setup_offered) {
+            g_config.general.xb_online_setup_offered = true;
+            xemu_queue_notification(
+                xemu_xbonline_hdd_has_account(
+                    g_config.sys.files.hdd_path) == 1 ?
+                    "Check your Xbox Live sign-in here, then pick your game "
+                    "in the Play menu" :
+                    "No Xbox Live account yet. Set it up here, then pick "
+                    "your game in the Play menu");
+        }
+    } else if (g_config.net.enable &&
         g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE &&
         setup_disc) {
         bool has_account =

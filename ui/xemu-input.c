@@ -88,6 +88,7 @@ static void xemu_input_print_controller_state(ControllerState *state)
 ControllerStateList available_controllers =
     QTAILQ_HEAD_INITIALIZER(available_controllers);
 ControllerState *bound_controllers[4] = { NULL, NULL, NULL, NULL };
+uint16_t xemu_input_forced_buttons;
 const char *bound_drivers[4] = { DRIVER_DUKE, DRIVER_DUKE, DRIVER_DUKE,
                                  DRIVER_DUKE };
 int test_mode;

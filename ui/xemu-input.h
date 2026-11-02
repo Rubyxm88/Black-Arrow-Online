@@ -124,6 +124,9 @@ extern "C" {
 
 extern int *g_keyboard_scancode_map[25];
 
+/* CONTROLLER_BUTTON_* bits held down on every controller, for xemu itself */
+extern uint16_t xemu_input_forced_buttons;
+
 void xemu_input_init(void);
 void xemu_input_process_sdl_events(const SDL_Event *event);
 void xemu_input_update_controllers(void);

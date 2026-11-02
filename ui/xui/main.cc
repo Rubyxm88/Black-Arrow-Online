@@ -56,6 +56,8 @@
 #include "guide.hh"
 #include "versions.hh"
 #include "game-cache.hh"
+#include "dash-install.hh"
+#include "../xemu-dashinstall.h"
 #include "../xemu-xbonline.h"
 #include "../xemu-diag.h"
 #if defined(__APPLE__) || defined(__linux__)
@@ -291,6 +293,8 @@ void xemu_hud_update(void)
         const char *action = getenv("XEMU_TEST_ACTION");
         if (action && !strcmp(action, "setup")) {
             ActionXboxLiveSetup();
+        } else if (action && !strcmp(action, "install")) {
+            xemu_dashinstall_start_now();
         } else if (action && !strcmp(action, "dash")) {
             ActionXboxDashboard();
         } else if (action && !strncmp(action, "play:", 5)) {
@@ -349,6 +353,7 @@ void xemu_hud_update(void)
     video_window.Draw();
     compatibility_reporter_window.Draw();
     PopupStackReset();
+    DashInstallDraw();
     if (!first_boot_window.is_open) DrawRecordingBadge();
     if (!first_boot_window.is_open) xbcheck_window.Draw();
     if (!first_boot_window.is_open) shader_cache_window.Draw();

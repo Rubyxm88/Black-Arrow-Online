@@ -2,6 +2,7 @@ xemu_ss.add(files(
   'actions.cc',
   'animation.cc',
   'compat.cc',
+  'dash-install.cc',
   'debug.cc',
   'font-manager.cc',
   'gl-helpers.cc',

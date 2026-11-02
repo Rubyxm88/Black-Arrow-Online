@@ -90,8 +90,13 @@ void ActionPlayDiscFile(const char *file_path)
 
 void ActionXboxLiveSetup(void)
 {
-    // The XBL Dashboard, where the Xbox Live account is managed, runs from
-    // its own disc image
+    // Installed as the console's dashboard, the XBL Dashboard starts with no
+    // disc in, like on a real Xbox
+    if (xemu_xbonline_main_dashboard() == XBONLINE_DASH_XBL) {
+        ActionXboxDashboard();
+        return;
+    }
+    // Otherwise it runs from its own disc image
     const char *disc = xemu_xbonline_setup_disc();
     if (disc) {
         ActionPlayDiscFile(disc);

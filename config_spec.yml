@@ -9,6 +9,8 @@ general:
   screenshot_dir: string
   games_dir: string
   xb_online_setup_offered: bool
+  # Times xemu has started the XBL Dashboard install by itself
+  xbl_dash_install_tries: integer
   skip_boot_anim: bool
   # throttle_io: bool
   last_viewed_menu_index: integer

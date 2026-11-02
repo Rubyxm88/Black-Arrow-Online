@@ -36,6 +36,7 @@
 #include "perf-overlay.hh"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbonline.h"
+#include "../xemu-dashinstall.h"
 #include "../xemu-xbcheck.h"
 #include "../xemu-diag.h"
 #include "hw/xbox/nv2a/shader-precache.h"
@@ -595,9 +596,26 @@ static void PlayMenu()
                      "with Scharins v2.");
     }
 
-    MenuHeader("Dashboards");
-    if (ImGui::MenuItem("XBL Dashboard")) ActionXboxLiveSetup();
-    if (ImGui::MenuItem("Original Xbox Dashboard")) ActionXboxDashboard();
+    // Only the dashboard the console has: the XBL Dashboard once it is
+    // installed, otherwise the original one (and a way to install it)
+    MenuHeader("Dashboard");
+    if (xemu_xbonline_main_dashboard() == XBONLINE_DASH_XBL) {
+        if (ImGui::MenuItem("XBL Dashboard")) ActionXboxDashboard();
+        MenuItemHelp("Takes the disc out and goes back to your console's "
+                     "dashboard.");
+    } else {
+        if (ImGui::MenuItem("Original Xbox Dashboard")) ActionXboxDashboard();
+        if (xemu_xbonline_install_disc()) {
+            if (ImGui::MenuItem("Install XBL Dashboard", NULL, false,
+                                !xemu_dashinstall_active())) {
+                xemu_dashinstall_start_now();
+            }
+            MenuItemHelp("Makes the XBL Dashboard your console's dashboard. "
+                         "The original one is kept as a backup.");
+        } else if (xemu_xbonline_setup_disc()) {
+            if (ImGui::MenuItem("XBL Dashboard")) ActionXboxLiveSetup();
+        }
+    }
 }
 
 // XB Online: the Xbox Live account and the connection to XB Online
