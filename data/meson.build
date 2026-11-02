@@ -5,6 +5,7 @@ pfiles = [
   'logo_sdf.png',
   'xemu_64x64.png',
   'bao_logo.png',
+  'bao_icon_64.png',
   'abxy.ttf',
   'Roboto-Medium.ttf',
   'RobotoCondensed-Regular.ttf',

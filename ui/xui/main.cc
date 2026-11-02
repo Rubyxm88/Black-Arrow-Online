@@ -380,6 +380,9 @@ void xemu_hud_render()
      * Started by the Black Arrow Online launcher, the window opens behind
      * other windows. Once it is on screen, force it to the front, once.
      */
+    if (hud_frames == 0 && hud_window) {
+        SDL_SetWindowTitle(hud_window, WindowTitleText().c_str());
+    }
     if (++hud_frames == 5 && hud_window) {
         SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "1");
         SDL_RaiseWindow(hud_window);

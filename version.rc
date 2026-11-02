@@ -28,4 +28,4 @@ FILESUBTYPE VFT2_UNKNOWN
   }
 }
 
-IDI_ICON1 ICON "ui/icons/xemu-icon.ico"
+IDI_ICON1 ICON "ui/icons/black-arrow-online.ico"

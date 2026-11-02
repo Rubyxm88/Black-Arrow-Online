@@ -41,6 +41,7 @@ extern "C" {
 #include "qemu/http.h"
 #include "qapi/error.h"
 #include "system/runstate.h"
+#include "../xemu-version.h"
 }
 
 #include <SDL3/SDL.h>
@@ -915,6 +916,30 @@ static float Smooth(float x)
     return x * x * (3 - 2 * x);
 }
 
+std::string InstalledBuildText()
+{
+    const LocalVersion &local = Installed();
+    if (!local.label.empty()) {
+        return local.label;
+    }
+    if (local.build > 0) {
+        return "Build " + BuildText(local.build);
+    }
+    return "Test Build";
+}
+
+std::string WindowTitleText()
+{
+    // xemu's own version without our suffix: 0.8.139-1-xbl -> 0.8.139
+    std::string xemu = xemu_version;
+    size_t dash = xemu.find('-');
+    if (dash != std::string::npos) {
+        xemu.resize(dash);
+    }
+    return "Black Arrow Online  |  " + InstalledBuildText() + "  |  xemu " +
+           xemu;
+}
+
 void DrawBuildBadge()
 {
     versions_window.AutoCheck();
@@ -930,16 +955,7 @@ void DrawBuildBadge()
     float fade = ImGui::GetStyleColorVec4(ImGuiCol_Text).w;
 
     // "BA Online" light, " - " dim, "Build N" green
-    char build_part[48];
-    if (!local.label.empty()) {
-        snprintf(build_part, sizeof(build_part), "%s", local.label.c_str());
-    } else if (local.build > 0) {
-        snprintf(build_part, sizeof(build_part), "Build %s",
-                 BuildText(local.build).c_str());
-    } else {
-        snprintf(build_part, sizeof(build_part), "Test Build");
-    }
-    std::string text = std::string("BA Online - ") + build_part;
+    std::string text = std::string("BA Online - ") + InstalledBuildText();
     size_t dim_from = strlen("BA Online"), green_from = strlen("BA Online - ");
     const ImVec4 name_color(0.86f, 0.88f, 0.86f, 1.0f);
     const ImVec4 dash_color(0.50f, 0.53f, 0.50f, 1.0f);

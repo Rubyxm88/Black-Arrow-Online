@@ -36,6 +36,9 @@
 #include "../xemu-settings.h"
 #include "../xemu-monitor.h"
 #include "../xemu-version.h"
+#include "versions.hh"
+#include <algorithm>
+#include <cmath>
 #include "../xemu-net.h"
 #include "../xemu-os-utils.h"
 #include "../xemu-xbe.h"
@@ -1725,15 +1728,154 @@ void MainMenuAboutView::UpdateConfigInfoText()
     g_free(flash_rom_checksum);
 }
 
+// Additive blending for the shine pass, so it brightens only the logo
+static void AdditiveBlend(const ImDrawList *, const ImDrawCmd *)
+{
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+static float Hash(int i, float salt)
+{
+    float v = sinf(i * 12.9898f + salt * 78.233f) * 43758.5453f;
+    return v - floorf(v);
+}
+
+// Our logo for the About page: it draws in left to right with a green edge,
+// then a shine passes over it now and then, sparks rise off the arrow and
+// lights run out along the ONLINE lines. Click it to play it again.
+static void BaoAboutLogo()
+{
+    if (!g_bao_logo_tex || g_bao_logo_w <= 0) {
+        Logo();
+        return;
+    }
+    float scale = g_viewport_mgr.m_scale;
+    static double t0 = 0;
+    double now = ImGui::GetTime();
+    if (ImGui::IsWindowAppearing()) {
+        t0 = now;
+    }
+
+    float avail = ImGui::GetContentRegionAvail().x;
+    float lw = std::min(avail, 460.0f * scale);
+    float lh = lw * g_bao_logo_h / g_bao_logo_w;
+    ImGui::Dummy(ImVec2(0, 26.0f * scale));  // room for the sparks
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - lw) / 2);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##bao_logo", ImVec2(lw, lh));
+    if (ImGui::IsItemClicked()) {
+        t0 = now;
+    }
+
+    float t = (float)(now - t0);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImTextureID tex = (ImTextureID)(intptr_t)g_bao_logo_tex;
+    const float reveal_time = 1.1f;
+    float r = std::min(t / reveal_time, 1.0f);
+    r = 1.0f - powf(1.0f - r, 3.0f);  // ease out
+
+    // Draw in, left to right
+    if (r > 0) {
+        dl->AddImage(tex, p, ImVec2(p.x + lw * r, p.y + lh), ImVec2(0, 0),
+                     ImVec2(r, 1));
+    }
+    if (r < 1) {
+        float x = p.x + lw * r;
+        float a = 1.0f - r * r;
+        dl->AddRectFilledMultiColor(
+            ImVec2(x - 24.0f * scale, p.y), ImVec2(x, p.y + lh),
+            IM_COL32(110, 230, 60, 0), IM_COL32(110, 230, 60, (int)(150 * a)),
+            IM_COL32(110, 230, 60, (int)(150 * a)), IM_COL32(110, 230, 60, 0));
+        dl->AddLine(ImVec2(x, p.y), ImVec2(x, p.y + lh),
+                    IM_COL32(220, 255, 200, (int)(255 * a)), 2.0f * scale);
+    }
+
+    // A shine across the logo every few seconds (first one right after)
+    float since = t - reveal_time;
+    if (since > 0) {
+        float sweep = fmodf(since, 5.0f) / 1.0f;
+        if (sweep < 1) {
+            float cx = p.x - 0.15f * lw + sweep * 1.3f * lw;
+            float half = 0.07f * lw;
+            dl->AddCallback(AdditiveBlend, NULL);
+            // Soft edges: thin slices, brightest in the middle
+            const int slices = 9;
+            for (int i = 0; i < slices; i++) {
+                float a0 = -1.0f + 2.0f * i / slices;
+                float a1 = -1.0f + 2.0f * (i + 1) / slices;
+                float k = 1.0f - fabsf((a0 + a1) / 2);
+                dl->PushClipRect(ImVec2(cx + a0 * half, p.y),
+                                 ImVec2(cx + a1 * half, p.y + lh), true);
+                dl->AddImage(tex, p, ImVec2(p.x + lw, p.y + lh), ImVec2(0, 0),
+                             ImVec2(1, 1),
+                             IM_COL32(255, 255, 255, (int)(170 * k * k)));
+                dl->PopClipRect();
+            }
+            dl->AddCallback(ImDrawCallback_ResetRenderState, NULL);
+        }
+    }
+
+    // Sparks off the arrow tip (arrow is at the left of the picture)
+    if (since > -0.4f) {
+        float fade = std::min((since + 0.4f) / 0.6f, 1.0f);
+        ImVec2 tip(p.x + 0.068f * lw, p.y + 0.10f * lh);
+        for (int i = 0; i < 16; i++) {
+            float period = 1.6f + 1.2f * Hash(i, 1);
+            float life = fmodf(t + Hash(i, 2) * period, period) / period;
+            float rise = life * (40.0f + 30.0f * Hash(i, 3)) * scale;
+            float x = tip.x + (Hash(i, 4) - 0.5f) * 0.035f * lw +
+                      sinf(t * 2.0f + i) * 4.0f * scale * life;
+            float y = tip.y + (Hash(i, 5) * 0.25f * lh) - rise;
+            float a = sinf(3.14159f * life) * fade;
+            float rad = (1.2f + 1.4f * Hash(i, 6)) * scale * (1.0f - 0.5f * life);
+            dl->AddCircleFilled(ImVec2(x, y), rad * 2.2f,
+                                IM_COL32(110, 230, 60, (int)(50 * a)));
+            dl->AddCircleFilled(ImVec2(x, y), rad,
+                                IM_COL32(190, 255, 120, (int)(230 * a)));
+        }
+
+        // Lights running out along the two ONLINE lines
+        float ly = p.y + 0.825f * lh;
+        for (int side = 0; side < 2; side++) {
+            float x0 = p.x + (side ? 0.665f : 0.355f) * lw;
+            float x1 = p.x + (side ? 0.975f : 0.045f) * lw;
+            for (int j = 0; j < 2; j++) {
+                float k = fmodf(t / 2.6f + j * 0.5f, 1.0f);
+                float a = sinf(3.14159f * k) * fade;
+                for (int tail = 0; tail < 6; tail++) {
+                    float kk = std::max(k - tail * 0.012f, 0.0f);
+                    float x = x0 + (x1 - x0) * kk;
+                    float ta = a * (1.0f - tail / 6.0f);
+                    dl->AddCircleFilled(ImVec2(x, ly),
+                                        (2.2f - tail * 0.25f) * scale,
+                                        IM_COL32(200, 255, 140,
+                                                 (int)(220 * ta)));
+                }
+            }
+        }
+    }
+
+    // Who does the emulation
+    ImGui::Dummy(ImVec2(0, 6.0f * scale));
+    char powered[96];
+    snprintf(powered, sizeof(powered), "%s  |  powered by xemu %s",
+             InstalledBuildText().c_str(), xemu_version);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                         (avail - ImGui::CalcTextSize(powered).x) / 2);
+    ImGui::TextDisabled("%s", powered);
+}
+
 void MainMenuAboutView::Draw()
 {
     static const char *build_info_text = NULL;
     if (build_info_text == NULL) {
         build_info_text =
-            g_strdup_printf("Version:      %s\n"
+            g_strdup_printf("Black Arrow:  %s\n"
+                            "xemu:         %s\n"
                             "Commit:       %s\n"
                             "Date:         %s",
-                            xemu_version, xemu_commit, xemu_date);
+                            InstalledBuildText().c_str(), xemu_version,
+                            xemu_commit, xemu_date);
     }
 
     static const char *sys_info_text = NULL;
@@ -1755,13 +1897,13 @@ void MainMenuAboutView::Draw()
         UpdateConfigInfoText();
     }
 
-    Logo();
+    BaoAboutLogo();
 
     SectionTitle("Build Information");
     ImGui::PushFont(g_font_mgr.m_fixed_width_font);
     ImGui::InputTextMultiline("##build_info", (char *)build_info_text,
                               strlen(build_info_text) + 1,
-                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 5),
+                              ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 6),
                               ImGuiInputTextFlags_ReadOnly);
     ImGui::PopFont();
 
@@ -1783,13 +1925,14 @@ void MainMenuAboutView::Draw()
 
     SectionTitle("Community");
 
-    ImGui::Text("Visit");
+    ImGui::Text("Black Arrow Online runs on xemu, the original Xbox "
+                "emulator. Visit");
     ImGui::SameLine();
     if (ImGui::SmallButton("https://xemu.app")) {
         SDL_OpenURL("https://xemu.app");
     }
     ImGui::SameLine();
-    ImGui::Text("for more information");
+    ImGui::Text("for more about xemu.");
 }
 
 MainMenuTabButton::MainMenuTabButton(std::string text, std::string icon)

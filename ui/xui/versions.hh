@@ -68,6 +68,12 @@ extern VersionsWindow versions_window;
 // window.
 void DrawBuildBadge();
 
+// "Build 27", a beta's own name, or "Test Build"
+std::string InstalledBuildText();
+
+// The window title: "Black Arrow Online | Build 27 | xemu 0.8.139"
+std::string WindowTitleText();
+
 // The build the player does not want to be offered (update-skip.txt, which
 // the launcher's "Skip this build" also writes), or 0 (a build-number.hh number)
 int SkippedBuild();
