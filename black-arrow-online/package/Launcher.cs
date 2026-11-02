@@ -1120,7 +1120,7 @@ class SetupForm : Form
         AddStep(next, 138, "2", "Switch the network to XB Online",
                 "In the dashboard: Settings > Network, set the top option to XB Online.");
         AddStep(next, 212, "3", "Install the game update and maps",
-                "Menu Play > Black Arrow - Install Game Updates. Skip this if your own " +
+                "Menu Play > Black Arrow Updates (stock). Skip this if your own " +
                 "hard disk already has them.");
         AddStep(next, 300, "4", "Play",
                 "Menu Play > Play Rainbow Six 3 Black Arrow.");

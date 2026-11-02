@@ -57,7 +57,7 @@ The menus are at the top of the emulator window.
    Need a code? Menu: XB Live > Link Code.
    No account yet? See NEW ACCOUNT below first.
 2. In the dashboard: Settings > Network, set the top option to XB Online.
-3. Menu: Play > Black Arrow - Install Game Updates, and follow the
+3. Menu: Play > Black Arrow Updates (stock), and follow the
    prompts.
 4. Menu: Play > Play Rainbow Six 3 Black Arrow.
 
@@ -84,8 +84,8 @@ inside the app, with buttons that do what it describes.
 
 MACHINE        Pause, Screenshot, Snapshot, Settings..., Reset, Exit.
 PLAY           Play <game> from the games folder (no games yet: opens the
-               games folder), Load Disc, Eject Disc, Black Arrow - Install
-               Game Updates, XBL Dashboard, Original Xbox Dashboard.
+               games folder), Load Disc, Eject Disc, Black Arrow Updates
+               (stock), XBL Dashboard, Original Xbox Dashboard.
 XB LIVE        Account: <gamertag>, Create an Account (see NEW ACCOUNT),
                Link Code, Connection Check.
 SOUND          Sound quality (Fast or Accurate) and Louder movement.

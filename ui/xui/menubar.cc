@@ -125,6 +125,37 @@ static void MenuItemHelp(const char *help)
     }
 }
 
+// A menu item with a small rounded tag after its name, such as STOCK. The
+// label gets trailing spaces so the menu is wide enough for the tag.
+static bool MenuItemTagged(const char *label, const char *tag, ImU32 bg,
+                           ImU32 fg)
+{
+    ImFont *font = ImGui::GetFont();
+    float size = ImGui::GetFontSize() * 0.75f;
+    ImVec2 tag_text = font->CalcTextSizeA(size, FLT_MAX, 0.0f, tag);
+    float pad = size * 0.5f;
+    float gap = ImGui::GetFontSize() * 0.5f;
+    float space = ImGui::CalcTextSize(" ").x;
+    int spaces = (int)ceilf((gap + tag_text.x + 2 * pad) / space);
+
+    std::string padded = std::string(label) + std::string(spaces, ' ');
+    bool clicked = ImGui::MenuItem(padded.c_str());
+
+    ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+    float x = min.x + ImGui::CalcTextSize(label).x + gap;
+    float y = (min.y + max.y - tag_text.y) * 0.5f;
+    ImVec2 a(x, y - pad * 0.3f);
+    ImVec2 b(x + tag_text.x + 2 * pad, y + tag_text.y + pad * 0.3f);
+    ImDrawList *draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(a, b, bg, (b.y - a.y) * 0.5f);
+    draw->AddText(font, size, ImVec2(x + pad, y), fg, tag);
+    return clicked;
+}
+
+// Grey tag for the stock (original) game updates
+#define TAG_STOCK_BG IM_COL32(74, 74, 74, 255)
+#define TAG_STOCK_FG IM_COL32(208, 208, 208, 255)
+
 // A menu item with a check mark that flips a setting; hovering explains it.
 // The menu stays open, so several settings can be flipped in one go.
 static void MenuToggle(const char *label, bool *value, const char *help)
@@ -526,18 +557,21 @@ static void PlayMenu()
         MenuHeader("Game Updates");
     }
     if (ba_updates) {
-        if (ImGui::MenuItem("Black Arrow - Install Game Updates")) {
+        if (MenuItemTagged("Black Arrow Updates", "STOCK", TAG_STOCK_BG,
+                           TAG_STOCK_FG)) {
             ActionPlayDiscFile(XEMU_XBONLINE_UPDATE_DISC);
         }
-        MenuItemHelp("Installs the " XEMU_XBONLINE_TITLE_UPDATE_NAME
-                     " update and map packs on this console. Then play "
-                     "Black Arrow from Games.");
+        MenuItemHelp("Installs the original (stock) Black Arrow title update "
+                     "and map packs on this console. Then play Black Arrow "
+                     "from Games.");
     }
     if (rs3_updates) {
-        if (ImGui::MenuItem("Old Bow - Install Game Updates")) {
+        if (MenuItemTagged("Old Bow Updates", "STOCK", TAG_STOCK_BG,
+                           TAG_STOCK_FG)) {
             ActionPlayDiscFile(XEMU_XBONLINE_RS3_UPDATE_DISC);
         }
-        MenuItemHelp("Installs the Rainbow Six 3 maps and title update. "
+        MenuItemHelp("Installs the original (stock) Rainbow Six 3 maps and "
+                     "title update. "
                      "Install only the update that fits your disc (XB Online "
                      "> Connection Check says which, with Rainbow Six 3 "
                      "loaded), and skip Old Scharins: it breaks multiplayer "

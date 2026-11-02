@@ -63,7 +63,7 @@ The menus are at the top of the emulator window.
    Need a code? Menu: XB Live > Link Code.
    No account yet? See NEW ACCOUNT below first.
 2. In the dashboard: Settings > Network, set the top option to XB Online.
-3. Menu: Play > Black Arrow - Install Game Updates, and follow the
+3. Menu: Play > Black Arrow Updates (stock), and follow the
    prompts.
 4. Menu: Play > Play Rainbow Six 3 Black Arrow.
 

@@ -137,11 +137,11 @@ static const char *const account_text[] = {
 static const char *const updates_text[] = {
     "# Black Arrow",
     "The title update and map packs go on the console's hard disk once:",
-    "> Play > Black Arrow - Install Game Updates",
+    "> Play > Black Arrow Updates (stock)",
     "Follow the prompts. Skip this if your own hard disk already has them.",
     "# Rainbow Six 3 (Old Bow)",
-    "Rainbow Six 3 has its own installer, Play > Old Bow - Install Game "
-    "Updates. Its title update must fit your disc, or the game will not "
+    "Rainbow Six 3 has its own installer, Play > Old Bow Updates "
+    "(stock). Its title update must fit your disc, or the game will not "
     "start:",
     "- Disc version 1 (all regions): Game Update Menu > Install Update RF",
     "- Disc version 2 (PAL German): Game Update Menu > Install Update Ger",

@@ -58,6 +58,7 @@ static int item_add(const char *name)
     items[i].name = name;
     items[i].state = XBCHECK_RUNNING;
     items[i].action = XBCHECK_ACTION_NONE;
+    items[i].sha256[0] = 0;
     snprintf(items[i].detail, sizeof(items[i].detail), "Checking...");
     qemu_mutex_unlock(&lock);
     return i;
@@ -80,6 +81,22 @@ item_set(int i, XbCheckState state, const char *fmt, ...)
     items[i].state = state;
     fprintf(stderr, "xbcheck: %s: %s: %s\n", items[i].name, names[state],
             items[i].detail);
+    qemu_mutex_unlock(&lock);
+}
+
+/* Offers a Copy SHA-256 button for the title update found, and logs it */
+static void item_set_sha256(int i, const XbOnlineXbe *xbe)
+{
+    if (!xbe->header_sha256[0]) {
+        return;
+    }
+    qemu_mutex_lock(&lock);
+    g_strlcpy(items[i].sha256, xbe->header_sha256, sizeof(items[i].sha256));
+    if (items[i].action == XBCHECK_ACTION_NONE) {
+        items[i].action = XBCHECK_ACTION_COPY_SHA256;
+    }
+    fprintf(stderr, "xbcheck: %s: title %08X version %x header SHA-256 %s\n",
+            items[i].name, xbe->title_id, xbe->version, xbe->header_sha256);
     qemu_mutex_unlock(&lock);
 }
 
@@ -546,6 +563,9 @@ static void check_rs3_update(int i, const char *hdd, uint32_t disc_version)
                     disc_version == 2 ? XEMU_XBONLINE_RS3_UPDATE_GER : 0;
     const char *want_name = disc_version == 1 ? "Install Update RF" :
                             "Install Update Ger";
+    const char *want_sha = disc_version == 1 ?
+                           XEMU_XBONLINE_RS3_UPDATE_RF_SHA256 :
+                           XEMU_XBONLINE_RS3_UPDATE_GER_SHA256;
 
     if (r < 0) {
         item_set(i, XBCHECK_INFO, "Could not read the hard disk image.");
@@ -560,14 +580,20 @@ static void check_rs3_update(int i, const char *hdd, uint32_t disc_version)
         item_set(i, XBCHECK_FAIL,
                  "The wrong title update (version %x) is installed for this "
                  "disc (version %u). Remove the folder E:\\TDATA\\55530013\\$u "
-                 "from the hard disk, then in Play > Old Bow - Install "
-                 "Game Updates choose %s.", xbe.version, disc_version,
-                 want_name);
+                 "from the hard disk, then in Play > Old Bow Updates choose "
+                 "%s.", xbe.version, disc_version, want_name);
+    } else if (r == 1 && xbe.header_sha256[0] &&
+               strcmp(xbe.header_sha256, want_sha)) {
+        item_set(i, XBCHECK_FAIL,
+                 "Title update %x is installed, but it is not the stock one "
+                 "(SHA-256 %.12s...). Remove the folder "
+                 "E:\\TDATA\\55530013\\$u from the hard disk, then in Play > "
+                 "Old Bow Updates choose %s.", xbe.version,
+                 xbe.header_sha256, want_name);
     } else if (r == 0 && want) {
         item_set(i, XBCHECK_FAIL,
-                 "Rainbow Six 3 title update is not installed. Menu: XB Online "
-                 "> Old Bow - Install Game Updates > Game Update Menu > %s.",
-                 want_name);
+                 "Rainbow Six 3 title update is not installed. Menu: Play > "
+                 "Old Bow Updates > Game Update Menu > %s.", want_name);
     } else if (xemu_xbonline_hdd_has_content(
                    hdd, XEMU_XBONLINE_RS3_TITLE_ID,
                    XEMU_XBONLINE_RS3_OLD_SCHARINS) == 1) {
@@ -576,12 +602,16 @@ static void check_rs3_update(int i, const char *hdd, uint32_t disc_version)
                  "break multiplayer with players who have Scharins v2.",
                  maps, maps == 1 ? "" : "s");
     } else if (r == 1) {
-        item_set(i, XBCHECK_OK, "Title update %x installed, %d map pack%s.",
-                 xbe.version, maps, maps == 1 ? "" : "s");
+        item_set(i, XBCHECK_OK, "Stock title update %x installed (SHA-256 "
+                 "%.12s...), %d map pack%s.", xbe.version, xbe.header_sha256,
+                 maps, maps == 1 ? "" : "s");
     } else {
         item_set(i, XBCHECK_OK, "This disc (version %u) needs no title update. "
                  "%d map pack%s installed.", disc_version, maps,
                  maps == 1 ? "" : "s");
+    }
+    if (r == 1) {
+        item_set_sha256(i, &xbe);
     }
 }
 
@@ -611,30 +641,40 @@ static void check_title_update(void)
         item_set(i, XBCHECK_FAIL,
                  "Black Arrow title update is not installed. Without it the "
                  "game wants to download the update, which XB Online does not "
-                 "serve. Menu: Play > Black Arrow - Install Game "
-                 "Updates.");
+                 "serve. Menu: Play > Black Arrow Updates.");
     } else if (xbe.version < XEMU_XBONLINE_TITLE_UPDATE_VERSION) {
         item_set(i, XBCHECK_FAIL,
                  "An older title update (version %x) is installed. Menu: "
-                 "Play > Black Arrow - Install Game Updates.", xbe.version);
+                 "Play > Black Arrow Updates.", xbe.version);
     } else if (!strcmp(xbe.header_sha256,
                        XEMU_XBONLINE_TITLE_UPDATE_SHA256)) {
-        item_set(i, XBCHECK_OK, "%s update installed, %d map pack%s.",
-                 XEMU_XBONLINE_TITLE_UPDATE_NAME, maps, maps == 1 ? "" : "s");
-    } else if (!strcmp(xbe.header_sha256,
-                       XEMU_XBONLINE_TITLE_UPDATE_OLD_SHA256)) {
-        item_set(i, XBCHECK_FAIL,
-                 "The original title update %x is installed, not the %s "
-                 "update the other players have. Menu: Play > Black Arrow - "
-                 "Install Game Updates.", xbe.version,
-                 XEMU_XBONLINE_TITLE_UPDATE_NAME);
+        item_set(i, XBCHECK_OK, "The %s update is installed (version %x, "
+                 "SHA-256 %.12s...), %d map pack%s.",
+                 XEMU_XBONLINE_TITLE_UPDATE_NAME, xbe.version,
+                 xbe.header_sha256, maps, maps == 1 ? "" : "s");
     } else {
-        item_set(i, XBCHECK_WARN,
-                 "A title update this build does not know (version %x) is "
-                 "installed, %d map pack%s. If players can't join you, "
-                 "install the %s update: Play > Black Arrow - Install Game "
-                 "Updates.", xbe.version, maps, maps == 1 ? "" : "s",
+        /* Not the current update: named when this build knows it */
+        const char *which =
+            !strcmp(xbe.header_sha256,
+                    XEMU_XBONLINE_TITLE_UPDATE_REVIVED_SHA256) ?
+            "The " XEMU_XBONLINE_TITLE_UPDATE_REVIVED_NAME " update is" :
+            "A title update this build does not know is";
+#if XEMU_XBONLINE_TITLE_UPDATE_STRICT
+        item_set(i, XBCHECK_FAIL,
+                 "%s installed (version %x, SHA-256 %.12s...), not the %s "
+                 "update the other players have. Menu: Play > Black Arrow "
+                 "Updates.", which, xbe.version, xbe.header_sha256,
                  XEMU_XBONLINE_TITLE_UPDATE_NAME);
+#else
+        item_set(i, XBCHECK_INFO,
+                 "%s installed (version %x, SHA-256 %.12s...), %d map "
+                 "pack%s. The %s update is in Play > Black Arrow Updates.",
+                 which, xbe.version, xbe.header_sha256, maps,
+                 maps == 1 ? "" : "s", XEMU_XBONLINE_TITLE_UPDATE_NAME);
+#endif
+    }
+    if (r == 1) {
+        item_set_sha256(i, &xbe);
     }
 }
 

@@ -34,16 +34,24 @@ PACKAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
 # Package path -> file name in --content-root. Taken from BASE when the
 # content root does not have it.
 CONTENT_DISCS = [
-    # Black Arrow - Install Game Updates: the Revived v1 install disc. A new
-    # disc here needs its title update hash in ui/xemu-xbonline.h (checked
-    # below), so it ships with an xemu that knows it.
+    # Play > Black Arrow Updates (stock title update and map packs)
     ('system/Black Arrow Update and Maps.iso',
-     'BLACK_ARROW_REVIVED_v1_INSTALL_DISC.iso'),
-    # Old Bow - Install Game Updates (Rainbow Six 3 title updates and maps)
+     'Black Arrow Update and Maps.iso'),
+    # Play > Old Bow Updates (stock Rainbow Six 3 title updates and maps)
     ('system/Rainbow Six 3 Update and Maps.iso', 'Rainbow Six 3 DLC.iso'),
 ]
 
-UPDATE_DISC = 'system/Black Arrow Update and Maps.iso'
+# The title updates on the update discs and the hash xemu's game update
+# check knows each by (ui/xemu-xbonline.h). Packaging stops when one
+# differs: a changed game update has to ship with an xemu that knows it.
+UPDATE_HASHES = [
+    ('system/Black Arrow Update and Maps.iso', 'content/u/default.xbe',
+     'XEMU_XBONLINE_TITLE_UPDATE_SHA256', 'Black Arrow'),
+    ('system/Rainbow Six 3 Update and Maps.iso', 'content/uRF/default.xbe',
+     'XEMU_XBONLINE_RS3_UPDATE_RF_SHA256', 'Old Bow RF'),
+    ('system/Rainbow Six 3 Update and Maps.iso', 'content/uGer/default.xbe',
+     'XEMU_XBONLINE_RS3_UPDATE_GER_SHA256', 'Old Bow Ger'),
+]
 XBONLINE_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
                           '..', 'ui', 'xemu-xbonline.h')
 
@@ -82,20 +90,33 @@ def xiso_file(iso, path):
         return f.read(size)
 
 
-def check_update_disc(iso):
-    """The title update on the update disc is the one xemu's check knows"""
+def check_update_discs(pkg):
+    """The title updates on the update discs are the ones xemu's check knows.
+    Stops with both hashes when one changed, so whoever packages asks
+    whether that game update was changed on purpose."""
     with open(XBONLINE_H) as f:
-        want = re.search(r'TITLE_UPDATE_SHA256 \\\s*"([0-9a-f]{64})"',
-                         f.read()).group(1)
-    xbe = xiso_file(iso, 'content/u/default.xbe')
-    if xbe is None:
-        sys.exit('%s has no content/u/default.xbe' % iso)
-    have = hashlib.sha256(xbe[:struct.unpack_from('<I', xbe, 0x108)[0]])
-    if have.hexdigest() != want:
-        sys.exit('the title update on %s (headers %s) is not the one in '
-                 'ui/xemu-xbonline.h (%s): put its hash there, in the same '
-                 'release' % (iso, have.hexdigest(), want))
-    print('update disc title update matches xemu-xbonline.h')
+        header = f.read()
+    changed = []
+    for disc, path, define, game in UPDATE_HASHES:
+        want = re.search(r'#define %s \\\s*"([0-9a-f]{64})"' % define,
+                         header).group(1)
+        iso = os.path.join(pkg, disc)
+        xbe = xiso_file(iso, path)
+        if xbe is None:
+            sys.exit('%s has no %s' % (iso, path))
+        have = hashlib.sha256(
+            xbe[:struct.unpack_from('<I', xbe, 0x108)[0]]).hexdigest()
+        if have != want:
+            changed.append('  %s (%s on %s)\n    disc: %s\n    xemu: %s (%s)'
+                           % (game, path, disc, have, want, define))
+        else:
+            print('%s update: %s' % (game, have))
+    if changed:
+        sys.exit('STOP: a game update on the update discs is not the one '
+                 'this xemu knows:\n' + '\n'.join(changed) + '\n'
+                 'Ask: was this game update changed on purpose? If yes, put '
+                 'the disc hash in ui/xemu-xbonline.h, build xemu again and '
+                 'package with that build. If no, use the right disc.')
 
 
 # Same files as the release workflow, rooted at the package folder
@@ -161,6 +182,7 @@ def main():
             missing.append('%s (from %s)' % (dest, src))
     if missing:
         sys.exit('missing content discs:\n  ' + '\n  '.join(missing))
+    check_update_discs(pkg)
 
     # The xemu release is the start of the version, as in 0.8.137-91-g...
     xemu = a.version.lstrip('v').split('-')[0]

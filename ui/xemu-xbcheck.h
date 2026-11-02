@@ -26,6 +26,8 @@ typedef enum XbCheckState {
 typedef enum XbCheckAction {
     XBCHECK_ACTION_NONE,
     XBCHECK_ACTION_OPEN_GAMES_FOLDER,
+    /* Copies XbCheckItem.sha256; only a convenience, nothing to fix */
+    XBCHECK_ACTION_COPY_SHA256,
 } XbCheckAction;
 
 #define XBCHECK_DETAIL_LEN 320
@@ -35,6 +37,7 @@ typedef struct XbCheckItem {
     XbCheckState state;
     XbCheckAction action;
     char detail[XBCHECK_DETAIL_LEN];
+    char sha256[65]; /* for XBCHECK_ACTION_COPY_SHA256 */
 } XbCheckItem;
 
 #define XBCHECK_MAX_ITEMS 8

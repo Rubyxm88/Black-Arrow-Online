@@ -36,6 +36,13 @@ static const ImVec4 xbox_green(0.063f, 0.486f, 0.063f, 1.0f);
 static const ImVec4 xbox_green_hover(0.10f, 0.62f, 0.10f, 1.0f);
 static const ImVec4 xbox_green_active(0.05f, 0.40f, 0.05f, 1.0f);
 
+/* An item the player has to act on; Copy SHA-256 is only a convenience */
+static bool NeedsAction(const XbCheckItem &item)
+{
+    return item.action != XBCHECK_ACTION_NONE &&
+           item.action != XBCHECK_ACTION_COPY_SHA256;
+}
+
 /* Buttons in Xbox green, so they stand out on the dark panel */
 static void PushGreenButtons()
 {
@@ -159,7 +166,7 @@ void XbCheckWindow::Draw()
     for (int i = 0; i < n; i++) {
         problem |= items[i].state == XBCHECK_WARN ||
                    items[i].state == XBCHECK_FAIL;
-        needs_action |= items[i].action != XBCHECK_ACTION_NONE;
+        needs_action |= NeedsAction(items[i]);
     }
 
     if (m_quiet) {
@@ -191,7 +198,7 @@ void XbCheckWindow::Draw()
         for (int i = 0; i < n; i++) {
             to_fix += items[i].state == XBCHECK_WARN ||
                       items[i].state == XBCHECK_FAIL ||
-                      items[i].action != XBCHECK_ACTION_NONE;
+                      NeedsAction(items[i]);
         }
         DrawShort((std::max)(to_fix, 1));
         return;
@@ -251,6 +258,18 @@ void XbCheckWindow::Draw()
                 PushGreenButtons();
                 if (ImGui::Button("Open Games Folder")) {
                     xemu_xbcheck_open_games_folder();
+                }
+                PopGreenButtons();
+                ImGui::PopID();
+            } else if (items[i].action == XBCHECK_ACTION_COPY_SHA256) {
+                // The full hash, for comparing game updates between players
+                static double copied_until;
+                ImGui::PushID(i);
+                PushGreenButtons();
+                if (ImGui::Button(now < copied_until ? "Copied" :
+                                                       "Copy SHA-256")) {
+                    ImGui::SetClipboardText(items[i].sha256);
+                    copied_until = now + 2.0;
                 }
                 PopGreenButtons();
                 ImGui::PopID();

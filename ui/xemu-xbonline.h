@@ -70,16 +70,29 @@ int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
 #define XEMU_XBONLINE_TITLE_UPDATE_VERSION 0x201
 
 /*
- * The update disc's title update, told apart by the SHA-256 of its
- * default.xbe headers (XbOnlineXbe.header_sha256): the original 2.01 update
- * and Black Arrow Revived v1 both say version 201. A new update disc in the
- * package needs its hash here, in the same release.
+ * Title updates are told apart by the SHA-256 of their default.xbe headers
+ * (XbOnlineXbe.header_sha256): the stock 2.01 update and Black Arrow Revived
+ * v1 both say version 201. The hashes below are the updates on the package's
+ * update discs; make-package.py stops when a disc does not match them, so a
+ * changed update disc ships with an xemu that knows it.
+ *
+ * Black Arrow's current update: the stock 2.01 one.
  */
-#define XEMU_XBONLINE_TITLE_UPDATE_NAME "Black Arrow Revived v1"
+#define XEMU_XBONLINE_TITLE_UPDATE_NAME "stock 2.01"
 #define XEMU_XBONLINE_TITLE_UPDATE_SHA256 \
-    "4ce68b84dc4f1a93e9d55249aed88dcf85102b9cb4264ac7f961b06e4b84cf54"
-#define XEMU_XBONLINE_TITLE_UPDATE_OLD_SHA256 \
     "abb36ddd48b5aa75d20473f3ce5682ea66c99d1af7b88affc420892218e11b87"
+
+/* Black Arrow Revived v1: known by name, not shipped yet */
+#define XEMU_XBONLINE_TITLE_UPDATE_REVIVED_NAME "Black Arrow Revived v1"
+#define XEMU_XBONLINE_TITLE_UPDATE_REVIVED_SHA256 \
+    "4ce68b84dc4f1a93e9d55249aed88dcf85102b9cb4264ac7f961b06e4b84cf54"
+
+/*
+ * 1: a Black Arrow update other than the current one is a problem to fix
+ * (everyone online must have the same one). 0: it is only shown, with its
+ * hash, while which update players use is not settled.
+ */
+#define XEMU_XBONLINE_TITLE_UPDATE_STRICT 0
 
 /* Title ID of Rainbow Six 3 */
 #define XEMU_XBONLINE_RS3_TITLE_ID 0x55530013
@@ -91,6 +104,12 @@ int xemu_xbonline_hdd_has_dashboard(const char *hdd_path);
  */
 #define XEMU_XBONLINE_RS3_UPDATE_RF 0x501
 #define XEMU_XBONLINE_RS3_UPDATE_GER 0x502
+
+/* Header SHA-256 of the stock RF and Ger updates on its update disc */
+#define XEMU_XBONLINE_RS3_UPDATE_RF_SHA256 \
+    "b691084ac77ff6c40da1559d37f3939f5a7296e11cdf79316c3c1d0c4a037d53"
+#define XEMU_XBONLINE_RS3_UPDATE_GER_SHA256 \
+    "d91c0b911c74aa4650263e90fa1458cb044b40f3756b869a5f9f90ff18255500"
 
 /* The first Scharins map pack, which breaks multiplayer with Scharins v2 */
 #define XEMU_XBONLINE_RS3_OLD_SCHARINS "5553001300000006"

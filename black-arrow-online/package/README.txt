@@ -16,7 +16,7 @@ FIRST TIME
    Need a code? Menu: XB Live > Link Code.
    No account yet? See NEW ACCOUNT below first.
 4. In the dashboard: Settings > Network, set the top option to XB Online.
-5. Menu: Play > Black Arrow - Install Game Updates, and follow the
+5. Menu: Play > Black Arrow Updates (stock), and follow the
    prompts.
    (Skip this if your own hard disk already has them.)
 6. Menu: Play > Play Rainbow Six 3 Black Arrow.
@@ -46,10 +46,10 @@ PLAY           what is in the disc drive
                               No games yet: opens the games folder.
     Load Disc... / Eject Disc Any other disc image.
   GAME UPDATES
-    Black Arrow - Install Game Updates
-                              Black Arrow title update and map packs.
-    Old Bow - Install Game Updates
-                              Rainbow Six 3 title update and map packs
+    Black Arrow Updates (stock)
+                              Stock Black Arrow title update and map packs.
+    Old Bow Updates (stock)
+                              Stock Rainbow Six 3 title update and map packs
                               (see RAINBOW SIX 3 below).
   DASHBOARDS
     XBL Dashboard             Sign in, link or fix your Xbox Live account.
@@ -193,7 +193,7 @@ restarts the console.
 RAINBOW SIX 3
 -------------
 Rainbow Six 3 (the game before Black Arrow) has its own updater: Play >
-Old Bow - Install Game Updates. It installs the extra maps and the title
+Old Bow Updates (stock). It installs the extra maps and the title
 update. The title update must fit your disc, or the game will not start:
   disc version 1 (all regions)   Game Update Menu > Install Update RF
   disc version 2 (PAL German)    Game Update Menu > Install Update Ger
@@ -274,7 +274,7 @@ Setup window says "Add content pack" instead of "Start clean": this folder
     (for example 10.14.0.2).
   - "PC clock": Xbox Live sign-in fails when the Windows clock or time
     zone is wrong. Settings > Time: set time and time zone automatically.
-  - "Game update": Play > Black Arrow - Install Game Updates.
+  - "Game update": Play > Black Arrow Updates (stock).
   - "XB Online server": a firewall, antivirus, VPN or router DNS setting is
     in the way. Allow xemu through the firewall, or try another network.
   - Close any other xemu or emulator and any game that is still running,
