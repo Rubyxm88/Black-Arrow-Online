@@ -306,9 +306,11 @@ static void DrawChecks(bool *has_fix)
                                                  "FIX" };
             const ImVec4 colors[] = { dim, green, green, amber, red };
             ImGui::TableNextColumn();
+            float x0 = ImGui::GetCursorPosX();
             ImGui::TextColored(colors[items[i].state], "%s",
                                marks[items[i].state]);
-            ImGui::SameLine(ImGui::CalcTextSize("FIX  ").x);
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(x0 + ImGui::CalcTextSize("FIX  ").x);
             ImGui::TextColored(dim, "%s", items[i].name);
             *has_fix |= items[i].state == XBCHECK_FAIL ||
                         items[i].state == XBCHECK_WARN;
