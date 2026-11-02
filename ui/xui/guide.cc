@@ -211,11 +211,13 @@ static const char *const trouble_text[] = {
     "xemu through the firewall, or try another network.",
     "- Close any other emulator or game, then start again.",
 #if defined(__APPLE__)
-    "- Still failing: double-click Black Arrow Report in Applications and "
-    "send the zip it makes in Downloads to whoever shared the package.",
+    "- Still failing: Troubleshoot > Make a Full Report (or double-click "
+    "Black Arrow Report in Applications) and send the zip it makes in "
+    "Downloads to whoever shared the package.",
 #elif defined(__linux__)
-    "- Still failing: start Black Arrow Report from your applications menu "
-    "and send the file it makes to whoever shared the package.",
+    "- Still failing: Troubleshoot > Make a Full Report (or Black Arrow "
+    "Report in your applications menu) and send the file it makes in "
+    "Downloads to whoever shared the package.",
 #else
     "- Still failing: send system\\xemu.log to whoever shared the package.",
 #endif

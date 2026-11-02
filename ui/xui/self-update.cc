@@ -95,6 +95,35 @@ static std::string Field(const std::string &text, const char *key)
     return "";
 }
 
+// Every change= line of version.txt (the release's "What changed"); a build
+// from before they were written has its first one as notes=
+static std::vector<std::string> Changes(const std::string &text)
+{
+    std::vector<std::string> out;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        if (text.compare(pos, 7, "change=") == 0) {
+            std::string value = text.substr(pos + 7, end - pos - 7);
+            while (!value.empty() &&
+                   (value.back() == '\r' || value.back() == ' ')) {
+                value.pop_back();
+            }
+            if (!value.empty()) {
+                out.push_back(value);
+            }
+        }
+        pos = end + 1;
+    }
+    if (out.empty() && !Field(text, "notes").empty()) {
+        out.push_back(Field(text, "notes"));
+    }
+    return out;
+}
+
 // A file in the console folder (system/)
 static std::string ConsoleFile(const char *name)
 {
@@ -320,6 +349,7 @@ gpointer SelfUpdateWindow::CheckThread(gpointer opaque)
         self->m_build = build;
         self->m_sha256 = sha256;
         self->m_notes = Field(text, "notes");
+        self->m_changes = Changes(text);
     } else {
         self->m_state = UP_TO_DATE;
         self->m_build = build;
@@ -673,6 +703,8 @@ void SelfUpdateWindow::ShowLastResult()
                                         BuildText(build).c_str());
             xemu_queue_notification(msg);
             g_free(msg);
+            m_new_build = BuildText(build);
+            m_new_changes = Changes(ReadText(ConsoleFile("version.txt")));
         }
     }
 }
@@ -684,6 +716,7 @@ void SelfUpdateWindow::DrawContents(State state)
     int build = m_build;
     int local = m_local_build;
     std::string notes = m_notes;
+    std::vector<std::string> changes = m_changes;
     std::string error = m_error;
     size_t dlnow = m_dlnow, dltotal = m_dltotal;
     g_mutex_unlock(&m_lock);
@@ -710,7 +743,10 @@ void SelfUpdateWindow::DrawContents(State state)
     case DOWNLOAD_FAILED:
         ImGui::Text("Black Arrow Online build %s is ready",
                     BuildText(build).c_str());
-        if (!notes.empty()) {
+        for (const std::string &line : changes) {
+            ImGui::TextDisabled("- %s", line.c_str());
+        }
+        if (changes.empty() && !notes.empty()) {
             ImGui::TextDisabled("%s", notes.c_str());
         }
         if (state == DOWNLOAD_FAILED) {
@@ -808,6 +844,40 @@ void SelfUpdateWindow::DrawContents(State state)
     PopButtonColors();
 }
 
+// After an update: a panel in the popup column with what the build changed,
+// until Close
+void SelfUpdateWindow::DrawWhatsNew()
+{
+    if (m_new_changes.empty()) {
+        return;
+    }
+    float scale = g_viewport_mgr.m_scale;
+    PopupStackPlace();
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    if (ImGui::Begin("Black Arrow Online What's New", NULL,
+                     ImGuiWindowFlags_NoDecoration |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f * scale);
+        ImGui::Text("New in build %s", m_new_build.c_str());
+        for (const std::string &line : m_new_changes) {
+            ImGui::Bullet();
+            ImGui::TextWrapped("%s", line.c_str());
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        PushGreenButtons();
+        if (ImGui::Button("Close")) {
+            m_new_changes.clear();
+        }
+        PopButtonColors();
+        PopupStackTake();
+    }
+    ImGui::End();
+}
+
 void SelfUpdateWindow::Draw()
 {
     if (!m_started) {
@@ -818,6 +888,7 @@ void SelfUpdateWindow::Draw()
     if (m_wrong_copy) {
         DrawWrongCopy();
     }
+    DrawWhatsNew();
     if (!m_auto_checked && ImGui::GetTime() >= AUTO_DELAY) {
         m_auto_checked = true;
         Check(true);

@@ -37,5 +37,5 @@ if host_os == 'windows'
 endif
 
 if host_os in ['darwin', 'linux']
-  xemu_ss.add(files('self-update.cc'))
+  xemu_ss.add(files('self-update.cc', 'full-report.cc'))
 endif

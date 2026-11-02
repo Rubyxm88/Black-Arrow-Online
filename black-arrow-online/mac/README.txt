@@ -158,8 +158,9 @@ handled by setup yet.
 REPORTING A PROBLEM
 -------------------
 
-The easy way: open Applications and double-click "Black Arrow Report" (setup
-puts it next to the app). If the game is stuck, do it while the game is
+The easy way: in the app, Troubleshoot > Make a Full Report, or open
+Applications and double-click "Black Arrow Report" (setup puts it next to
+the app). If the game is stuck, do it while the game is
 still open. It makes a BlackArrow-report-....zip in Downloads with the logs,
 your Mac's details and, if the game is open, what it is doing. Send that
 zip and a few words on what happened to whoever shared the package.

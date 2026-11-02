@@ -5,7 +5,8 @@
  * thread, the window, the audio thread and its voice workers, as a share of
  * one PC core. Threads are told apart by the names QEMU gives them. Other
  * programs on the PC are sampled less often, as a share of the whole PC.
- * Windows only; elsewhere these print nothing.
+ * Windows and Linux (threads only, no other programs); elsewhere these print
+ * nothing.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

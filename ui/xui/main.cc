@@ -62,6 +62,7 @@
 #include "../xemu-diag.h"
 #if defined(__APPLE__) || defined(__linux__)
 #include "self-update.hh"
+#include "full-report.hh"
 #endif
 
 bool g_screenshot_pending;
@@ -364,6 +365,7 @@ void xemu_hud_update(void)
     game_cache_window.Draw();
 #if defined(__APPLE__) || defined(__linux__)
     if (!first_boot_window.is_open) self_update_window.Draw();
+    FullReportPoll();
 #endif
     if (!first_boot_window.is_open) DrawFreezeToast();
     if (!first_boot_window.is_open && !xemu_dashinstall_active()) DrawPerfOverlay();

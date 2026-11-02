@@ -363,7 +363,12 @@ static void *qemu_thread_start(void *args)
      */
     if (name_threads && qemu_thread_args->name) {
 # if defined(CONFIG_PTHREAD_SETNAME_NP_W_TID)
-        pthread_setname_np(pthread_self(), qemu_thread_args->name);
+        /* Linux takes 15 characters and refuses a longer name: keep those */
+        if (pthread_setname_np(pthread_self(), qemu_thread_args->name)) {
+            char shortname[16];
+            g_strlcpy(shortname, qemu_thread_args->name, sizeof(shortname));
+            pthread_setname_np(pthread_self(), shortname);
+        }
 # elif defined(CONFIG_PTHREAD_SETNAME_NP_WO_TID)
         pthread_setname_np(qemu_thread_args->name);
 # elif defined(CONFIG_PTHREAD_SET_NAME_NP)

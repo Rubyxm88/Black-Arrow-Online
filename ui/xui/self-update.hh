@@ -9,6 +9,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 extern "C" {
 #include "qemu/osdep.h"
@@ -38,6 +39,7 @@ private:
     int         m_local_build;
     int         m_build;      // the newest build's number
     std::string m_notes;
+    std::vector<std::string> m_changes; // the newest build's "What changed"
     std::string m_sha256;
     std::string m_error;
     std::string m_setup;      // setup.sh of the unpacked update
@@ -51,6 +53,9 @@ private:
     bool        m_later;      // "Later" was clicked
     bool        m_restarting;
     bool        m_wrong_copy; // not the copy setup.sh installed
+    // Shown once after an update: what the installed build changed
+    std::string m_new_build;
+    std::vector<std::string> m_new_changes;
 
 public:
     SelfUpdateWindow();
@@ -68,6 +73,7 @@ private:
     void ShowLastResult();
     void DrawContents(State state);
     void DrawWrongCopy();
+    void DrawWhatsNew();
     static gpointer CheckThread(gpointer self);
     static gpointer DownloadThread(gpointer self);
     static gpointer BuildInfoThread(gpointer self);
