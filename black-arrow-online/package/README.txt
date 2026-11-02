@@ -185,6 +185,26 @@ reports are kept. To turn it off: Troubleshoot > Save a report when the
 game freezes.
 
 
+EXPERIMENTAL SETTINGS
+---------------------
+Machine > Settings > Experimental has speed and smoothness tests:
+- Frame pacing and Smooth game time (off by default) can make 30 fps feel
+  smoother.
+- Pre-light, Hard SSE and GPU depth copy (on by default) cut freezes and
+  speed the game up.
+If something looks or plays wrong, turn the setting off or press Reset to
+Defaults. Pre-light and Hard SSE need Restart to Apply.
+
+
+DASHBOARDS
+----------
+The first time you start, the XBL Dashboard installs itself (about a
+minute, one time only) and becomes your console's dashboard. Don't close the
+emulator while it runs. Play > Dashboard > Switch to Original Dashboard
+brings back the dashboard you had before, and Switch to XBL Dashboard goes
+back. Your Xbox Live account stays signed in either way.
+
+
 GAME CACHE
 ----------
 The Xbox keeps a copy of files a game reads from its disc on the console's

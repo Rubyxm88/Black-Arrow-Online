@@ -292,7 +292,17 @@ jobs:
           # code area ("ci:", "nv2a:", "i386/tcg:", "make-package.py:") are
           # for developers. "Mac:" lines stay. A "Change: ..." line in a
           # commit's message adds a line of its own, to say more than the
-          # subject does.
+          # subject does. When the head commit has "Change:" lines, those
+          # alone (after its subject) are the notes: a written list for
+          # players instead of every commit's subject.
+          head_changes=$(git log -1 --format='%(trailers:key=Change,valueonly)' "$COMMIT" |
+                         sed '/^[[:space:]]*$/d')
+          if [ -n "$head_changes" ]; then
+            {
+              git log -1 --format='- %s' "$COMMIT"
+              echo "$head_changes" | sed 's/^/- /'
+            } | head -n 20 >> meta/changes.md
+          else
           git log --no-merges --first-parent --format='%H' "$prev_commit..$COMMIT" |
               while read -r c; do
                 git log -1 --format='- %s' "$c" |
@@ -300,6 +310,7 @@ jobs:
                 git log -1 --format='%(trailers:key=Change,valueonly)' "$c" |
                     sed '/^[[:space:]]*$/d; s/^/- /'
               done | head -n 20 >> meta/changes.md
+          fi
         fi
         head -n 1 meta/changes.md | cut -c 3- > meta/notes.txt
 
@@ -434,6 +445,7 @@ jobs:
         sparse-checkout: |
           black-arrow-online
           ui/icons
+          data
     - name: Download xemu.exe
       if: contains(needs.prepare.outputs.systems, 'windows')
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
