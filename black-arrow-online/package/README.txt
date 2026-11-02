@@ -136,9 +136,15 @@ HELP
 The build you have shows at the right of the menu bar ("BUILD 15"). An amber
 dot on it means a newer build is out; click it for Versions & Updates.
 
-The XBL Dashboard is installed on the console's hard disk (clean start), so
-it can update itself when it offers an update. If you brought your own hard
-disk it runs from the disc image instead and stays at the bundled version.
+The XBL Dashboard is installed on the console's hard disk, so it can update
+itself when it offers an update. The first time xemu starts on a console
+that still has the original Xbox dashboard, it runs the XBL Dashboard
+installer (system\XBL Dashboard Installer.iso) once, with a progress bar,
+and keeps the original dashboard as a backup. A console that already has
+XBL Dashboard is left as it is.
+
+XBL Dashboard and its installer are the work of their creator and are
+included with their permission.
 
 
 SHADERS
