@@ -1111,8 +1111,221 @@ class Badge : Control
     }
 }
 
+// The logo: drawn in left to right behind a green edge, then a shine runs
+// across it every few seconds. A click plays it again.
+class LogoShow : Control
+{
+    const double RevealSeconds = 1.1;
+    const double ShineEvery = 5.0;
+    const double ShineSeconds = 1.1;
+
+    readonly Image logo;
+    readonly int bandHeight;  // height of the header glow, from the form's top
+    readonly Stopwatch clock = Stopwatch.StartNew();
+    bool finished, wasMoving = true;
+
+    public LogoShow(Image logo, int bandHeight)
+    {
+        this.logo = logo;
+        this.bandHeight = bandHeight;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer, true);
+        Cursor = Cursors.Hand;
+    }
+
+    // Shown as it ends, for pictures of the window
+    public void Finish()
+    {
+        finished = true;
+        Invalidate();
+    }
+
+    // Called by the form's timer: repaints only while something moves
+    public void Tick()
+    {
+        bool moving = Moving();
+        if (moving || wasMoving) {
+            Invalidate();
+        }
+        wasMoving = moving;
+    }
+
+    bool Moving()
+    {
+        if (finished) {
+            return false;
+        }
+        double t = clock.Elapsed.TotalSeconds;
+        return t < RevealSeconds || (t - RevealSeconds) % ShineEvery < ShineSeconds;
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        base.OnClick(e);
+        finished = false;
+        clock.Restart();
+    }
+
+    Rectangle ImageRect()
+    {
+        float aspect = (float)logo.Width / logo.Height;
+        int h = Height - 12, w = (int)(h * aspect);
+        if (w > Width - 8) {
+            w = Width - 8;
+            h = (int)(w / aspect);
+        }
+        return new Rectangle((Width - w) / 2, (Height - h) / 2, w, h);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        // The header glow, lined up with the form's
+        var band = new Rectangle(-Left, -Top, Parent.ClientSize.Width, bandHeight);
+        using (var brush = new LinearGradientBrush(band, SetupForm.HeaderTop, Theme.Back,
+                                                   LinearGradientMode.Vertical)) {
+            g.FillRectangle(brush, ClientRectangle);
+        }
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+
+        Rectangle img = ImageRect();
+        double t = finished ? 99 : clock.Elapsed.TotalSeconds;
+
+        // Reveal, eased, with a green edge
+        double r = Math.Min(1.0, t / RevealSeconds);
+        r = 1 - Math.Pow(1 - r, 3);
+        int edge = img.X + (int)(img.Width * r);
+        g.SetClip(new Rectangle(img.X, 0, edge - img.X, Height));
+        g.DrawImage(logo, img);
+        g.ResetClip();
+        if (r < 1) {
+            using (var glow = new Pen(Color.FromArgb(70, 90, 230, 110), 9F))
+            using (var line = new Pen(Color.FromArgb(150, 255, 160), 2F)) {
+                g.DrawLine(glow, edge, img.Y + 4, edge, img.Bottom - 4);
+                g.DrawLine(line, edge, img.Y + 4, edge, img.Bottom - 4);
+            }
+            return;
+        }
+
+        // Shine: three slanted bands, brighter toward the middle
+        double s = (t - RevealSeconds) % ShineEvery / ShineSeconds;
+        if (finished || s >= 1) {
+            return;
+        }
+        float cx = img.X - 60 + (float)((img.Width + 120) * s);
+        float[] widths = { 70F, 40F, 16F };
+        float[] lift = { 0.12F, 0.22F, 0.34F };   // how far toward a green-white glint
+        for (int i = 0; i < widths.Length; i++) {
+            float half = widths[i] / 2, slant = 22F;
+            using (var path = new GraphicsPath())
+            using (var attributes = new ImageAttributes()) {
+                path.AddPolygon(new[] {
+                    new PointF(cx - half + slant, img.Y), new PointF(cx + half + slant, img.Y),
+                    new PointF(cx + half - slant, img.Bottom),
+                    new PointF(cx - half - slant, img.Bottom),
+                });
+                // Darken a little, then lift toward green-white: the silver
+                // letters are near white already, so a plain lift would not show
+                var m = new ColorMatrix();
+                m.Matrix00 = m.Matrix11 = m.Matrix22 = 1 - lift[i];
+                m.Matrix40 = lift[i] * 0.55F;
+                m.Matrix41 = lift[i] * 1.0F;
+                m.Matrix42 = lift[i] * 0.6F;
+                attributes.SetColorMatrix(m);
+                g.SetClip(path);
+                g.DrawImage(logo, img, 0, 0, logo.Width, logo.Height, GraphicsUnit.Pixel,
+                            attributes);
+                g.ResetClip();
+            }
+        }
+    }
+}
+
+// A rounded progress bar: a green fill that eases to its value, with a light
+// running along it
+class GlowBar : Control
+{
+    readonly Stopwatch clock = Stopwatch.StartNew();
+    int value;
+    float shown;
+
+    public GlowBar()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer, true);
+    }
+
+    public int Value
+    {
+        get { return value; }
+        set { this.value = Math.Max(0, Math.Min(100, value)); }
+    }
+
+    public void Reset()
+    {
+        value = 0;
+        shown = 0;
+        Invalidate();
+    }
+
+    public void Tick()
+    {
+        if (Visible) {
+            shown += (value - shown) * 0.18F;
+            Invalidate();
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.Clear(Theme.PanelBack);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var track = new RectangleF(0.5F, 0.5F, Width - 1.5F, Height - 1.5F);
+        float radius = track.Height / 2;
+        using (GraphicsPath path = Card.Rounded(track, radius))
+        using (var fill = new SolidBrush(Theme.Back))
+        using (var line = new Pen(Color.FromArgb(54, 58, 61))) {
+            g.FillPath(fill, path);
+            g.DrawPath(line, path);
+        }
+        if (shown < 0.5F) {
+            return;
+        }
+        float w = Math.Max(track.Height, track.Width * shown / 100F);
+        var filled = new RectangleF(track.X, track.Y, w, track.Height);
+        using (GraphicsPath path = Card.Rounded(filled, radius))
+        using (var fill = new LinearGradientBrush(new RectangleF(0, 0, Width, Height),
+                                                  Color.FromArgb(40, 130, 52),
+                                                  Color.FromArgb(96, 214, 106),
+                                                  LinearGradientMode.Horizontal)) {
+            g.FillPath(fill, path);
+            // A light running along the filled part
+            float run = 90F;
+            float x = (float)(clock.Elapsed.TotalSeconds % 1.4 / 1.4) * (w + run) - run;
+            var light = new RectangleF(x, 0, run, Height);
+            using (var sheen = new LinearGradientBrush(light, Color.Transparent,
+                                                       Color.Transparent,
+                                                       LinearGradientMode.Horizontal)) {
+                var blend = new ColorBlend(3);
+                blend.Colors = new[] { Color.FromArgb(0, 255, 255, 255),
+                                       Color.FromArgb(110, 255, 255, 255),
+                                       Color.FromArgb(0, 255, 255, 255) };
+                blend.Positions = new[] { 0F, 0.5F, 1F };
+                sheen.InterpolationColors = blend;
+                g.SetClip(path);
+                g.FillRectangle(sheen, light);
+                g.ResetClip();
+            }
+        }
+    }
+}
+
 class SetupForm : Form
 {
+    public static readonly Color HeaderTop = Color.FromArgb(22, 44, 26);
+    static readonly Color Soft = Color.FromArgb(200, 204, 206);
     static readonly Color Back = Theme.Back;
     static readonly Color PanelBack = Theme.PanelBack;
     static readonly Color Green = Theme.Green;
@@ -1124,8 +1337,10 @@ class SetupForm : Form
 
     readonly string preview;
     readonly Button cleanButton;
-    readonly ProgressBar progress;
-    readonly Label status, gamesLabel, cleanText;
+    readonly GlowBar bar;
+    readonly LogoShow logoShow;
+    readonly System.Windows.Forms.Timer anim;
+    readonly Label status, gamesLabel, cleanText, cleanTitle;
 
     const string IdleStatus = "This window shows only once. Help > Black Arrow Online " +
                               "Guide in xemu explains the rest.";
@@ -1141,7 +1356,7 @@ class SetupForm : Form
         Text = "Black Arrow Online - First-time setup";
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(W, 716);
+        ClientSize = new Size(W, 712);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -1154,12 +1369,9 @@ class SetupForm : Form
         // --- header: the logo on a soft green glow ---
         var logo = Launcher.Logo();
         if (logo != null) {
-            var pic = new PictureBox();
-            pic.Image = logo;
-            pic.SizeMode = PictureBoxSizeMode.Zoom;
-            pic.BackColor = Color.Transparent;
-            pic.SetBounds((W - 360) / 2, 22, 360, 90);  // the picture is 4:1
-            Controls.Add(pic);
+            logoShow = new LogoShow(logo, HeaderHeight);
+            logoShow.SetBounds((W - 400) / 2, 14, 400, 102);  // the picture is 4:1
+            Controls.Add(logoShow);
         } else {
             Label name = AddLabel(this, "Black Arrow Online", 0, 40, W, 50, 22F, true, TextColor);
             name.TextAlign = ContentAlignment.MiddleCenter;
@@ -1170,7 +1382,7 @@ class SetupForm : Form
 
         // --- new console: the one thing to do here ---
         var clean = AddCard(Side, 168, Inner, 124);
-        AddLabel(clean, "New console", 24, 20, 400, 32, 15F, true, TextColor);
+        cleanTitle = AddLabel(clean, "New console", 24, 20, 420, 32, 15F, true, TextColor);
         cleanText = AddLabel(clean, "", 25, 56, 420, 56, 9.5F, false, Dim);
         cleanButton = AddButton(clean, "", Inner - 24 - 196, 36, 196, 52, true);
         cleanButton.Font = new Font("Segoe UI", 11.5F, FontStyle.Bold);
@@ -1178,16 +1390,21 @@ class SetupForm : Form
             if (Launcher.ContentMissing) {
                 AddContent();
             } else {
-                Run("Copying files...", p => Launcher.StartClean(p), null);
+                Run("Setting up your console", "Copying the console's hard disk...",
+                    p => Launcher.StartClean(p), null);
             }
         };
+        bar = new GlowBar();
+        bar.SetBounds(25, 90, Inner - 50, 12);
+        bar.Visible = false;
+        clean.Controls.Add(bar);
         ShowClean();
 
         // --- what happens next: four steps in a row ---
         AddLabel(this, "WHAT HAPPENS NEXT", Side + 2, 314, 300, 20, 8.5F, true, Green);
         int col = (Inner + 16) / 4;
         AddStep(Side + 0 * col, 344, col - 16, "1", "XBL Dashboard opens",
-                "It sets itself up the first time, about two minutes. Then sign in " +
+                "It sets itself up the first time, about a minute. Then sign in " +
                 "with your xb.live account.");
         AddStep(Side + 1 * col, 344, col - 16, "2", "Go online",
                 "In the dashboard: Settings > Network, set the top option to XB Online.");
@@ -1198,17 +1415,17 @@ class SetupForm : Form
                 "straight to the dashboard.");
 
         // --- good to know ---
-        var know = AddCard(Side, 494, Inner, 92);
+        var know = AddCard(Side, 500, Inner, 100);
         int third = (Inner - 24) / 3;
         AddNote(know, 22 + 0 * third, third - 20, "Already on xb.live?",
                 "Nothing to copy. Your account lives on xb.live; just sign in again.");
         AddNote(know, 22 + 1 * third, third - 20, "Don't close xemu",
-                "Let the dashboard finish setting up. The original is kept as a backup.");
+                "Let the dashboard finish setting up. The old dashboard is kept as a backup.");
         AddNote(know, 22 + 2 * third, third - 20, "Saves",
-                "Saves on another xemu stay there. This console starts new.");
+                "Saves from another xemu aren't copied. This console starts new.");
 
         // --- your game ---
-        var games = AddCard(Side, 600, Inner, 58);
+        var games = AddCard(Side, 614, Inner, 58);
         gamesLabel = AddLabel(games, "", 22, 9, Inner - 230, 40, 9.5F, true, TextColor);
         gamesLabel.TextAlign = ContentAlignment.MiddleLeft;
         Button openGames = AddButton(games, "Open games folder", Inner - 22 - 170, 12, 170, 34,
@@ -1221,18 +1438,23 @@ class SetupForm : Form
         ShowGames();
 
         // --- footer ---
-        status = AddLabel(this, IdleStatus, Side + 2, 674, Inner - 140, 20, 8.5F, false, Dim);
+        status = AddLabel(this, IdleStatus, Side + 2, 684, Inner - 140, 20, 8.5F, false, Dim);
         UpdateInfo installed = Updater.Installed();
         if (installed.Build > 0) {
-            Label build = AddLabel(this, "Build " + installed.Text, W - Side - 140, 674, 140, 20,
+            Label build = AddLabel(this, "Build " + installed.Text, W - Side - 140, 684, 140, 20,
                                    8.5F, true, Dim);
             build.TextAlign = ContentAlignment.TopRight;
         }
-        progress = new ProgressBar();
-        progress.SetBounds(Side, 700, Inner, 6);
-        progress.Style = ProgressBarStyle.Continuous;
-        progress.Visible = false;
-        Controls.Add(progress);
+
+        anim = new System.Windows.Forms.Timer();
+        anim.Interval = 16;
+        anim.Tick += delegate {
+            if (logoShow != null) {
+                logoShow.Tick();
+            }
+            bar.Tick();
+        };
+        FormClosed += delegate { anim.Stop(); };
     }
 
     // The header glow behind the logo
@@ -1240,7 +1462,7 @@ class SetupForm : Form
     {
         base.OnPaint(e);
         var band = new Rectangle(0, 0, ClientSize.Width, HeaderHeight);
-        using (var brush = new LinearGradientBrush(band, Color.FromArgb(22, 44, 26), Back,
+        using (var brush = new LinearGradientBrush(band, HeaderTop, Back,
                                                    LinearGradientMode.Vertical)) {
             e.Graphics.FillRectangle(brush, band);
         }
@@ -1250,9 +1472,14 @@ class SetupForm : Form
     {
         base.OnShown(e);
         if (preview != null) {
+            if (logoShow != null) {
+                logoShow.Finish();
+            }
             Theme.SavePreview(this, preview);
             Close();
+            return;
         }
+        anim.Start();
     }
 
     // Without the content pack the clean start button asks for it instead
@@ -1268,7 +1495,7 @@ class SetupForm : Form
             cleanText.ForeColor = Dim;
             cleanText.Text = "A fresh virtual Xbox with the dashboards already installed. " +
                              "Your xb.live account signs in later.";
-            cleanButton.Text = "Start clean";
+            cleanButton.Text = "Set up my console";
         }
     }
 
@@ -1288,36 +1515,51 @@ class SetupForm : Form
                 zip = dialog.FileName;
             }
         }
-        Run("Adding the content pack...", p => Launcher.InstallContent(zip, p), ShowClean);
+        Run("Adding the content pack", "Unpacking " + Launcher.ContentPackName + "...",
+            p => Launcher.InstallContent(zip, p), ShowClean);
     }
 
-    // Runs work in the background. With no "then", success finishes the setup
-    void Run(string what, Action<Action<int>> work, Action then)
+    // Runs work in the background, with its progress in the top card. With no
+    // "then", success finishes the setup.
+    void Run(string title, string what, Action<Action<int>> work, Action then)
     {
-        cleanButton.Enabled = false;
-        progress.Value = 0;
-        progress.Visible = true;
-        status.Text = what;
+        cleanButton.Visible = false;
+        cleanTitle.Text = title;
+        cleanText.ForeColor = Soft;
+        cleanText.SetBounds(25, 56, Inner - 50, 26);
+        cleanText.Text = what;
+        bar.Reset();
+        bar.Visible = true;
 
         var worker = new BackgroundWorker();
         worker.WorkerReportsProgress = true;
         worker.DoWork += delegate { work(p => worker.ReportProgress(p)); };
         worker.ProgressChanged += delegate(object s, ProgressChangedEventArgs e) {
-            progress.Value = Math.Min(100, e.ProgressPercentage);
-            status.Text = what + " " + e.ProgressPercentage + "%";
+            bar.Value = e.ProgressPercentage;
+            cleanText.Text = what + "  " + Math.Min(100, e.ProgressPercentage) + "%";
         };
         worker.RunWorkerCompleted += delegate(object s, RunWorkerCompletedEventArgs e) {
             if (e.Error == null && then == null) {
+                // Let the bar fill, then hand over to xemu
                 Completed = true;
-                Close();
+                bar.Value = 100;
+                cleanTitle.Text = "Your console is ready";
+                cleanText.ForeColor = Green;
+                cleanText.Text = "Starting xemu...";
+                var close = new System.Windows.Forms.Timer();
+                close.Interval = 900;
+                close.Tick += delegate { close.Stop(); Close(); };
+                close.Start();
                 return;
             }
             if (then == null) {
                 Launcher.RemovePartialHdd();
             }
-            cleanButton.Enabled = true;
-            progress.Visible = false;
-            status.Text = IdleStatus;
+            bar.Visible = false;
+            cleanButton.Visible = true;
+            cleanTitle.Text = "New console";
+            cleanText.SetBounds(25, 56, 420, 56);
+            ShowClean();
             if (e.Error != null) {
                 MessageBox.Show(this, e.Error.Message, "Black Arrow Online",
                                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1350,13 +1592,13 @@ class SetupForm : Form
         badge.SetBounds(x, y, 32, 32);
         Controls.Add(badge);
         AddLabel(this, title, x, y + 42, w, 22, 10.5F, true, TextColor);
-        AddLabel(this, text, x, y + 66, w, 72, 9F, false, Dim);
+        AddLabel(this, text, x, y + 66, w, 84, 9.5F, false, Soft);
     }
 
     static void AddNote(Control parent, int x, int w, string title, string text)
     {
         AddLabel(parent, title, x, 16, w, 22, 9.5F, true, TextColor);
-        AddLabel(parent, text, x, 40, w, 40, 8.5F, false, Dim);
+        AddLabel(parent, text, x, 40, w, 62, 9F, false, Soft);
     }
 
     Card AddCard(int x, int y, int w, int h)

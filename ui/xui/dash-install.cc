@@ -342,7 +342,7 @@ void DashInstallDraw()
         ImGui::Text("Setting up your console");
         ImGui::PopFont();
         ImGui::PushFont(g_font_mgr.m_default_font);
-        ImGui::TextColored(dim, "One time only, about two minutes. Please "
+        ImGui::TextColored(dim, "One time only, about a minute. Please "
                                 "don't close xemu.");
         ImGui::PopFont();
         ImGui::Dummy(ImVec2(0, 12.0f * scale));
