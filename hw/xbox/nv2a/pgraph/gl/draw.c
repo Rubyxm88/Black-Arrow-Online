@@ -330,6 +330,31 @@ void pgraph_gl_draw_begin(NV2AState *d)
     }
 }
 
+/* True if this draw can change the depth/stencil buffer. A stencil test whose
+ * write mask is zero or whose ops are all KEEP leaves memory untouched, so the
+ * surface must not be marked dirty and copied back over guest data. */
+static bool draw_zeta_writes(PGRAPHState *pg, bool depth_test, bool stencil_test)
+{
+    uint32_t c0 = pgraph_reg_r(pg, NV_PGRAPH_CONTROL_0);
+    if (depth_test && (c0 & NV_PGRAPH_CONTROL_0_ZWRITEENABLE)) {
+        return true;
+    }
+    if (!stencil_test) {
+        return false;
+    }
+    uint32_t c1 = pgraph_reg_r(pg, NV_PGRAPH_CONTROL_1);
+    uint32_t c2 = pgraph_reg_r(pg, NV_PGRAPH_CONTROL_2);
+    if (!GET_MASK(c1, NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE)) {
+        return false;
+    }
+    return GET_MASK(c2, NV_PGRAPH_CONTROL_2_STENCIL_OP_FAIL) !=
+               NV_PGRAPH_CONTROL_2_STENCIL_OP_V_KEEP ||
+           GET_MASK(c2, NV_PGRAPH_CONTROL_2_STENCIL_OP_ZFAIL) !=
+               NV_PGRAPH_CONTROL_2_STENCIL_OP_V_KEEP ||
+           GET_MASK(c2, NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS) !=
+               NV_PGRAPH_CONTROL_2_STENCIL_OP_V_KEEP;
+}
+
 void pgraph_gl_draw_end(NV2AState *d)
 {
     PGRAPHState *pg = &d->pgraph;
@@ -371,11 +396,12 @@ void pgraph_gl_draw_end(NV2AState *d)
     if (r->color_binding && pgraph_color_write_enabled(pg)) {
         r->color_binding->draw_time = pg->draw_time;
     }
-    if (r->zeta_binding && pgraph_zeta_write_enabled(pg)) {
+    bool zeta_write = draw_zeta_writes(pg, depth_test, stencil_test);
+    if (r->zeta_binding && zeta_write) {
         r->zeta_binding->draw_time = pg->draw_time;
     }
 
-    pgraph_gl_set_surface_dirty(pg, color_write, depth_test || stencil_test);
+    pgraph_gl_set_surface_dirty(pg, color_write, zeta_write);
     NV2A_GL_DGROUP_END();
 }
 
