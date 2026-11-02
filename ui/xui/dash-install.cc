@@ -32,6 +32,7 @@
 #include "../xemu-notifications.h"
 #include "../xemu-input.h"
 #include "../xemu-settings.h"
+#include <algorithm>
 
 /* Seconds after the installer disc starts booting before the first A */
 #define FIRST_PRESS 22.0
@@ -218,16 +219,16 @@ static float Progress(const char **what)
     case STAGE_WAIT_START: {
         *what = "Starting the installer...";
         double since = Now() - begin_time;
-        return (float)MIN(0.15, 0.15 * since / (FIRST_PRESS + START_CHECK));
+        return (float)std::min(0.15, 0.15 * since / (FIRST_PRESS + START_CHECK));
     }
     case STAGE_INSTALLING: {
         *what = "Installing XBL Dashboard...";
         double done = (HddWritten() - install_written) / EXPECTED_WRITE;
-        return 0.15f + 0.75f * (float)MIN(done, 1.0);
+        return 0.15f + 0.75f * (float)std::min(done, 1.0);
     }
     case STAGE_RESTARTING:
         *what = "Starting XBL Dashboard...";
-        return 0.90f + 0.10f * (float)MIN(t / DASH_BOOT_TIME, 1.0);
+        return 0.90f + 0.10f * (float)std::min(t / DASH_BOOT_TIME, 1.0);
     default:
         *what = "";
         return 1.0f;

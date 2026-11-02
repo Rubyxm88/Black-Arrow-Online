@@ -1,9 +1,9 @@
 // Black Arrow Online launcher.
 //
 // Starts xemu from the "system" folder next to this program. When no hard
-// disk has been set up yet it first asks whether to start clean or to copy
-// in the files of an existing xemu setup. Nothing outside the package folder
-// is ever changed.
+// disk has been set up yet it first sets up a new console (xemu then makes
+// the XBL Dashboard its dashboard). Nothing outside the package folder is
+// ever changed.
 //
 // It also looks for a newer build on the releases page and offers to install
 // it. An update replaces the programs only, never the console's files.
@@ -415,7 +415,7 @@ static class Launcher
     static void ClearFirstRunState()
     {
         var lines = File.ReadAllLines(toml).Where(
-            l => !Regex.IsMatch(l, "^(xb_online_setup_offered|dvd_path) = "));
+            l => !Regex.IsMatch(l, "^(xb_online_setup_offered|xbl_dash_install_tries|dvd_path) = "));
         File.WriteAllLines(toml, lines);
     }
 
@@ -1041,8 +1041,7 @@ class SetupForm : Form
     public bool Completed;
 
     readonly string preview;
-    readonly TextBox hddBox, eepromBox, biosBox, mcpxBox;
-    readonly Button cleanButton, importButton;
+    readonly Button cleanButton;
     readonly ProgressBar progress;
     readonly Label status, gamesLabel, cleanText;
 
@@ -1064,12 +1063,12 @@ class SetupForm : Form
         Icon = Launcher.AppIcon();
 
         AddLabel(this, "Black Arrow Online", 24, 16, 630, 38, 18F, true, TextColor);
-        AddLabel(this, "First-time setup: how do you want to set up your virtual Xbox?",
+        AddLabel(this, "First-time setup of your virtual Xbox",
                  26, 56, 630, 24, 10F, false, Dim);
 
         // --- clean start ---
         var clean = AddPanel(24, 92, 632, 112);
-        AddLabel(clean, "Clean start", 18, 12, 420, 28, 13F, true, TextColor);
+        AddLabel(clean, "New console", 18, 12, 420, 28, 13F, true, TextColor);
         cleanText = AddLabel(clean, "", 18, 44, 440, 56, 9F, false, Dim);
         cleanButton = AddButton(clean, "", 468, 36, 146, 42, true);
         cleanButton.Click += delegate {
@@ -1081,53 +1080,40 @@ class SetupForm : Form
         };
         ShowClean();
 
-        // --- existing files ---
-        var import = AddPanel(24, 216, 632, 428);
-        AddLabel(import, "Use my existing xemu files", 18, 12, 590, 28, 13F, true, TextColor);
-        AddLabel(import, "Copies your files into this folder, keeping your Xbox Live account and " +
-                         "saves. Your originals are not changed. In xemu, Machine > Settings > " +
-                         "System > Files shows where yours are.",
+        // --- your account ---
+        // Every console starts new: the Xbox Live account lives on xb.live,
+        // so there is nothing to copy from an older setup
+        var account = AddPanel(24, 216, 632, 428);
+        AddLabel(account, "Already playing on xb.live?", 18, 12, 590, 28, 13F, true, TextColor);
+        AddLabel(account, "Nothing to copy. Your Xbox Live account is kept on xb.live, so you " +
+                          "just sign in to it again in the XBL Dashboard.",
                  18, 44, 596, 42, 9F, false, Dim);
-
-        hddBox = AddFileRow(import, 96, "Hard disk", "Required",
-                            "xbox_hdd.qcow2", "the Xbox hard disk image, a .qcow2 file (often 1 GB or more)",
-                            "Xbox hard disk image (*.qcow2)|*.qcow2|All files (*.*)|*.*",
-                            preview != null ? "" : Launcher.ExistingPath("hdd_path"));
-        eepromBox = AddFileRow(import, 168, "EEPROM", "Required",
-                               "eeprom.bin", "the console identity that belongs to that hard disk, a 256-byte .bin file",
-                               "Xbox EEPROM (*.bin)|*.bin|All files (*.*)|*.*",
-                               preview != null ? "" : Launcher.ExistingPath("eeprom_path"));
-        biosBox = AddFileRow(import, 240, "BIOS", "Optional",
-                             "for example Complex_4627.bin", "a 256 KB or 1 MB .bin file. Leave empty to use the included BIOS",
-                             "Xbox BIOS (*.bin)|*.bin|All files (*.*)|*.*", "");
-        mcpxBox = AddFileRow(import, 312, "MCPX boot ROM", "Optional",
-                             "mcpx_1.0.bin", "a 512-byte .bin file. Leave empty to use the included one",
-                             "MCPX boot ROM (*.bin)|*.bin|All files (*.*)|*.*", "");
-
-        importButton = AddButton(import, "Copy and start", 454, 372, 160, 40, true);
-        importButton.Click += delegate {
-            string hdd = hddBox.Text.Trim(), eeprom = eepromBox.Text.Trim();
-            string bios = biosBox.Text.Trim(), mcpx = mcpxBox.Text.Trim();
-            Run("Copying files...", p => Launcher.ImportExisting(hdd, eeprom, bios, mcpx, p), null);
-        };
+        AddLabel(account, "XBL Dashboard", 18, 104, 590, 26, 11F, true, TextColor);
+        AddLabel(account, "The first time xemu starts it makes the XBL Dashboard your console's " +
+                          "dashboard. This takes about a minute and a progress bar shows how far " +
+                          "it is. Please don't close xemu while it runs. It happens one time only; " +
+                          "the original dashboard is kept as a backup.",
+                 18, 134, 596, 80, 9F, false, Dim);
+        AddLabel(account, "Saves from another xemu", 18, 230, 590, 26, 11F, true, TextColor);
+        AddLabel(account, "Game saves on another xemu's hard disk stay there; this console " +
+                          "starts with none.",
+                 18, 260, 596, 42, 9F, false, Dim);
 
         // --- what happens next ---
         var next = AddPanel(668, 92, 320, 552);
         AddLabel(next, "What happens next", 18, 12, 290, 28, 13F, true, TextColor);
-        AddStep(next, 50, "1", "The XBL Dashboard opens",
+        AddStep(next, 50, "1", "XBL Dashboard is set up, then opens",
                 "Sign in with your xb.live account. For a link code use the menu " +
                 "XB Live > Link Code.");
         AddStep(next, 138, "2", "Switch the network to XB Online",
                 "In the dashboard: Settings > Network, set the top option to XB Online.");
         AddStep(next, 212, "3", "Install the game update and maps",
-                "Menu Play > Black Arrow Updates (stock). Skip this if your own " +
-                "hard disk already has them.");
+                "Menu Play > Black Arrow Updates (stock).");
         AddStep(next, 300, "4", "Play",
                 "Menu Play > Play Rainbow Six 3 Black Arrow.");
         AddLabel(next, "This window appears only once. From then on, Black Arrow Online " +
-                       "goes straight to the game, and everything above stays available " +
-                       "in the Play and XB Live menus. Help > Black Arrow Online Guide " +
-                       "explains the rest.",
+                       "starts on the XBL Dashboard; pick your game in the Play menu. " +
+                       "Help > Black Arrow Online Guide explains the rest.",
                  18, 366, 286, 72, 9F, false, Dim);
 
         gamesLabel = AddLabel(next, "", 18, 448, 286, 40, 9F, true, TextColor);
@@ -1203,7 +1189,6 @@ class SetupForm : Form
     void Run(string what, Action<Action<int>> work, Action then)
     {
         cleanButton.Enabled = false;
-        importButton.Enabled = false;
         progress.Value = 0;
         progress.Visible = true;
         status.Text = what;
@@ -1225,7 +1210,6 @@ class SetupForm : Form
                 Launcher.RemovePartialHdd();
             }
             cleanButton.Enabled = true;
-            importButton.Enabled = true;
             progress.Visible = false;
             status.Text = IdleStatus;
             if (e.Error != null) {
