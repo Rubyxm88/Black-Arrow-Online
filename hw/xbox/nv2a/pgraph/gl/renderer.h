@@ -69,6 +69,8 @@ typedef struct SurfaceBinding {
     /* Hash of each 4 KiB page of guest memory when it last matched the GPU copy */
     uint64_t *page_hash;
     unsigned int page_count;
+    /* Pages the CPU wrote while no surface held them; the CPU's data wins */
+    unsigned long *cpu_pages;
 } SurfaceBinding;
 
 typedef struct TextureBinding {
@@ -177,7 +179,15 @@ typedef struct QueryReport {
     GLuint *queries;
 } QueryReport;
 
+/* What a 4 KiB page of guest memory held the last time the GPU wrote it */
+typedef struct SurfacePageRecord {
+    uint64_t hash;
+    uint32_t start; /* hashed bytes within the page */
+    uint32_t len;
+} SurfacePageRecord;
+
 typedef struct PGRAPHGLState {
+    SurfacePageRecord *gpu_pages; /* one per page of VRAM; len 0 = none */
     GLuint gl_framebuffer;
     GLuint gl_display_buffer;
     GLint gl_display_buffer_internal_format;

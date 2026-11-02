@@ -109,6 +109,7 @@ static void pgraph_gl_finalize(NV2AState *d)
 
     glo_set_current(NULL);
 
+    g_free(pg->gl_renderer_state->gpu_pages);
     g_free(pg->gl_renderer_state);
     pg->gl_renderer_state = NULL;
 }
