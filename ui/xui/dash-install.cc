@@ -7,7 +7,8 @@
 //
 //   1. the installer starts (its only screen says "A: install")
 //   2. xemu presses A; the hard disk then starts taking writes, which is how
-//      xemu knows the install began (A is pressed again if it did not)
+//      xemu knows the install began (A is pressed again every few seconds,
+//      for up to three minutes, if it did not)
 //   3. the installer copies its files, makes a backup of the old dashboard,
 //      and restarts the console when it is done
 //   4. xemu takes the disc out, saves the hard disk, checks that the console
@@ -44,8 +45,8 @@
 #define PRESS_TIME 0.4
 /* Seconds after a press to look for the install's disk writes */
 #define START_CHECK 7.0
-/* Presses before giving up */
-#define MAX_PRESSES 8
+/* Seconds after the install began that xemu keeps pressing A */
+#define PRESS_WINDOW 180.0
 /* Bytes the install writes; only for the progress bar */
 #define EXPECTED_WRITE (24.0 * 1024 * 1024)
 /* Writes that show the install has begun */
@@ -74,6 +75,8 @@ static int presses;
 static uint64_t press_written; // disk writes when A was last pressed
 static uint64_t install_written;
 static int resets_at_install;  // console restarts seen when it began
+static int resets_at_press;    // console restarts seen at the first A
+static int kbd_port = -1;      // port xemu put the keyboard in, or -1
 
 static double Now()
 {
@@ -92,9 +95,11 @@ static uint64_t HddWritten()
 }
 
 /*
- * A only reaches the Xbox through a controller in a port. With none (a pad
- * set in the settings but not plugged in), put the keyboard in port 1 for
- * this run.
+ * A only reaches the Xbox through a controller in a port. With none (no pad
+ * set up, or one set up but not plugged in), put the keyboard in port 4 for
+ * this run, before the installer starts, so it sees it from the start. Port
+ * 4 leaves port 1 free for a pad plugged in meanwhile. Nothing is saved to
+ * the settings, and RestoreController takes it out again at the end.
  */
 static void EnsureController()
 {
@@ -106,11 +111,28 @@ static void EnsureController()
     ControllerState *iter;
     QTAILQ_FOREACH(iter, &available_controllers, entry) {
         if (iter->type == INPUT_DEVICE_SDL_KEYBOARD) {
-            xemu_input_bind(0, iter, 0);
-            fprintf(stderr, "dash install: no controller, keyboard in port 1\n");
+            kbd_port = 3;
+            xemu_input_bind(kbd_port, iter, 0);
+            fprintf(stderr, "dash install: no controller, keyboard in "
+                    "port %d for the setup\n", kbd_port + 1);
             return;
         }
     }
+}
+
+/* Put the ports back the way they were before the setup */
+static void RestoreController()
+{
+    if (kbd_port < 0) {
+        return;
+    }
+    ControllerState *state = xemu_input_get_bound(kbd_port);
+    if (state && state->type == INPUT_DEVICE_SDL_KEYBOARD) {
+        xemu_input_bind(kbd_port, NULL, 0);
+        fprintf(stderr, "dash install: keyboard out of port %d again\n",
+                kbd_port + 1);
+    }
+    kbd_port = -1;
 }
 
 static void Fail(const char *why)
@@ -163,10 +185,14 @@ static void Step()
     switch (stage) {
     case STAGE_BOOTING:
         if (t >= (presses ? START_CHECK : FIRST_PRESS)) {
-            EnsureController();
+            if (!presses) {
+                // Any restart from here on means the installer was closed
+                resets_at_press = xemu_dashinstall_resets();
+            }
             press_written = HddWritten();
             presses++;
-            fprintf(stderr, "dash install: pressing A (%d)\n", presses);
+            fprintf(stderr, "dash install: pressing A (%d, %.0f s)\n",
+                    presses, Now() - begin_time);
             __atomic_store_n(&xemu_input_forced_buttons, (uint16_t)(CONTROLLER_BUTTON_A), __ATOMIC_RELAXED);
             SetStage(STAGE_PRESSING);
         }
@@ -178,13 +204,17 @@ static void Step()
         }
         break;
     case STAGE_WAIT_START:
-        if (HddWritten() - press_written >= STARTED_WRITE) {
+        if (xemu_dashinstall_resets() != resets_at_press) {
+            // The installer quit (or the console was restarted): stop, so
+            // A is never pressed on another program's screens
+            Fail("the installer closed before it started");
+        } else if (HddWritten() - press_written >= STARTED_WRITE) {
             fprintf(stderr, "dash install: install started\n");
             install_written = press_written;
             resets_at_install = xemu_dashinstall_resets();
             SetStage(STAGE_INSTALLING);
         } else if (t >= START_CHECK) {
-            if (presses >= MAX_PRESSES) {
+            if (Now() - begin_time >= PRESS_WINDOW) {
                 Fail("the installer did not start");
             } else {
                 // Not ready for A yet: press again right away
@@ -290,11 +320,13 @@ void DashInstallDraw()
         stage_time = begin_time;
         xemu_dashinstall_resets();  // start counting restarts
         xemu_settings_save();       // the try counts even if xemu crashes
+        EnsureController();
         // The connection check waits until the setup is done
         xbcheck_window.hidden = true;
     }
     Step();
     if (stage == STAGE_IDLE) {
+        RestoreController();
         // Its results stay one click away: the one-line summary
         xbcheck_window.hidden = false;
         xbcheck_window.ShowShort();
