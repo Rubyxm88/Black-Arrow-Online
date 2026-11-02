@@ -456,6 +456,18 @@ static class Launcher
         }
     }
 
+    // Our logo, built into the launcher (csc /resource:...,bao_logo.png)
+    public static Image Logo()
+    {
+        try {
+            var stream = typeof(Launcher).Assembly
+                             .GetManifestResourceStream("bao_logo.png");
+            return stream == null ? null : Image.FromStream(stream);
+        } catch (Exception) {
+            return null;
+        }
+    }
+
     public static Icon AppIcon()
     {
         try {
@@ -1062,9 +1074,22 @@ class SetupForm : Form
         Font = new Font("Segoe UI", 10F);
         Icon = Launcher.AppIcon();
 
-        AddLabel(this, "Black Arrow Online", 24, 16, 630, 38, 18F, true, TextColor);
-        AddLabel(this, "First-time setup of your virtual Xbox",
-                 26, 56, 630, 24, 10F, false, Dim);
+        var logo = Launcher.Logo();
+        if (logo != null) {
+            // The logo picture is 4:1
+            var pic = new PictureBox();
+            pic.Image = logo;
+            pic.SizeMode = PictureBoxSizeMode.Zoom;
+            pic.BackColor = Color.Transparent;
+            pic.SetBounds(22, 12, 272, 68);
+            Controls.Add(pic);
+            AddLabel(this, "First-time setup of your virtual Xbox",
+                     314, 38, 340, 24, 10F, false, Dim);
+        } else {
+            AddLabel(this, "Black Arrow Online", 24, 16, 630, 38, 18F, true, TextColor);
+            AddLabel(this, "First-time setup of your virtual Xbox",
+                     26, 56, 630, 24, 10F, false, Dim);
+        }
 
         // --- clean start ---
         var clean = AddPanel(24, 92, 632, 112);
@@ -1090,7 +1115,7 @@ class SetupForm : Form
                  18, 44, 596, 42, 9F, false, Dim);
         AddLabel(account, "XBL Dashboard", 18, 104, 590, 26, 11F, true, TextColor);
         AddLabel(account, "The first time xemu starts it makes the XBL Dashboard your console's " +
-                          "dashboard. This takes about a minute and a progress bar shows how far " +
+                          "dashboard. This takes about two minutes and a progress bar shows how far " +
                           "it is. Please don't close xemu while it runs. It happens one time only; " +
                           "the original dashboard is kept as a backup.",
                  18, 134, 596, 80, 9F, false, Dim);

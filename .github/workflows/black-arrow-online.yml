@@ -448,7 +448,8 @@ jobs:
       shell: pwsh
       run: |
         & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
-            "/win32icon:ui\icons\black-arrow-online.ico" "/out:pkg\Black Arrow Online.exe" `
+            "/win32icon:ui\icons\black-arrow-online.ico" "/resource:data\bao_logo.png,bao_logo.png" `
+            "/out:pkg\Black Arrow Online.exe" `
             /r:System.Windows.Forms.dll /r:System.Drawing.dll `
             /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll `
             black-arrow-online\package\Launcher.cs
