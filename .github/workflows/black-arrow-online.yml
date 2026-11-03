@@ -756,6 +756,9 @@ jobs:
         cp black-arrow-online/mac/README.txt "$pkg/README.txt"
         install -m 755 black-arrow-online/mac/setup.sh "$pkg/setup.sh"
         cp black-arrow-online/package/shader-list.bin "$pkg/shader-list.bin"
+        # XBL Dashboard installer (shipped with its creator's permission):
+        # setup.sh copies it to system/, and xemu runs it once
+        cp "black-arrow-online/package/XBL Dashboard Installer.iso" "$pkg/XBL Dashboard Installer.iso"
         # A test build has no build number, so the app takes any build over it
         build=""
         if [ "$PUBLISH" = true ]; then
@@ -990,6 +993,9 @@ jobs:
         cp black-arrow-online/linux/README.txt "$pkg/README.txt"
         install -m 755 black-arrow-online/linux/setup.sh "$pkg/setup.sh"
         cp black-arrow-online/package/shader-list.bin "$pkg/shader-list.bin"
+        # XBL Dashboard installer (shipped with its creator's permission):
+        # setup.sh copies it to system/, and xemu runs it once
+        cp "black-arrow-online/package/XBL Dashboard Installer.iso" "$pkg/XBL Dashboard Installer.iso"
         # A test build has no build number, so the app takes any build over it
         build=""
         if [ "$PUBLISH" = true ]; then

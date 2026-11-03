@@ -59,7 +59,10 @@ FIRST START
 
 The menus are at the top of the emulator window.
 
-1. The XBL Dashboard opens. Sign in with your xb.live account.
+1. The first time, Black Arrow Online sets up your console: it installs
+   the XBL Dashboard on the console's hard disk (about a minute, with a
+   progress bar; don't quit while it runs), then starts it. Sign in with
+   your xb.live account.
    Need a code? Menu: XB Live > Link Code.
    No account yet? See NEW ACCOUNT below first.
 2. In the dashboard: Settings > Network, set the top option to XB Online.
@@ -67,8 +70,9 @@ The menus are at the top of the emulator window.
    prompts.
 4. Menu: Play > Play Rainbow Six 3 Black Arrow.
 
-After that, Black Arrow Online goes straight to the game when you start it.
-If the games folder is empty it opens the XBL Dashboard instead.
+After that, Black Arrow Online starts in the XBL Dashboard; start the game
+from the Play menu. The original Xbox dashboard is kept as a backup:
+Play > Dashboard > Switch to Original Dashboard.
 
 
 NEW ACCOUNT

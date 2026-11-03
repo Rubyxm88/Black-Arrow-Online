@@ -466,7 +466,7 @@ if ! mv "$app.new" "$app"; then
 fi
 rm -rf "$app.old"
 
-for file in shader-list.bin version.txt; do
+for file in shader-list.bin version.txt "XBL Dashboard Installer.iso"; do
     if [ -f "$here/$file" ]; then
         cp "$here/$file" "$system/$file"
     fi
