@@ -21,6 +21,7 @@ private:
     double m_done_time;
     double m_toast_end;  // "XB Online Connected" shown until then
     bool   m_shorten;
+    bool   m_short_now;  // the results show as the one line right away
     bool   m_full;       // the player opened it or asked for the details:
                          // stays full size, not shrunk to one line
 

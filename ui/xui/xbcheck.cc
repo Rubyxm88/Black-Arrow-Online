@@ -65,6 +65,7 @@ XbCheckWindow::XbCheckWindow()
     is_open = false;
     hidden = false;
     m_shorten = false;
+    m_short_now = false;
     m_started = false;
     m_quiet = false;
     m_done_time = -1;
@@ -77,6 +78,7 @@ void XbCheckWindow::Start(bool show)
     xemu_xbcheck_start();
     m_started = true;
     m_quiet = !show;
+    m_short_now = false;
     m_done_time = -1;
     m_toast_end = -1;
     m_full = show;
@@ -194,7 +196,10 @@ void XbCheckWindow::Draw()
     if (running) {
         m_done_time = -1;
     } else if (m_done_time < 0) {
-        m_done_time = m_shorten ? now - SHORT_DELAY - 1 : now;
+        // Not "now - SHORT_DELAY": early after start that is below 0, which
+        // reads as "not done" and the panel came back full
+        m_done_time = now;
+        m_short_now = m_shorten;
         m_shorten = false;
     } else if (!problem && !needs_action && now - m_done_time > CLOSE_DELAY) {
         is_open = false;
@@ -202,7 +207,7 @@ void XbCheckWindow::Draw()
     }
 
     if (!running && !m_full && m_done_time >= 0 &&
-        now - m_done_time > SHORT_DELAY) {
+        (m_short_now || now - m_done_time > SHORT_DELAY)) {
         int to_fix = 0;
         for (int i = 0; i < n; i++) {
             to_fix += items[i].state == XBCHECK_WARN ||
