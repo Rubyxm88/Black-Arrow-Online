@@ -2,8 +2,9 @@
 // xemu User Interface: XB Online connection check
 //
 // The connection check runs by itself at start. When something is wrong a
-// panel in the top left corner shows what and how to fix it, and after
-// SHORT_DELAY shrinks to one line so it is out of the way; when all is well
+// one-line panel in the top left corner says how many things to fix, and
+// Details opens the full list (a check started from the menu opens full and
+// shrinks to one line after SHORT_DELAY); when all is well
 // a short "XB Online Connected" message appears instead. Neither takes
 // focus, so the game keeps its controls. Both sit in the popup column
 // (notifications.hh), so other notices go under them, not over them.
@@ -181,7 +182,9 @@ void XbCheckWindow::Draw()
         }
         m_quiet = false;
         if (problem || needs_action) {
+            // Opened by itself: start as the one line; Details shows all
             is_open = true;
+            m_shorten = true;
         } else {
             m_toast_end = now + TOAST_TIME;
             return;
