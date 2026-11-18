@@ -10,7 +10,25 @@ import os.path
 from tarfile import TarFile
 import subprocess
 
-MIRROR = 'https://packages.macports.org'
+# XBemu: the main server first, then mirrors (packages are checked against
+# the MacPorts key either way). packages.macports.org answered HTTP 501 for
+# everything on 2026-11-14 and stopped the Mac builds.
+MIRRORS = [
+	'https://packages.macports.org',
+	'https://fra.de.packages.macports.org',
+	'https://nue.de.packages.macports.org',
+	'https://cph.dk.packages.macports.org',
+]
+
+def urlopen_mirrors(path):
+	last = None
+	for m in MIRRORS:
+		try:
+			return urlopen(f'{m}/{path}', timeout=60).read()
+		except Exception as e:
+			print(f'    [!] {m}/{path}: {e}')
+			last = e
+	raise last
 
 # FIXME: Inline macports key
 # FIXME: Move packages to archive directory to track used vs unused
@@ -40,8 +58,8 @@ class LibInstaller:
 			os.makedirs(self._pkgs_path)
 
 	def get_latest_pkg_filename_url(self, pkg_name):
-		pkg_base_url = f'{MIRROR}/{pkg_name}'
-		pkg_list = urlopen(pkg_base_url).read().decode('utf-8')
+		pkg_base_url = pkg_name
+		pkg_list = urlopen_mirrors(pkg_base_url).decode('utf-8')
 		pkgs = re.findall(pkg_name + r'[\w\.\-\_\+]*?\.(?:any_any|darwin_any|' + self._darwin_target + r')\.(?:noarch|' + self._arch + r')\.tbz2', pkg_list)
 		if len(pkgs) < 1:
 			print(f'    [*] [ERROR] Unable to find version of {pkg_name} compatible with {self._darwin_target}.{self._arch}')
@@ -68,8 +86,11 @@ class LibInstaller:
 			print(f'    [+] Already have {desc}')
 		else:
 			print(f'    [+] Downloading {desc}')
+			# A full URL as is; a package path from the mirrors
+			data = (urlopen(url, timeout=60).read() if '://' in url
+			        else urlopen_mirrors(url))
 			with open(dst, 'wb') as f:
-				f.write(urlopen(url).read())
+				f.write(data)
 
 	def verify_pkg(self, pkg_path, sig_path):
 		PUBKEYURL="https://svn.macports.org/repository/macports/trunk/base/macports-pubkey.pem"
