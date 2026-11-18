@@ -5,6 +5,7 @@
  *   XEMU_XBL_SERVER_NAME     name to look up instead of online.xb.live
  *   XEMU_XBL_SERVER_URL      address file URL instead of the GitHub one
  *   XEMU_XBL_SERVER_BUILTIN  built-in address to use instead of this build's
+ *   XEMU_XBL_SERVER_RECHECK_S  least seconds between looks (default 120)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -362,10 +363,13 @@ bool xemu_xbl_server_wait(int ms)
 void xemu_xbl_server_recheck(void)
 {
     int64_t now = g_get_monotonic_time() / 1000;
+    const char *gap_s = g_getenv("XEMU_XBL_SERVER_RECHECK_S");
+    int64_t gap = gap_s && *gap_s ? g_ascii_strtoll(gap_s, NULL, 10) * 1000
+                                  : XBL_RECHECK_GAP_MS;
 
     init_once();
     qemu_mutex_lock(&lock);
-    if (started && !looking && now - last_look_ms >= XBL_RECHECK_GAP_MS) {
+    if (started && !looking && now - last_look_ms >= gap) {
         fprintf(stderr, "xbl-server: %s stopped answering, looking again\n",
                 current);
         begin_look();
