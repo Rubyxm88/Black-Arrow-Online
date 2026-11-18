@@ -1,6 +1,6 @@
 # Xbox Live hostnames the original Xbox looks up, and what XB Online's DNS
-# server (159.223.51.240) answers for them. Queried directly from a PC on
-# 2026-10-15. xemu's DNS fallback (net/filter-dns-redirect.c) uses the same
+# server answers for them (152.42.145.249 since 2026-11-17, 152.42.145.249
+# before). Queried directly from a PC on 2026-10-15 and 2026-11-17. xemu's DNS fallback (net/filter-dns-redirect.c) uses the same
 # list when dns_redirect = 'xb_online' and the network gives the console a
 # wrong answer or none at all.
 #
@@ -12,7 +12,9 @@
 #   MACS.XBOX.COM  also found in the XOnline library (Kerberos realm name);
 #                  xb.live answers it too, so it is listed
 #
-# xb.live answers every one of these with the same single address. Every
+# xb.live answers every one of these with its own address. xemu finds that
+# address at start (ui/xemu-xbl-server.c, xbl-server.txt) and the fallback
+# answers with it. Every
 # other name tried (xeas, xemacs, xetgs, xexds, sg, www, xboxlive.com,
 # xbox.com, made-up *.xboxlive.com names, google.com) is refused (REFUSED,
 # no address). Public DNS (1.1.1.1) answers macs/as.xboxlive.com with
@@ -20,8 +22,8 @@
 # the console.
 #
 # name                  address
-macs.xboxlive.com       159.223.51.240
-as.xboxlive.com         159.223.51.240
-tgs.xboxlive.com        159.223.51.240
-xds.xboxlive.com        159.223.51.240
-macs.xbox.com           159.223.51.240
+macs.xboxlive.com       152.42.145.249
+as.xboxlive.com         152.42.145.249
+tgs.xboxlive.com        152.42.145.249
+xds.xboxlive.com        152.42.145.249
+macs.xbox.com           152.42.145.249

@@ -41,6 +41,8 @@
 #endif
 #include "xemu-notifications.h"
 #include "xemu-xbcheck.h"
+#include "xemu-xbl-server.h"
+#include "qom/object.h"
 
 static const char *id = "xemu-netdev";
 static const char *id_hubport = "xemu-netdev-hubport";
@@ -53,12 +55,32 @@ const char *xemu_net_dns_redirect_server(void)
     case CONFIG_NET_DNS_REDIRECT_INSIGNIA:
         return "46.101.64.175";
     case CONFIG_NET_DNS_REDIRECT_XB_ONLINE:
-        return "159.223.51.240";
+        return xemu_xbl_server(); /* found at start: xemu-xbl-server.h */
     case CONFIG_NET_DNS_REDIRECT_CUSTOM:
         return g_config.net.dns_redirect_custom;
     default:
         return NULL;
     }
+}
+
+/* XB Online's address changed (xemu-xbl-server.c): tell the DNS redirect */
+void xemu_net_dns_server_changed(void)
+{
+    Object *filter;
+    const char *server;
+
+    if (g_config.net.dns_redirect != CONFIG_NET_DNS_REDIRECT_XB_ONLINE ||
+        g_getenv("XEMU_DNS_REDIRECT_TEST_SERVER")) {
+        return;
+    }
+    filter = object_resolve_path_component(object_get_objects_root(),
+                                           id_dns_redirect);
+    if (!filter) {
+        return;
+    }
+    server = xemu_xbl_server();
+    fprintf(stderr, "dns-redirect: XB Online is now at %s\n", server);
+    object_property_set_str(filter, "server", server, NULL);
 }
 
 /*
@@ -261,6 +283,9 @@ void xemu_net_enable(void)
         }
     }
 
+    if (g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE) {
+        xemu_xbl_server_start();
+    }
     const char *dns_server = xemu_net_dns_redirect_server();
     /* Diagnostic: send the lookups elsewhere to test the XB Online fallback */
     const char *dns_test = g_getenv("XEMU_DNS_REDIRECT_TEST_SERVER");

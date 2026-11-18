@@ -37,6 +37,7 @@ xemu_ss.add(files(
   'xemu-dashinstall.c',
   'xemu-hddgrow.c',
   'xemu-xbcheck.c',
+  'xemu-xbl-server.c',
   'xemu-diag.c',
   'xemu-diag-threads.c',
 ))

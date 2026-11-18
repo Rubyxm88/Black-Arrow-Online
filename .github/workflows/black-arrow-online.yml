@@ -43,6 +43,7 @@ on:
       - '**.md'
       - '.github/**'
       - 'black-arrow-online/docs/**'
+      - 'black-arrow-online/xbl-server.txt'
   schedule:
     - cron: '23 9 * * *'
   workflow_dispatch:

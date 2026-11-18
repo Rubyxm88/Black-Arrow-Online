@@ -10,6 +10,8 @@
 #ifndef XEMU_XBCHECK_H
 #define XEMU_XBCHECK_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -56,6 +58,14 @@ void xemu_xbcheck_open_games_folder(void);
 
 /* Called by the network setup when a forwarded port could not be opened */
 void xemu_xbcheck_note_port_busy(int port);
+
+/*
+ * Ask a DNS server (IPv4 address or name) for the address of a name, waiting
+ * up to timeout_ms per try (two tries). Returns 1 with the first address
+ * (host order), 0 if the server answered without one, -1 if it did not answer.
+ */
+int xemu_xbcheck_dns_query(const char *server, const char *name,
+                            uint32_t *addr, int timeout_ms);
 
 /*
  * Called by the DNS redirect filter when it answered an Xbox Live name from

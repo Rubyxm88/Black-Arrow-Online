@@ -1,0 +1,7 @@
+# XB Online (xb.live) server, read by Black Arrow Online at start when the
+# name online.xb.live does not lead to a working server.
+# Editing this file on GitHub main moves every player with no new build
+# (the release workflow ignores it). xemu tries name= first, then address=;
+# it only uses one that answers macs.xboxlive.com with its own address.
+name=online.xb.live
+address=152.42.145.249

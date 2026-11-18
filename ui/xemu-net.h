@@ -36,6 +36,9 @@ int xemu_net_is_enabled(void);
 /* DNS server the console's lookups are sent to, or NULL if not redirected */
 const char *xemu_net_dns_redirect_server(void);
 
+/* Hands a new XB Online address (xemu-xbl-server.c) to the DNS redirect */
+void xemu_net_dns_server_changed(void);
+
 /*
  * Address this computer uses for traffic to the internet, which the console
  * takes in NAT mode. False if there is none.

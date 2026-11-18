@@ -23,6 +23,7 @@
 #include "xemu-diag.h"
 #include "xemu-xbonline.h"
 #include "xemu-xbcheck.h"
+#include "xemu-xbl-server.h"
 #include <SDL3/SDL.h>
 #ifdef _WIN32
 #include <iphlpapi.h>
@@ -133,12 +134,13 @@ static int udp_open(const char *host, int port, int timeout_ms)
  * Ask a DNS server for the address of a name. Returns 1 with the first
  * address, 0 if the server answered without one, -1 if it did not answer.
  */
-static int dns_lookup(const char *server, const char *name, uint32_t *addr)
+int xemu_xbcheck_dns_query(const char *server, const char *name,
+                            uint32_t *addr, int timeout_ms)
 {
     uint8_t q[512], r[512];
     int len = 12, result = -1;
     uint16_t id = g_random_int() & 0xffff;
-    int fd = udp_open(server, 53, 3000);
+    int fd = udp_open(server, 53, timeout_ms);
 
     if (fd < 0) {
         return -1;
@@ -202,6 +204,11 @@ static int dns_lookup(const char *server, const char *name, uint32_t *addr)
     }
     close(fd);
     return result;
+}
+
+static int dns_lookup(const char *server, const char *name, uint32_t *addr)
+{
+    return xemu_xbcheck_dns_query(server, name, addr, 3000);
 }
 
 static void check_network(void)
@@ -386,12 +393,25 @@ dns_result(XbCheckState state, const char *fmt, ...)
 static void check_dns(void)
 {
     int i = item_add("XB Online server");
-    const char *server = xemu_net_dns_redirect_server();
     bool xb_online =
         g_config.net.dns_redirect == CONFIG_NET_DNS_REDIRECT_XB_ONLINE;
-    uint32_t addr = 0;
+    const char *server;
+    char found_by[96] = "";
+    uint32_t addr = 0, server_ip = 0;
+    struct in_addr in;
     bool noted;
     int r;
+
+    if (xb_online) {
+        /* XB Online's address is looked up at start: wait for it */
+        xemu_xbl_server_wait(15000);
+        snprintf(found_by, sizeof(found_by), " (found by: %s)",
+                 xemu_xbl_server_source());
+    }
+    server = xemu_net_dns_redirect_server();
+    if (server && inet_aton(server, &in)) {
+        server_ip = ntohl(in.s_addr);
+    }
 
     qemu_mutex_lock(&lock);
     dns_item = i;
@@ -413,8 +433,7 @@ static void check_dns(void)
                    xb_online && !noted ? " xemu answers the console's Xbox "
                                          "Live lookups itself meanwhile." : "");
     } else if (xb_online &&
-               (r == 0 ||
-                addr != (uint32_t)ldl_be_p((uint8_t[]){ 159, 223, 51, 240 }))) {
+               (r == 0 || addr != server_ip)) {
         char got[40] = "no address";
         if (r > 0) {
             snprintf(got, sizeof(got), "%u.%u.%u.%u", addr >> 24,
@@ -432,9 +451,9 @@ static void check_dns(void)
                    "be replacing DNS answers (router, ISP or DNS filter).",
                    server);
     } else {
-        dns_result(XBCHECK_OK, "Reached %s, Xbox Live at %u.%u.%u.%u.", server,
-                   addr >> 24, (addr >> 16) & 255, (addr >> 8) & 255,
-                   addr & 255);
+        dns_result(XBCHECK_OK, "Reached %s%s, Xbox Live at %u.%u.%u.%u.",
+                   server, found_by, addr >> 24, (addr >> 16) & 255,
+                   (addr >> 8) & 255, addr & 255);
     }
 }
 

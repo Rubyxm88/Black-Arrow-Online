@@ -8,7 +8,10 @@
  * With 'fallback' set, the Xbox Live names XB Online serves are also checked:
  * when the reply for one of them carries another address (a VPN, ISP or router
  * answering DNS itself) or no reply arrives in time, the filter answers the
- * guest from a built-in list instead (see black-arrow-online/xbl-hosts.txt).
+ * guest itself with the server's own address, as XB Online does (see
+ * black-arrow-online/xbl-hosts.txt). XB Online's server is found at start
+ * (ui/xemu-xbl-server.c) and can change while running: a timeout asks for
+ * a new look.
  * XEMU_DNS_FALLBACK_TEST_NAME adds up to four more names (comma separated),
  * to test with names the console looks up by itself.
  *
@@ -29,6 +32,7 @@
 #include "qom/object.h"
 #include "ui/xemu-net.h"
 #include "ui/xemu-xbcheck.h"
+#include "ui/xemu-xbl-server.h"
 
 #define TYPE_FILTER_DNS_REDIRECT "filter-dns-redirect"
 OBJECT_DECLARE_SIMPLE_TYPE(DnsRedirectState, FILTER_DNS_REDIRECT)
@@ -52,7 +56,6 @@ static const char *dns_fallback_names[] = {
     NULL, NULL, NULL, NULL,
 };
 #define DNS_FALLBACK_NUM_BUILTIN 5
-static const uint8_t dns_fallback_addr[4] = { 159, 223, 51, 240 };
 
 typedef struct DnsRedirectFlow {
     uint16_t port; /* guest source port, network order (0 = unused) */
@@ -265,7 +268,7 @@ static void dns_fallback_track(DnsRedirectState *s, const uint8_t *frame,
 
 /* True if a reply carries XB Online's address as an A record */
 static bool dns_fallback_reply_ok(const uint8_t *dns, size_t len,
-                                  uint32_t *first_addr)
+                                  uint32_t server_addr, uint32_t *first_addr)
 {
     char name[256];
     size_t o = dns_redirect_question_name(dns, len, name, sizeof(name));
@@ -301,7 +304,7 @@ static bool dns_fallback_reply_ok(const uint8_t *dns, size_t len,
             if (!*first_addr) {
                 memcpy(first_addr, &dns[o], 4);
             }
-            if (memcmp(&dns[o], dns_fallback_addr, 4) == 0) {
+            if (memcmp(&dns[o], &server_addr, 4) == 0) {
                 found = true;
             }
         }
@@ -350,7 +353,7 @@ static void dns_fallback_answer(DnsRedirectState *s, DnsFallbackQuery *q)
     stw_be_p(&ans[4], 1);                    /* IN */
     stl_be_p(&ans[6], DNS_FALLBACK_TTL);
     stw_be_p(&ans[10], 4);
-    memcpy(&ans[12], dns_fallback_addr, 4);
+    memcpy(&ans[12], &s->server_addr, 4);
 
     net_checksum_calculate(buf, size, CSUM_IP | CSUM_UDP);
 
@@ -381,12 +384,13 @@ static void dns_fallback_timer_cb(void *opaque)
         }
         fprintf(stderr,
                 "dns-fallback: %s got no answer from %s in %d ms, console "
-                "told %u.%u.%u.%u from the built-in XB Online list\n",
+                "told %s (XB Online's own address)\n",
                 dns_fallback_names[q->name], s->server, DNS_FALLBACK_TIMEOUT_MS,
-                dns_fallback_addr[0], dns_fallback_addr[1],
-                dns_fallback_addr[2], dns_fallback_addr[3]);
+                s->server);
         qatomic_set(&dns_fallback_last_timeout, 1);
         dns_fallback_answer(s, q);
+        /* the server may have moved (as on 2026-11-17): look for it again */
+        xemu_xbl_server_recheck();
     }
     dns_fallback_arm_timer(s);
 }
@@ -412,7 +416,8 @@ static DnsRedirectResult dns_fallback_check_reply(DnsRedirectState *s,
     if (q->state == DNS_FALLBACK_ANSWERED) {
         return DNS_REDIRECT_CONSUMED; /* late reply, the console has one */
     }
-    if (dns_fallback_reply_ok(dns, len, &got) && from == s->server_addr) {
+    if (dns_fallback_reply_ok(dns, len, s->server_addr, &got) &&
+        from == s->server_addr) {
         q->state = DNS_FALLBACK_FREE;
         dns_fallback_arm_timer(s);
         return DNS_REDIRECT_PASS;
@@ -424,12 +429,11 @@ static DnsRedirectResult dns_fallback_check_reply(DnsRedirectState *s,
     }
     fprintf(stderr,
             "dns-fallback: %s was answered %s (rcode %d) by %s%s, the network "
-            "changes DNS answers; console told %u.%u.%u.%u from the built-in "
-            "XB Online list\n",
+            "changes DNS answers; console told %s (XB Online's own "
+            "address)\n",
             dns_fallback_names[q->name], got_str, dns[3] & 0x0f, from_str,
             from == s->server_addr ? "" : " instead of the server",
-            dns_fallback_addr[0], dns_fallback_addr[1], dns_fallback_addr[2],
-            dns_fallback_addr[3]);
+            s->server);
     qatomic_set(&dns_fallback_last_timeout, 0);
     dns_fallback_answer(s, q);
     dns_fallback_arm_timer(s);
@@ -566,9 +570,19 @@ static void dns_redirect_set_server(Object *obj, const char *value,
                                     Error **errp)
 {
     DnsRedirectState *s = FILTER_DNS_REDIRECT(obj);
+    struct in_addr addr = { 0 };
 
+    /* While running (XB Online moved), the new address applies at once */
+    if (s->server_addr && (!value || !inet_aton(value, &addr))) {
+        error_setg(errp, "filter-dns-redirect: 'server' must be an IPv4 "
+                         "address");
+        return;
+    }
     g_free(s->server);
     s->server = g_strdup(value);
+    if (s->server_addr) {
+        s->server_addr = addr.s_addr;
+    }
 }
 
 static bool dns_redirect_get_fallback(Object *obj, Error **errp)
